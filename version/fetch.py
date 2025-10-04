@@ -336,7 +336,7 @@ class Fetch(QObject):
 
     def _auto_metadata_process(self, galleries, hen, valid_url, **kwargs):
         MAX_QUERY_LENGTH = 200
-        FUZZ_CONFIDENCE_THRESHOLD = 85
+        FUZZ_CONFIDENCE_THRESHOLD = 65
         RETRY_DELAY_SECONDS = 3
         RETRY_FALLBACK_DELAY_SECONDS = max(RETRY_DELAY_SECONDS - 2, 1)
 
@@ -456,7 +456,7 @@ class Fetch(QObject):
                 log_i(f"Hash search failed. Waiting {RETRY_DELAY_SECONDS}s before falling back to title search.")
                 time.sleep(RETRY_DELAY_SECONDS)
 
-                original_title = title_formatter.to_half_width_including_forbidden(gallery.path_title)
+                original_title = title_formatter.to_half_width_including_forbidden(title_formatter.format_title(gallery.path_title))
                 sanitized_title = re.sub(r'\s*[=~*_+\-][^=~*_+\-\s]+?[=~*_+\-]\s*', ' ', original_title).strip()
                 if not sanitized_title: sanitized_title = original_title
 

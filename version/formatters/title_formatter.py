@@ -15,8 +15,8 @@ CONTAINER_START: str = ''.join(t[0] for t in _container_tuples)
 CONTAINER_END: str = ''.join(t[1] for t in _container_tuples)
 
 # Forbidden character replacement map
-FORBIDDEN_CHARS: str = '<>:"/|?*\\'
-REPLACER_CHARS: str = '＜＞：”／｜？＊＼'
+FORBIDDEN_CHARS: str = '<>:""/|?*\\'
+REPLACER_CHARS: str = '＜＞：”＂／｜？＊＼'
 FORBIDDEN_TRANSLATION: dict = str.maketrans(FORBIDDEN_CHARS, REPLACER_CHARS)
 
 # Full-width to half-width conversion map
