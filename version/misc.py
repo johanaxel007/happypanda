@@ -1773,7 +1773,7 @@ class GalleryShowcaseWidget(QWidget):
         title = self.font_M.elidedText(gallery.title, Qt.ElideRight, self.w)
         artist = self.font_M.elidedText(gallery.artist, Qt.ElideRight, self.w)
         self.text.setText("{}\n{}".format(title, artist))
-        self.setToolTip("{}\n{}".format(gallery.title, gallery.artist))
+        self.setToolTip("{}\n{}".format(gallery.path_title, gallery.artist))
         self.resize(self.w, self.h + 50)
 
     def paintEvent(self, event):
