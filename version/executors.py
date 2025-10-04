@@ -91,8 +91,11 @@ def _task_load_thumbnail(ppath, thumb_size, on_method=None, **kwargs):
             return img
 
 class Executors:
-    _thumbnail_exec = futures.ThreadPoolExecutor(3)
-    _profile_exec = futures.ThreadPoolExecutor(2)
+    THUMBNAIL_GENERATION_WORKERS = max(os.cpu_count() - 2, 3)
+    THUMBNAIL_LOAD_WORKERS = max(os.cpu_count() - 4, 2)
+
+    _thumbnail_exec = futures.ThreadPoolExecutor(max_workers=THUMBNAIL_GENERATION_WORKERS)
+    _profile_exec = futures.ThreadPoolExecutor(max_workers=THUMBNAIL_LOAD_WORKERS)
     
     @classmethod
     def generate_thumbnail(cls, gallery_or_path, img: str = None, width: int = None, height: int = None, on_method = None, blocking = False):
