@@ -19,6 +19,9 @@ import logging
 import queue
 import io
 import uuid
+import pathlib
+from typing import Any
+
 from dateutil import parser as dateparser
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -1506,16 +1509,21 @@ class Gallery:
         self.profile = ""
         self._path = ""
         self.path_in_archive = ""
+        self.id = None  # Will be defaulted.
+        self.title = ''
+        self.profile = ''
+        self._path = ''
+        self.path_in_archive = ''
         self.is_archive = 0
-        self.artist = ""
+        self.artist = ''
         self._chapters = ChaptersContainer(self)
-        self.info = ""
+        self.info = ''
         self.fav = 0
         self.rating = 0
-        self.type = ""
-        self.link = ""
-        self.language = ""
-        self.status = ""
+        self.type = ''
+        self.link = ''
+        self.language = ''
+        self.status = ''
         self.tags = {}
         self.pub_date = None
         self.date_added = datetime.datetime.now().replace(microsecond=0)
@@ -1525,8 +1533,9 @@ class Gallery:
         self._db_v = None
         self.hashes = []
         self.exed = 0
-        self.file_type = "folder"
-        self.view = app_constants.ViewType.Default # default view
+        self.file_type = 'folder'
+        self.view = app_constants.ViewType.Default  # default view
+        self.temp_url = ''  # for metadata fetching
 
         self._grid_visible = False
         self._list_view_selected = False
@@ -1534,11 +1543,17 @@ class Gallery:
         self._profile_load_status = {}
         self.dead_link = False
         self.state = app_constants.GalleryState.Default
-        self.qtime = QTime() # used by views to record addition
+        self.qtime = QTime()  # used by views to record addition
 
     @property
     def path(self):
         return self._path
+
+    @property
+    def path_title(self):
+        """ The gallery title extracted from the physical folder name. """
+        path = pathlib.Path(self.path)
+        return path.parent.name if not path.is_dir() else path.name
 
     @path.setter
     def path(self, n_p):

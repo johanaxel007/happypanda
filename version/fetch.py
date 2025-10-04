@@ -15,16 +15,19 @@
 import os
 import time
 import logging
-import random
 import queue
+import re
+import random
 
 from PyQt5.QtCore import QObject, pyqtSignal # need this for interaction with main thread
+from thefuzz import fuzz
 
 import gallerydb
 import app_constants
 import pewnet
 import settings
 import utils
+from formatters import title_formatter
 
 """This file contains functions to fetch gallery data"""
 
@@ -332,27 +335,79 @@ class Fetch(QObject):
         log_i('Finished applying metadata')
 
     def _auto_metadata_process(self, galleries, hen, valid_url, **kwargs):
+        MAX_QUERY_LENGTH = 200
+        FUZZ_CONFIDENCE_THRESHOLD = 85
+        RETRY_DELAY_SECONDS = 3
+        RETRY_FALLBACK_DELAY_SECONDS = max(RETRY_DELAY_SECONDS - 2, 1)
+
         hen.LAST_USED = time.time()
         self.AUTO_METADATA_PROGRESS.emit("Checking gallery urls...")
-        if len(galleries) == 1: log_d(f'Fetching metadata for 1 gallery')
+        if len(galleries) == 1: log_d('Fetching metadata for 1 gallery')
         else:                   log_d(f'Fetching metadata for {len(galleries)} galleries')
 
-        fetched_galleries = []
         checked_pre_url_galleries = []
         multiple_hit_galleries = []
-        for x, gallery in enumerate(galleries, 1):
-            custom_args = {} # send to hen class
-            log_i("Checking gallery url")
 
+        def build_query(title, artist, lang):
+            """Builds and truncates the search query."""
+            filters = artist + lang
+            max_title_len = MAX_QUERY_LENGTH - len(filters) - 2  # -2 for quotes
+            truncated_title = title[:max_title_len] if len(title) > max_title_len else title
+            return (f'"{truncated_title}"{artist}{lang}').strip()
+
+        def process_and_filter_results(results, query, gallery_obj):
+            """Uses thefuzz to filter, sort, and verify search results. Returns an empty list on failure."""
+            if not results or query not in results:
+                return []
+
+            title_url_list = results[query]
+            log_d(f"Initial search returned {len(title_url_list)} result(s). Filtering with thefuzz...")
+
+            # 1. Calculate the score for each result
+            filtered = [
+                (title, url, fuzz.ratio(gallery_obj.path_title, title))
+                for title, url in title_url_list
+            ]
+
+            # 2. Filter for results that meet the confidence threshold
+            confident_results_with_scores = [
+                (title, url, score) for title, url, score in filtered if score >= FUZZ_CONFIDENCE_THRESHOLD
+            ]
+
+            # 3. Sort the confident results by score in descending order
+            sorted_confident_results = sorted(confident_results_with_scores, key=lambda item: item[2], reverse=True)
+
+            # Log all sorted confident scores for debugging
+            log_i(f"Found {len(sorted_confident_results)} confident result(s) (threshold: {FUZZ_CONFIDENCE_THRESHOLD}). Sorting them:")
+            for title, _, score in sorted_confident_results:
+                log_d(f"  - Score: {score} for '{title}'")
+
+            # 4. Remove the score before returning, as the rest of the code expects (title, url) tuples
+            final_results = [(title, url) for title, url, score in sorted_confident_results]
+
+            return final_results
+
+        # Helper function to reduce code duplication
+        def _try_search(query, gallery_obj):
+            """Performs a search and returns the confident results."""
+            found_results = hen.search(query)
+            if found_results == 'error':
+                return 'error'
+            return process_and_filter_results(found_results, query, gallery_obj)
+
+        for x, gallery in enumerate(galleries, 1):
+            search_successful = False
+            log_i(f"--- Processing gallery {x}/{len(galleries)}: {gallery.title} ---")
+            self.AUTO_METADATA_PROGRESS.emit(f"({x}/{len(galleries)}) Searching for: {gallery.title}")
+
+            # --- Stage 0: Pre-flight checks ---
             # coming from GalleryDialog
-            if hasattr(gallery, "_g_dialog_url"):
-                if gallery._g_dialog_url:
-                    gallery.temp_url = gallery._g_dialog_url
-                    checked_pre_url_galleries.append(gallery)
-                    # to process even if this gallery is last and fails
-                    if x == len(galleries):
-                        self.fetch_metadata(hen=hen)
-                    continue
+            if hasattr(gallery, "_g_dialog_url") and gallery._g_dialog_url:
+                gallery.temp_url = gallery._g_dialog_url
+                checked_pre_url_galleries.append(gallery)
+                # to process even if this gallery is last and fails
+                if x == len(galleries): self.fetch_metadata(hen=hen)
+                continue
 
             if gallery.link and app_constants.USE_GALLERY_LINK:
                 log_i("Using existing gallery url")
@@ -362,68 +417,101 @@ class Fetch(QObject):
                     gallery.link = pewnet.HenManager.gtoEh(gallery.link)
                     gallery.temp_url = gallery.link
                     checked_pre_url_galleries.append(gallery)
-                    if x == len(galleries):
-                        self.fetch_metadata(hen=hen)
+                    if x == len(galleries): self.fetch_metadata(hen=hen)
                     continue
 
-            self.AUTO_METADATA_PROGRESS.emit("({}/{}) Generating gallery hash: {}".format(x, len(galleries), gallery.title))
-            log_i("Generating gallery hash: {}".format(gallery.title.encode(errors='ignore')))
+            # --- Stage 1: Hash Search (Primary) ---
+            log_i("Attempt 1: Image Hash Search")
             g_hash = None
-            try:
-                if not gallery.hashes:
-                    color_img = kwargs['color'] if 'color' in kwargs else False # used for similarity search on EH
-                    hash_dict = gallerydb.execute(gallerydb.HashDB.gen_gallery_hash, False, gallery, 0, 'mid', color_img)
-                    if color_img and 'color' in hash_dict:
-                        custom_args['color'] = hash_dict['color'] # will be path to filename
-                        g_hash = hash_dict['color']
-                    elif hash_dict:
-                        g_hash = hash_dict['mid']
-                else:
-                    g_hash = gallery.hashes[random.randint(0, len(gallery.hashes)-1)]
-            except app_constants.CreateArchiveFail:
-                pass
-            if not g_hash:
-                self.error_galleries.append((gallery, "Could not generate hash"))
-                log_e("Could not generate hash for gallery: {}".format(gallery.title.encode(errors='ignore')))
-                if x == len(galleries):
-                    self.fetch_metadata(hen=hen)
-                continue
-            gallery.hash = g_hash
+            if gallery.hashes:
+                try:
+                    if not gallery.hashes:
+                        hash_dict = gallerydb.execute(gallerydb.HashDB.gen_gallery_hash, False, gallery, 0, 'mid', False)
+                        if hash_dict: g_hash = hash_dict['mid']
+                    else:
+                        g_hash = gallery.hashes[random.randint(0, len(gallery.hashes)-1)]
+                except (app_constants.CreateArchiveFail, ValueError):
+                    log_w("Could not get a valid hash for gallery.")
+                    g_hash = None
 
-            # dict -> hash:[list of title,url tuples] or None
-            self.AUTO_METADATA_PROGRESS.emit("({}/{}) Searching url for gallery: {}".format(x, len(galleries), gallery.title))
-            found_url = hen.search(gallery.hash, **custom_args)
-            if found_url == 'error':
-                app_constants.GLOBAL_EHEN_LOCK = False
-                self.FINISHED.emit(True)
-                return
-            if not gallery.hash in found_url:
-                self.error_galleries.append((gallery, "Could not find url for gallery"))
-                self.AUTO_METADATA_PROGRESS.emit("Could not find url for gallery: {}".format(gallery.title))
-                log_w('Could not find url for gallery: {}'.format(gallery.title.encode(errors='ignore')))
-                if x == len(galleries):
-                    self.fetch_metadata(hen=hen)
-                continue
-            title_url_list = found_url[gallery.hash]
+            if g_hash:
+                confident_results = _try_search(g_hash, gallery)
+                if confident_results == 'error':
+                    app_constants.GLOBAL_EHEN_LOCK = False; self.FINISHED.emit(True); return
 
-            if not len(title_url_list) > 1 or app_constants.ALWAYS_CHOOSE_FIRST_HIT:
-                title = title_url_list[0][0]
-                url = title_url_list[0][1]
+                if confident_results:
+                    if len(confident_results) == 1:
+                        log_i("Single confident hash match found and verified.")
+                        gallery.temp_url = confident_results[0][1]
+                        search_successful = True
+                    else:
+                        log_i("Multiple confident hash matches found.")
+                        multiple_hit_galleries.append([gallery, confident_results])
+                        search_successful = True
             else:
-                multiple_hit_galleries.append([gallery, title_url_list])
-                if x == len(galleries):
-                    self.fetch_metadata(hen=hen)
-                continue
+                log_w("No hash available for gallery.")
 
-            if not gallery.link:
-                if isinstance(hen, (pewnet.EHen, pewnet.ExHen)):
-                    gallery.link = url
-                    self.GALLERY_EMITTER.emit(gallery, None, None)
-            gallery.temp_url = url
-            self.AUTO_METADATA_PROGRESS.emit("({}/{}) Adding to queue: {}".format(
-                x, len(galleries), gallery.title))
+            # --- Stage 2: Title Search (Fallback) ---
+            if not search_successful:
+                log_i(f"Hash search failed. Waiting {RETRY_DELAY_SECONDS}s before falling back to title search.")
+                time.sleep(RETRY_DELAY_SECONDS)
 
-            self.fetch_metadata(gallery, hen, x == len(galleries))
+                original_title = title_formatter.to_half_width_including_forbidden(gallery.path_title)
+                sanitized_title = re.sub(r'\s*[=~*_+\-][^=~*_+\-\s]+?[=~*_+\-]\s*', ' ', original_title).strip()
+                if not sanitized_title: sanitized_title = original_title
+
+                has_artist = bool(gallery.artist)
+                artist_part = ""
+                if has_artist:
+                    artist_name = gallery.artist.lower()
+                    artist_part = f' artist:"{artist_name}"$' if ' ' in artist_name else f' artist:{artist_name}$'
+
+                # Japanese galleries are not filtered by language due to it being the default for galleries without a language set.
+                # This will otherwise prevent galleries with a gallery set on the metadate provider from being matched.
+                lang_part = f" language:{gallery.language.lower()}$" if (gallery.language and gallery.language != 'Japanese') else ""
+
+                search_attempts = []
+                if has_artist:
+                    search_attempts.append(build_query(sanitized_title, artist_part, lang_part)) # 2a
+                search_attempts.append(build_query(sanitized_title, "", lang_part)) # 2b
+
+                if '|' in sanitized_title:
+                    split_title = sanitized_title.split('|', 1)[0].strip()
+                    if split_title:
+                        if has_artist:
+                            search_attempts.append(build_query(split_title, artist_part, lang_part)) # 2c (with artist)
+                        search_attempts.append(build_query(split_title, "", lang_part)) # 2c (without artist)
+
+                # FIX: Loop through attempts instead of repeating code
+                for i, query in enumerate(search_attempts):
+                    log_i(f"Attempt 2.{chr(97+i)}: Title search with query: {query}")
+                    confident_results = _try_search(query, gallery)
+
+                    if confident_results == 'error':
+                        app_constants.GLOBAL_EHEN_LOCK = False; self.FINISHED.emit(True); return
+
+                    if confident_results:
+                        if len(confident_results) == 1:
+                            gallery.temp_url = confident_results[0][1]
+                            search_successful = True
+                        else:
+                            multiple_hit_galleries.append([gallery, confident_results])
+                            search_successful = True
+                        break # Found a match, no need to try other title variations
+
+                    log_i(f"Attempt 2.{chr(97+i)} returned no results. Waiting {RETRY_FALLBACK_DELAY_SECONDS}s...")
+                    time.sleep(RETRY_FALLBACK_DELAY_SECONDS)
+
+            # --- Process Final Results ---
+            if search_successful:
+                if gallery.temp_url:
+                    self.AUTO_METADATA_PROGRESS.emit(f"({x}/{len(galleries)}) Adding to queue: {gallery.title}")
+                    self.fetch_metadata(gallery, hen, x == len(galleries))
+            else:
+                self.error_galleries.append((gallery, "Could not find a confident URL match for gallery"))
+                self.AUTO_METADATA_PROGRESS.emit(f"Could not find url for gallery: {gallery.title}")
+                log_e(f'All search attempts failed for gallery: {gallery.title.encode(errors="ignore")}')
+                if x == len(galleries): self.fetch_metadata(hen=hen)
 
         if checked_pre_url_galleries:
             for x, gallery in enumerate(checked_pre_url_galleries, 1):
@@ -454,14 +542,12 @@ class Fetch(QObject):
                     log_w("Skipping gallery")
                     continue
 
-                title = user_choice[0]
-                url = user_choice[1]
-
+                title, url = user_choice
+                gallery.temp_url = url
                 if not gallery.link:
                     gallery.link = url
                     if isinstance(hen, (pewnet.EHen, pewnet.ExHen)):
                         self.GALLERY_EMITTER.emit(gallery, None, None)
-                gallery.temp_url = url
                 self.AUTO_METADATA_PROGRESS.emit("({}/{}) Adding to queue: {}".format(
                     x, len(multiple_hit_galleries), gallery.title))
                 multiple_hit_g_queue.append(gallery)
@@ -524,7 +610,7 @@ class Fetch(QObject):
                 valid_url = 'ehen'
                 log_i("Using Exhentai")
             try:
-                self._auto_metadata_process(self.galleries, hen, valid_url, color=True)
+                self._auto_metadata_process(self.galleries, hen, valid_url)
             except app_constants.MetadataFetchFail as err:
                 fetch_cancelled(err)
                 return

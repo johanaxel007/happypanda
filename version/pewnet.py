@@ -1350,11 +1350,19 @@ class EHen(CommonHen):
 
         try:
             r.raise_for_status()
-        except:
+        except requests.RequestException:
             log.exception('Could not fetch metadata: status error')
             return None
 
-        return r.json(), dict_metadata
+        if not r.text:
+            log_e('Could not fetch metadata: received empty response from API.')
+            return None
+
+        try:
+            return r.json(), dict_metadata
+        except requests.exceptions.JSONDecodeError:
+            log.exception(f'Failed to decode JSON from API. Response text: {r.text[:500]}')
+            return None
 
     @classmethod
     def parse_metadata(cls, metadata_json, dict_metadata):
@@ -1447,111 +1455,97 @@ class EHen(CommonHen):
 
     def search(self, search_string, **kwargs):
         """
-        Searches ehentai for the provided string or list of hashes,
-        returns a dict with search_string:[list of title & url tuples] of hits found or emtpy dict if no hits are found.
+        Searches ehentai for the provided string (either a title query or a hash).
+        Returns a dict with search_string:[list of title & url tuples] of hits found.
         """
-        assert isinstance(search_string, (str, list))
-        if isinstance(search_string, str):
-            search_string = [search_string]
+        is_hash = isinstance(search_string, str) and regex.fullmatch(r'[a-f0-9]{40}', search_string)
 
         cookies = kwargs.pop('cookies', {})
 
         def no_hits_found_check(soup):
             "return true if hits are found"
-            if not soup:
-                log_e("There is no soup!")
-            f_div = soup.body.find_all('div')
-            for d in f_div:
-                if 'No hits found' in d.text:
-                    return False
-            return True
-
-        def do_filesearch(filepath):
-            file_search_delay = 5
-            if "exhentai" in self.e_url_o:
-                f_url = "https://exhentai.org/upload/image_lookup.php/"
-            else:
-                f_url = "https://upload.e-hentai.org/image_lookup.php/"
-            if cookies:
-                self.check_cookie(cookies)
-                self._browser.session.cookies.update(self.COOKIES)
-            log_d("searching with color img: {}".format(filepath))
-            files = {'sfile': open(filepath,'rb')}
-            values = {'fs_similar': '1'}
-            if app_constants.INCLUDE_EH_EXPUNGED:
-                values['fs_exp'] = '1'
-            try:
-                r = self._browser.session.post(f_url, files=files, data=values)
-            except requests.ConnectionError:
-                time.sleep(file_search_delay+3)
-                r = self._browser.session.post(f_url, files=files, data=values)
-                
-            s = BeautifulSoup(r.text, "html.parser")
-            if "Please wait a bit longer between each file search." in "{}".format(s):
-                log_e("Retrying filesearch due to interval response with delay: {}".format(file_search_delay))
-                time.sleep(file_search_delay)
-                s = do_filesearch(filepath)
-            return s
-
+            if not soup or not soup.body:
+                return True
+            return 'No hits found' not in soup.body.text
 
         found_galleries = {}
-        log_i('Initiating hash search on ehentai')
-        log_d("search strings: ".format(search_string))
-        for h in search_string:
-            log_d('Hash search: {}'.format(h))
-            self.begin_lock()
-            try:
-                if 'color' in kwargs:
-                    soup = do_filesearch(h)
-                else:
-                    hash_url = self.e_url_o + '?f_shash='
-                    hash_search = hash_url + h
-                    if app_constants.INCLUDE_EH_EXPUNGED:
-                        hash_search + '&fs_exp=1'
-                    if cookies:
-                        self.check_cookie(cookies)
-                        r = requests.get(hash_search, timeout=30, headers=self.HEADERS, cookies=self.COOKIES)
-                    else:
-                        r = requests.get(hash_search, timeout=30, headers=self.HEADERS)
-                    log_d("searching with greyscale img: {}".format(hash_search))
-                    if not self.handle_error(r):
-                        return 'error'
-                    soup = BeautifulSoup(r.text, "html.parser")
-            except requests.ConnectionError as err:
-                self.end_lock()
-                log.exception("Could not search for gallery: {}".format(err))
-                raise app_constants.MetadataFetchFail("connection error")
+        search_type = 'Image Hash' if is_hash else 'Title'
+        log_i(f'Initiating {search_type} search on ehentai')
+
+        self.begin_lock()
+        try:
+            if is_hash:
+                hash_url = self.e_url_o + '?f_shash=' + search_string
+                if app_constants.INCLUDE_EH_EXPUNGED:
+                    hash_url += '&fs_exp=1'
+                search_url = hash_url
+                params = {}
+            else:  # Title search
+                search_url = self.e_url_o
+                params = {'f_search': search_string}
+                if app_constants.INCLUDE_EH_EXPUNGED:
+                    params['f_sh'] = 'on'
+
+            if cookies:
+                self.check_cookie(cookies)
+                r = requests.get(search_url, params=params, timeout=30, headers=self.HEADERS, cookies=self.COOKIES)
+            else:
+                r = requests.get(search_url, params=params, timeout=30, headers=self.HEADERS)
+
+            log_d(f'Searching with URL: {r.url}')
+            if not self.handle_error(r):
+                return 'error'
+
+            soup = BeautifulSoup(r.text, 'html.parser')
+
+        except requests.ConnectionError as err:
+            log.exception(f'Could not perform {search_type} search: {err}')
+            raise app_constants.MetadataFetchFail('connection error')
+        finally:
             self.end_lock()
 
-            if not no_hits_found_check(soup):
-                log_e('No hits found with hash/image: {}'.format(h))
-                continue
-            log_i('Parsing html')
-            try:
-                if soup.body:
-                    found_galleries[h] = []
-                    # list view or grid view
-                    type = soup.find(attrs={'class':'itg'}).name
-                    if type == 'div':
-                        visible_galleries = soup.find_all('div', attrs={'class':'id1'})
-                    elif type == 'table':
-                        visible_galleries = soup.find_all('td', attrs={'class':'glname'})
+        if not no_hits_found_check(soup):
+            log_w(f'No hits found with {search_type}: {search_string}')
+            return {}
 
-                    log_i('Found {} visible galleries'.format(len(visible_galleries)))
-                    for gallery in visible_galleries:
-                        title = gallery.a.div.text
-                        g_url = gallery.a.attrs['href']
-                        found_galleries[h].append((title,g_url))
-            except AttributeError:
-                log.exception('Unparseable html')
-                log_d("\n{}\n".format(soup.prettify()))
-                continue
+        log_i('Parsing search results...')
+        try:
+            if soup.body:
+                found_galleries[search_string] = []
+                gallery_list_container = soup.find(attrs={'class': 'itg'})
+
+                if gallery_list_container:
+                    # Handle both table (list) and div (thumbnail) views correctly
+                    if gallery_list_container.name == 'table':
+                        # This is for list view ('itl')
+                        visible_galleries = gallery_list_container.find_all('tr')
+                    else:
+                        # This is for thumbnail views ('gld')
+                        visible_galleries = gallery_list_container.find_all('div', class_='gl1t')
+
+                    log_i(f'Found {len(visible_galleries)} potential gallery entries in HTML.')
+
+                    for item in visible_galleries:
+                        link_element = item.select_one('a[href*="/g/"]')
+                        title_element = item.select_one('.glink')
+                        if link_element and title_element:
+                            title = title_element.text.strip()
+                            g_url = link_element['href']
+                            found_galleries[search_string].append((title, g_url))
+
+                elif '/g/' in r.url and soup.select_one('#gdn'):
+                    log_i('Landed directly on a gallery page.')
+                    title = soup.select_one('#gn').text
+                    found_galleries[search_string].append((title, r.url))
+        except Exception:
+            log.exception('Unparseable HTML from search results.')
+            log_d(f'\n{soup.prettify()}\n')
 
         if found_galleries:
-            log_i('Found {} out of {} galleries'.format(len(found_galleries), len(search_string)))
+            log_i(f'Found {len(found_galleries.get(search_string, []))} potential match(es).')
             return found_galleries
         else:
-            log_w('Could not find any galleries')
+            log_w('Could not find any galleries from search.')
             return {}
 
 class ExHen(EHen):
