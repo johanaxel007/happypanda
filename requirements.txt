@@ -11,3 +11,5 @@ python-dateutil
 QtAwesome==0.3.3
 py7zr
 thefuzz
+pillow-jxl-plugin
+pillow-avif-plugin

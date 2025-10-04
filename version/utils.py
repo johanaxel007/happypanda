@@ -58,8 +58,8 @@ def init_utils():
     global ARCHIVE_FILTER
     global SUPPORT_RAR
 
-    IMG_FILES = ('.jpg','.bmp','.png','.gif', '.jpeg', '.webp')
-    IMG_FILTER = '*.jpg *.bmp *.png *.gif *.jpeg *.webp'
+    IMG_FILES = ('.jpg', '.bmp', '.png', '.gif', '.jpeg', '.webp', '.jxl', '.avif', '.tif', '.tiff')
+    IMG_FILTER = '*.jpg *.bmp *.png *.gif *.jpeg *.webp *.jxl *.avif *.tif *.tiff'
 
     ZIP_FILES = ('.zip', '.cbz')
     RAR_FILES = ('.rar', '.cbr')

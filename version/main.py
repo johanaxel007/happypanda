@@ -31,6 +31,10 @@ import app_constants
 # import gallerydb
 import utils
 
+# Pillow plugins
+import pillow_jxl  # noqa: F401 pylint: disable=unused-import
+import pillow_avif  # noqa: F401 pylint: disable=unused-import
+
 
 # Initialize modules right after import.
 # This is code that used to be module-level but made cross-imports a mess if not impossible.
