@@ -336,7 +336,7 @@ class Fetch(QObject):
 
     def _auto_metadata_process(self, galleries, hen, valid_url, **kwargs):
         MAX_QUERY_LENGTH = 200
-        FUZZ_CONFIDENCE_THRESHOLD = 65
+        FUZZ_CONFIDENCE_THRESHOLD = 70
         RETRY_DELAY_SECONDS = 3
         RETRY_FALLBACK_DELAY_SECONDS = max(RETRY_DELAY_SECONDS - 2, 1)
 
@@ -383,9 +383,7 @@ class Fetch(QObject):
                 log_d(f"  - Score: {score} for '{title}'")
 
             # 4. Remove the score before returning, as the rest of the code expects (title, url) tuples
-            final_results = [(title, url) for title, url, score in sorted_confident_results]
-
-            return final_results
+            return [(title, url) for title, url, score in sorted_confident_results]
 
         # Helper function to reduce code duplication
         def _try_search(query, gallery_obj):
@@ -466,25 +464,32 @@ class Fetch(QObject):
                     artist_name = gallery.artist.lower()
                     artist_part = f' artist:"{artist_name}"$' if ' ' in artist_name else f' artist:{artist_name}$'
 
-                # Japanese galleries are not filtered by language due to it being the default for galleries without a language set.
-                # This will otherwise prevent galleries with a gallery set on the metadate provider from being matched.
-                lang_part = f" language:{gallery.language.lower()}$" if (gallery.language and gallery.language != 'Japanese') else ""
+                # --- Two-pass search for language ---
+                # Pass 1: Use language filter if it exists (including Japanese).
+                # Pass 2: If Pass 1 fails and language was Japanese, try again without the language filter.
+                #         Japanese galleries are not filtered by language due to it being the default for galleries without a language set.
+                #         This will otherwise prevent galleries with a gallery set on the metadate provider from being matched.
+                lang_part_pass1 = f" language:{gallery.language.lower()}$" if gallery.language else ""
 
-                search_attempts = []
-                if has_artist:
-                    search_attempts.append(build_query(sanitized_title, artist_part, lang_part)) # 2a
-                search_attempts.append(build_query(sanitized_title, "", lang_part)) # 2b
+                # This helper generates all title variations to search for
+                def generate_title_variations(title_str, artist_str):
+                    variations = []
+                    if has_artist:
+                        variations.append((title_str, artist_str)) # With artist
+                    variations.append((title_str, "")) # Without artist
+                    return variations
 
+                base_title_variations = generate_title_variations(sanitized_title, artist_part)
                 if '|' in sanitized_title:
                     split_title = sanitized_title.split('|', 1)[0].strip()
                     if split_title:
-                        if has_artist:
-                            search_attempts.append(build_query(split_title, artist_part, lang_part)) # 2c (with artist)
-                        search_attempts.append(build_query(split_title, "", lang_part)) # 2c (without artist)
+                        base_title_variations.extend(generate_title_variations(split_title, artist_part))
 
-                # FIX: Loop through attempts instead of repeating code
-                for i, query in enumerate(search_attempts):
-                    log_i(f"Attempt 2.{chr(97+i)}: Title search with query: {query}")
+                # Pass 1: Try with language filter
+                log_i("--- Title Search Pass 1 (with language filter if available) ---")
+                for i, (title_v, artist_v) in enumerate(base_title_variations):
+                    query = build_query(title_v, artist_v, lang_part_pass1)
+                    log_i(f"Attempt 2.{chr(97+i)}: Searching with query: {query}")
                     confident_results = _try_search(query, gallery)
 
                     if confident_results == 'error':
@@ -497,10 +502,34 @@ class Fetch(QObject):
                         else:
                             multiple_hit_galleries.append([gallery, confident_results])
                             search_successful = True
-                        break # Found a match, no need to try other title variations
+                        break  # Success, exit the loop for Pass 1
 
-                    log_i(f"Attempt 2.{chr(97+i)} returned no results. Waiting {RETRY_FALLBACK_DELAY_SECONDS}s...")
-                    time.sleep(RETRY_FALLBACK_DELAY_SECONDS)
+                    if i < len(base_title_variations) -1: # Don't sleep on the last attempt of the loop
+                        time.sleep(RETRY_FALLBACK_DELAY_SECONDS)
+
+                # Pass 2: If Pass 1 failed and the language was Japanese, retry without the language filter.
+                if not search_successful and gallery.language == 'Japanese':
+                    log_i("--- Title Search Pass 2 (removing 'Japanese' language filter) ---")
+                    lang_part_pass2 = ""  # No language filter
+                    for i, (title_v, artist_v) in enumerate(base_title_variations):
+                        query = build_query(title_v, artist_v, lang_part_pass2)
+                        log_i(f"Attempt 3.{chr(97+i)}: Re-searching with query: {query}")
+                        confident_results = _try_search(query, gallery)
+
+                        if confident_results == 'error':
+                            app_constants.GLOBAL_EHEN_LOCK = False; self.FINISHED.emit(True); return
+
+                        if confident_results:
+                            if len(confident_results) == 1:
+                                gallery.temp_url = confident_results[0][1]
+                                search_successful = True
+                            else:
+                                multiple_hit_galleries.append([gallery, confident_results])
+                                search_successful = True
+                            break  # Success, exit the loop for Pass 2
+
+                        if i < len(base_title_variations) -1:
+                            time.sleep(RETRY_FALLBACK_DELAY_SECONDS)
 
             # --- Process Final Results ---
             if search_successful:
