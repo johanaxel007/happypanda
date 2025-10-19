@@ -382,8 +382,8 @@ class Fetch(QObject):
             for title, _, score in sorted_confident_results:
                 log_d(f"  - Score: {score} for '{title}'")
 
-            # 4. Remove the score before returning, as the rest of the code expects (title, url) tuples
-            return [(title, url) for title, url, score in sorted_confident_results]
+            # 4. Return results with scores.
+            return sorted_confident_results
 
         # Helper function to reduce code duplication
         def _try_search(query, gallery_obj):
@@ -433,18 +433,26 @@ class Fetch(QObject):
                     g_hash = None
 
             if g_hash:
-                confident_results = _try_search(g_hash, gallery)
-                if confident_results == 'error':
+                confident_results_with_scores = _try_search(g_hash, gallery)
+                if confident_results_with_scores == 'error':
                     app_constants.GLOBAL_EHEN_LOCK = False; self.FINISHED.emit(True); return
 
-                if confident_results:
-                    if len(confident_results) == 1:
+                if confident_results_with_scores:
+                    perfect_matches = [res for res in confident_results_with_scores if res[2] == 100]
+
+                    if len(perfect_matches) == 1:
+                        log_i("Single perfect hash match (score 100) found. Selecting automatically.")
+                        gallery.temp_url = perfect_matches[0][1]
+                        search_successful = True
+                    elif len(confident_results_with_scores) == 1:
                         log_i("Single confident hash match found and verified.")
-                        gallery.temp_url = confident_results[0][1]
+                        gallery.temp_url = confident_results_with_scores[0][1]
                         search_successful = True
                     else:
-                        log_i("Multiple confident hash matches found.")
-                        multiple_hit_galleries.append([gallery, confident_results])
+                        choices_to_present = perfect_matches if perfect_matches else confident_results_with_scores
+                        log_i(f"Multiple ({len(choices_to_present)}) confident hash matches found.")
+                        choices_for_picker = [(title, url) for title, url, score in choices_to_present]
+                        multiple_hit_galleries.append([gallery, choices_for_picker])
                         search_successful = True
             else:
                 log_w("No hash available for gallery.")
@@ -490,17 +498,27 @@ class Fetch(QObject):
                 for i, (title_v, artist_v) in enumerate(base_title_variations):
                     query = build_query(title_v, artist_v, lang_part_pass1)
                     log_i(f"Attempt 2.{chr(97+i)}: Searching with query: {query}")
-                    confident_results = _try_search(query, gallery)
+                    confident_results_with_scores = _try_search(query, gallery)
 
-                    if confident_results == 'error':
+                    if confident_results_with_scores == 'error':
                         app_constants.GLOBAL_EHEN_LOCK = False; self.FINISHED.emit(True); return
 
-                    if confident_results:
-                        if len(confident_results) == 1:
-                            gallery.temp_url = confident_results[0][1]
+                    if confident_results_with_scores:
+                        perfect_matches = [res for res in confident_results_with_scores if res[2] == 100]
+
+                        if len(perfect_matches) == 1:
+                            log_i("Single perfect title match (score 100) found. Selecting automatically.")
+                            gallery.temp_url = perfect_matches[0][1]
+                            search_successful = True
+                        elif len(confident_results_with_scores) == 1:
+                            log_i("Single confident match found and verified.")
+                            gallery.temp_url = confident_results_with_scores[0][1]
                             search_successful = True
                         else:
-                            multiple_hit_galleries.append([gallery, confident_results])
+                            choices_to_present = perfect_matches if perfect_matches else confident_results_with_scores
+                            log_i(f"Multiple ({len(choices_to_present)}) confident title matches found.")
+                            choices_for_picker = [(title, url) for title, url, score in choices_to_present]
+                            multiple_hit_galleries.append([gallery, choices_for_picker])
                             search_successful = True
                         break  # Success, exit the loop for Pass 1
 
@@ -514,17 +532,27 @@ class Fetch(QObject):
                     for i, (title_v, artist_v) in enumerate(base_title_variations):
                         query = build_query(title_v, artist_v, lang_part_pass2)
                         log_i(f"Attempt 3.{chr(97+i)}: Re-searching with query: {query}")
-                        confident_results = _try_search(query, gallery)
+                        confident_results_with_scores = _try_search(query, gallery)
 
-                        if confident_results == 'error':
+                        if confident_results_with_scores == 'error':
                             app_constants.GLOBAL_EHEN_LOCK = False; self.FINISHED.emit(True); return
 
-                        if confident_results:
-                            if len(confident_results) == 1:
-                                gallery.temp_url = confident_results[0][1]
+                        if confident_results_with_scores:
+                            perfect_matches = [res for res in confident_results_with_scores if res[2] == 100]
+
+                            if len(perfect_matches) == 1:
+                                log_i("Single perfect title match (score 100) found. Selecting automatically.")
+                                gallery.temp_url = perfect_matches[0][1]
+                                search_successful = True
+                            elif len(confident_results_with_scores) == 1:
+                                log_i("Single confident match found and verified.")
+                                gallery.temp_url = confident_results_with_scores[0][1]
                                 search_successful = True
                             else:
-                                multiple_hit_galleries.append([gallery, confident_results])
+                                choices_to_present = perfect_matches if perfect_matches else confident_results_with_scores
+                                log_i(f"Multiple ({len(choices_to_present)}) confident title matches found.")
+                                choices_for_picker = [(title, url) for title, url, score in choices_to_present]
+                                multiple_hit_galleries.append([gallery, choices_for_picker])
                                 search_successful = True
                             break  # Success, exit the loop for Pass 2
 
