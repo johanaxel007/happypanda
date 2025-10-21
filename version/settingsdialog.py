@@ -243,6 +243,8 @@ class SettingsDialog(QWidget):
         self.use_gallery_link.setChecked(app_constants.USE_GALLERY_LINK)
         self.use_global_ehen_lock.setChecked(app_constants.USE_GLOBAL_EHEN_LOCK)
         self.fallback_chaika.setChecked(True) if 'chaikahen' in app_constants.HEN_LIST else None
+        self.fuzz_confidence_threshold.setValue(app_constants.FUZZ_CONFIDENCE_THRESHOLD)
+
 
         # Web / Download
         if app_constants.HEN_DOWNLOAD_TYPE == 0:
@@ -505,6 +507,9 @@ class SettingsDialog(QWidget):
             henlist.append('chaikahen')
         app_constants.HEN_LIST = henlist
         set(app_constants.HEN_LIST, 'Web', 'hen list')
+
+        app_constants.FUZZ_CONFIDENCE_THRESHOLD = self.fuzz_confidence_threshold.value()
+        set(app_constants.FUZZ_CONFIDENCE_THRESHOLD, 'Web', 'fuzz confidence threshold')
 
         # Visual / General
         app_constants.GALLERY_EDIT_WIDTH = self.galleryedit_width.value()
@@ -1204,6 +1209,19 @@ class SettingsDialog(QWidget):
         web_metadata_m_l.addRow(QLabel(''))
         self.always_first_hit = QCheckBox('Always choose first gallery found')
         web_metadata_m_l.addRow(self.always_first_hit)
+
+        fuzz_confidence_info = QLabel('Confidence threshold for matching galleries during metadata search.')
+        fuzz_confidence_info.setWordWrap(True)
+        self.fuzz_confidence_threshold = QSpinBox()
+        self.fuzz_confidence_threshold.setRange(0, 100)
+        self.fuzz_confidence_threshold.setSuffix('%')
+        self.fuzz_confidence_threshold.setToolTip('How similar a search result title has to be to the local folder name to be considered a match.\n'
+                                              'Lower values may result in more incorrect matches.\n'
+                                              'Higher values may miss slightly different titles.\n'
+                                              'DEFAULT: 70%')
+        web_metadata_m_l.addRow(fuzz_confidence_info)
+        web_metadata_m_l.addRow('Confidence threshold:', self.fuzz_confidence_threshold)
+
         use_gallery_link_info = QLabel("Enable this option to fetch metadata using the currently applied URL on the gallery")
         self.use_gallery_link = QCheckBox('Use currently applied gallery URL')
         self.use_gallery_link.setToolTip("Metadata will be fetched from the current gallery URL if it's a supported gallery url")

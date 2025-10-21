@@ -336,7 +336,7 @@ class Fetch(QObject):
 
     def _auto_metadata_process(self, galleries, hen, valid_url, **kwargs):
         MAX_QUERY_LENGTH = 200
-        FUZZ_CONFIDENCE_THRESHOLD = 70
+        FUZZ_CONFIDENCE_THRESHOLD = app_constants.FUZZ_CONFIDENCE_THRESHOLD
         RETRY_DELAY_SECONDS = 3
         RETRY_FALLBACK_DELAY_SECONDS = max(RETRY_DELAY_SECONDS - 2, 1)
 
