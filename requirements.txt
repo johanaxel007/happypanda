@@ -8,7 +8,7 @@ robobrowser @ git+https://github.com/VultureProject/robobrowser@master
 Send2Trash==1.8.3
 pillow
 python-dateutil
-QtAwesome==0.3.3
+QtAwesome==1.4.0
 py7zr
 thefuzz
 pillow-jxl-plugin
