@@ -4,8 +4,8 @@ requests
 beautifulsoup4
 rarfile
 watchdog
-robobrowser
-Send2Trash==1.4.2
+robobrowser @ git+https://github.com/VultureProject/robobrowser@master
+Send2Trash==1.8.3
 pillow
 python-dateutil
 QtAwesome==0.3.3

@@ -657,6 +657,8 @@ class DLManager(QObject):
     _browser = RoboBrowser(history=True,
                         user_agent="Mozilla/5.0 (Windows NT 6.3; rv:36.0) Gecko/20100101 Firefox/36.0",
                         parser='html.parser', allow_redirects=False)
+    # Add the Accept-Encoding header to the browser session
+    _browser.session.headers.update({'Accept-Encoding': 'gzip, deflate, br'})
     def __init__(self, download_type=app_constants.DOWNLOAD_TYPE_OTHER):
         super().__init__()
         self._download_type = download_type
