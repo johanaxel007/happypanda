@@ -1469,7 +1469,8 @@ class BasePopup(TransparentWidget):
         if parent and blur:
             try:
                 self.graphics_blur = parent.graphics_blur
-                parent.setGraphicsEffect(self.graphics_blur)
+                # Apply the effect to the central widget, not the whole window
+                parent.center.setGraphicsEffect(self.graphics_blur)
             except AttributeError:
                 pass
 
