@@ -1249,7 +1249,7 @@ class EHen(CommonHen):
         if cookies.get('ipb_member_id') and cookies.get('ipb_pass_hash'):
             # check if there is access to ex
             ex = settings.ExProperties()
-            if ex.custom: # this is to avoid spamming ex with requests
+            if ex.custom:  # this is to avoid spamming ex with requests
                 return ex.custom.get('login')
             else:
                 custom = {}
@@ -1261,17 +1261,17 @@ class EHen(CommonHen):
                 try:
                     r = cls.handle_error(cls, s.get('https://exhentai.org/'), wait=False)
                 except requests.ConnectionError:
-                    log.exception("connection error")
+                    log.exception('connection error')
                     return 0
                 if r:
-                    custom['login'] = 2 # access to ex
+                    custom['login'] = 2  # access to ex
                 if r is None:
-                    custom['login'] = 1 # we get sadpanda
+                    custom['login'] = 1  # we get sadpanda
 
                 ex.custom = custom
                 ex.save()
                 return custom['login']
-        return 0 # we've been banned, wrong credentials or haven't signed in
+        return 0  # we've been banned, wrong credentials or haven't signed in
 
     def handle_error(self, response, wait=True):
         content_type = response.headers['content-type']
@@ -1282,14 +1282,75 @@ class EHen(CommonHen):
             if wait:
                 time.sleep(5)
             return None
-        elif 'text/html' and 'Your IP address has been' in text:
-            app_constants.NOTIF_BAR.add_text("Your IP address has been temporarily banned from g.e-/exhentai")
+        elif 'text/html' in content_type and 'has been temporarily banned' in text:
             log_e('Your IP address has been temp banned from g.e- and ex-hentai')
+
             if wait:
-                time.sleep(5)
-            return False
+                hours = 0
+                minutes = 0
+                seconds = 0
+
+                hours_match = regex.search(r'(\d+)\s+hours?', text)
+                minutes_match = regex.search(r'(\d+)\s+minutes?', text)
+                seconds_match = regex.search(r'(\d+)\s+seconds?', text)
+
+                if hours_match:
+                    hours = int(hours_match.group(1))
+                if minutes_match:
+                    minutes = int(minutes_match.group(1))
+                if seconds_match:
+                    seconds = int(seconds_match.group(1))
+
+                total_seconds = (hours * 3600) + (minutes * 60) + seconds
+
+                if total_seconds > 0:
+                    end_time = time.time() + total_seconds
+
+                    while time.time() < end_time:
+                        remaining_seconds_total = end_time - time.time()
+                        if remaining_seconds_total <= 0:
+                            break
+
+                        # Calculate components for display
+                        rem_secs_comp = remaining_seconds_total % 60
+                        rem_mins_total = remaining_seconds_total // 60
+                        rem_mins_comp = rem_mins_total % 60
+                        rem_hours_comp = rem_mins_total // 60
+
+                        msg_parts = []
+                        if rem_hours_comp > 0:
+                            h_unit = "hour" if int(rem_hours_comp) == 1 else "hours"
+                            msg_parts.append(f"{int(rem_hours_comp)} {h_unit}")
+                        if rem_mins_comp > 0:
+                            m_unit = "minute" if int(rem_mins_comp) == 1 else "minutes"
+                            msg_parts.append(f"{int(rem_mins_comp)} {m_unit}")
+                        # Only show seconds if the total remaining time is less than a minute
+                        if remaining_seconds_total < 60 and rem_secs_comp > 0:
+                            s_unit = "second" if int(rem_secs_comp) == 1 else "seconds"
+                            msg_parts.append(f"{int(rem_secs_comp)} {s_unit}")
+
+                        if not msg_parts:
+                            msg_parts.append("a moment")
+
+                        message = f"Temporarily banned. Waiting for ban to expire in {' and '.join(msg_parts)}."
+                        app_constants.NOTIF_BAR.add_text(message, autohide=False)
+
+                        # Determine sleep duration
+                        sleep_duration = min(30, int(remaining_seconds_total))
+                        if remaining_seconds_total < 30:
+                            sleep_duration = 1
+                        time.sleep(max(1, sleep_duration)) # sleep at least 1 second
+
+                    app_constants.NOTIF_BAR.add_text("Ban expired. Resuming metadata fetch.")
+                    return False  # Signal to retry the request
+
+                else:  # No time found in the ban message, use a default wait
+                    app_constants.NOTIF_BAR.add_text("Your IP address has been temporarily banned from g.e-/exhentai")
+                    time.sleep(5)
+
+            return False # Always signal for a retry on ban
         elif 'text/html' in content_type and 'You are opening' in text:
-            time.sleep(random.randint(10,50))
+            time.sleep(random.randint(10, 50))
         return True
 
     @classmethod
@@ -1297,7 +1358,7 @@ class EHen(CommonHen):
         "Parses url into a list of gallery id and token"
         gallery_id_token = regex.search('(?<=g/)([0-9]+)/([a-zA-Z0-9]+)', url)
         if not gallery_id_token:
-            log_e("Error extracting g_id and g_token from url: {}".format(url))
+            log_e('Error extracting g_id and g_token from url: {}'.format(url))
             return None
         # gallery_id_token = gallery_id_token.group()
         # gallery_id, gallery_token = gallery_id_token.split('/')
@@ -1326,25 +1387,33 @@ class EHen(CommonHen):
         for url in list_of_urls:
             parsed_url = EHen.parse_url(url.strip())
             if parsed_url:
-                dict_metadata[parsed_url[0]] = url # gallery id
+                dict_metadata[parsed_url[0]] = url  # gallery id
                 payload['gidlist'].append(parsed_url)
 
         if payload['gidlist']:
             self.begin_lock()
             try:
-                if cookies:
-                    self.check_cookie(cookies)
-                    r = requests.post(self.e_url, json=payload, timeout=30, headers=self.HEADERS, cookies=self.COOKIES)
-                else:
-                    r = requests.post(self.e_url, json=payload, timeout=30, headers=self.HEADERS)
-            except requests.ConnectionError as err:
-                log_e("Could not fetch metadata: {}".format(err))
-                raise app_constants.MetadataFetchFail("connection error")
+                while True:
+                    try:
+                        if cookies:
+                            self.check_cookie(cookies)
+                            r = requests.post(self.e_url, json=payload, timeout=30, headers=self.HEADERS, cookies=self.COOKIES)
+                        else:
+                            r = requests.post(self.e_url, json=payload, timeout=30, headers=self.HEADERS)
+
+                        status = self.handle_error(r)
+                        if status is True:
+                            break  # Success
+                        elif status is False:
+                            continue  # Banned, retry
+                        else:  # None
+                            return 'error'
+
+                    except requests.ConnectionError as err:
+                        log_e("Could not fetch metadata: {}".format(err))
+                        raise app_constants.MetadataFetchFail("connection error")
             finally:
                 self.end_lock()
-                
-            if not self.handle_error(r):
-                return 'error'
         else:
             return None
 
@@ -1410,7 +1479,7 @@ class EHen(CommonHen):
                 new_gallery['tags'] = tags
                 parsed_metadata[url] = new_gallery
             else:
-                log_e("Error in received response with URL: {}".format(url))
+                log_e('Error in received response with URL: {}'.format(url))
 
         return parsed_metadata
 
@@ -1419,7 +1488,7 @@ class EHen(CommonHen):
         """
         Logs into g.e-h
         """
-        log_i("Attempting EH Login")
+        log_i('Attempting EH Login')
         eh_c = {}
         exprops = settings.ExProperties()
         if not relogin:
@@ -1430,21 +1499,18 @@ class EHen(CommonHen):
                 if cls.check_login(exprops.cookies):
                     cls.COOKIES.update(exprops.cookies)
                     return cls.COOKIES
-        p = {
-            'ipb_member_id':user,
-            'ipb_pass_hash':password
-            }
+        p = {'ipb_member_id': user, 'ipb_pass_hash': password}
 
         s = requests.Session()
         s.headers.update(cls.HEADERS)
         s.cookies.update(p)
-        r =  s.get('https://e-hentai.org/')
+        r = s.get('https://e-hentai.org/')
 
         if not cls.check_login(s.cookies):
-            log_w("EH login failed")
+            log_w('EH login failed')
             raise app_constants.WrongLogin
 
-        log_i("EH login succes")
+        log_i('EH login succes')
         exprops.cookies = s.cookies
         exprops.username = user
         exprops.password = password
@@ -1474,27 +1540,34 @@ class EHen(CommonHen):
 
         self.begin_lock()
         try:
-            if is_hash:
-                hash_url = self.e_url_o + '?f_shash=' + search_string
-                if app_constants.INCLUDE_EH_EXPUNGED:
-                    hash_url += '&fs_exp=1'
-                search_url = hash_url
-                params = {}
-            else:  # Title search
-                search_url = self.e_url_o
-                params = {'f_search': search_string}
-                if app_constants.INCLUDE_EH_EXPUNGED:
-                    params['f_sh'] = 'on'
+            while True:
+                if is_hash:
+                    hash_url = self.e_url_o + '?f_shash=' + search_string
+                    if app_constants.INCLUDE_EH_EXPUNGED:
+                        hash_url += '&fs_exp=1'
+                    search_url = hash_url
+                    params = {}
+                else:  # Title search
+                    search_url = self.e_url_o
+                    params = {'f_search': search_string}
+                    if app_constants.INCLUDE_EH_EXPUNGED:
+                        params['f_sh'] = 'on'
 
-            if cookies:
-                self.check_cookie(cookies)
-                r = requests.get(search_url, params=params, timeout=30, headers=self.HEADERS, cookies=self.COOKIES)
-            else:
-                r = requests.get(search_url, params=params, timeout=30, headers=self.HEADERS)
+                if cookies:
+                    self.check_cookie(cookies)
+                    r = requests.get(search_url, params=params, timeout=30, headers=self.HEADERS, cookies=self.COOKIES)
+                else:
+                    r = requests.get(search_url, params=params, timeout=30, headers=self.HEADERS)
 
-            log_d(f'Searching with URL: {r.url}')
-            if not self.handle_error(r):
-                return 'error'
+                log_d(f'Searching with URL: {r.url}')
+
+                status = self.handle_error(r)
+                if status is True:
+                    break  # Success, exit loop
+                elif status is False:
+                    continue  # Banned, retry
+                else:  # None
+                    return 'error'
 
             soup = BeautifulSoup(r.text, 'html.parser')
 
