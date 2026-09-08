@@ -1370,6 +1370,27 @@ class EHen(CommonHen):
         gallery_token = gallery_id_token.group(2)
         return [gallery_id, gallery_token]
 
+    @staticmethod
+    def parse_pub_date(posted):
+        """Converts a unix 'posted' timestamp to a datetime, or None when there is no real date.
+
+        chaika uses a non-positive value as its "date unknown" placeholder (-3600 shows up in
+        the wild), and on Windows datetime.fromtimestamp() raises OSError for anything before
+        the epoch. pub_date is optional throughout the app, so None is the honest answer.
+        """
+        try:
+            posted = int(posted)
+        except (TypeError, ValueError):
+            log_w('Gallery has an unreadable pub date: {!r}'.format(posted))
+            return None
+        if posted <= 0:
+            return None
+        try:
+            return datetime.fromtimestamp(posted)
+        except (OSError, OverflowError, ValueError):
+            log_w('Gallery has an out of range pub date: {}'.format(posted))
+            return None
+
     def get_metadata(self, list_of_urls, cookies=None):
         """
         Fetches the metadata from the provided list of urls
@@ -1377,8 +1398,8 @@ class EHen(CommonHen):
         returns raw api data and a dict with gallery id as key and url as value
         """
         assert isinstance(list_of_urls, list)
-        if len(list_of_urls) > 25:
-            log_e('More than 25 urls are provided. Aborting.')
+        if len(list_of_urls) > self.MAX_GDATA_URLS:
+            log_e(f'More than {self.MAX_GDATA_URLS} urls are provided. Aborting.')
             return None
 
         payload = {"method": "gdata",
@@ -1466,7 +1487,7 @@ class EHen(CommonHen):
                     new_gallery['title'] = {'def':gallery['title']}
 
                 new_gallery['type'] = gallery['category']
-                new_gallery['pub_date'] = datetime.fromtimestamp(int(gallery['posted']))
+                new_gallery['pub_date'] = cls.parse_pub_date(gallery.get('posted'))
                 tags = {'default':[]}
                 for t in gallery['tags']:
                     if ':' in t:
@@ -1521,6 +1542,15 @@ class EHen(CommonHen):
 
         return s.cookies
 
+    # e-hentai paginates by keyset: the "Next >" link carries next=<gid of the last gallery on
+    # the page> and is rendered only when a further page exists, so its presence is the signal to
+    # follow it - nothing here assumes a page size, which a logged in user can change.
+    MAX_SEARCH_PAGES = 3
+
+    # The gdata api takes at most this many galleries per call, and rejects the whole request
+    # rather than truncating it.
+    MAX_GDATA_URLS = 25
+
     def search(self, search_string, **kwargs):
         """
         Searches ehentai for the provided string (either a title query or a hash).
@@ -1536,42 +1566,129 @@ class EHen(CommonHen):
                 return True
             return 'No hits found' not in soup.body.text
 
-        found_galleries = {}
-        search_type = 'Image Hash' if is_hash else 'Title'
-        log_i(f'Initiating {search_type} search on ehentai')
+        def parse_page(soup, page_url):
+            "Returns the (title, url) pairs listed on one results page."
+            results = []
+            if not soup.body:
+                return results
+            gallery_list_container = soup.find(attrs={'class': 'itg'})
+            if gallery_list_container:
+                # Handle both table (list) and div (thumbnail) views correctly
+                if gallery_list_container.name == 'table':
+                    # This is for list view ('itl')
+                    visible_galleries = gallery_list_container.find_all('tr')
+                else:
+                    # This is for thumbnail views ('gld')
+                    visible_galleries = gallery_list_container.find_all('div', class_='gl1t')
 
+                log_i(f'Found {len(visible_galleries)} potential gallery entries in HTML.')
+
+                for item in visible_galleries:
+                    link_element = item.select_one('a[href*="/g/"]')
+                    title_element = item.select_one('.glink')
+                    if link_element and title_element:
+                        results.append((title_element.text.strip(), link_element['href']))
+
+            elif '/g/' in page_url and soup.select_one('#gdn'):
+                log_i('Landed directly on a gallery page.')
+                results.append((soup.select_one('#gn').text, page_url))
+            return results
+
+        def next_page_url(soup, page_url):
+            "The url of the following results page, or '' when this is the last one."
+            link = soup.select_one('a[href*="next="]')
+            href = link['href'].strip() if link else ''
+            return href if href and href != page_url else ''
+
+        search_type = 'Image Hash' if is_hash else 'Title'
+
+        def start_of(expunged):
+            "The first page's url and params for one listing."
+            if is_hash:
+                url = self.e_url_o + '?f_shash=' + search_string
+                # f_sh selects the expunged listing; it is not a query parameter of the
+                # hash lookup itself, so it rides along in the query string here.
+                return (url + '&f_sh=on') if expunged else url, {}
+            query = {'f_search': search_string}
+            if expunged:
+                query['f_sh'] = 'on'
+            return self.e_url_o, query
+
+        def run_pass(expunged):
+            """Fetches one listing, following its pagination. Returns (title, url) pairs.
+
+            Assumes the lock is already held. Returns 'error' to abort the whole search.
+            """
+            found_galleries = []
+            seen_urls = set()
+            page_url, params = start_of(expunged)
+
+            for page in range(1, self.MAX_SEARCH_PAGES + 1):
+                if page > 1:
+                    # Still inside one lock, so begin_lock's pacing does not apply here.
+                    log_i(f'Results page {page - 1} was full, following the next page link.')
+                    time.sleep(random.randint(1, max(1, self.TIME_RAND)))
+
+                while True:
+                    if cookies:
+                        self.check_cookie(cookies)
+                        r = requests.get(page_url, params=params, timeout=30, headers=self.HEADERS, cookies=self.COOKIES)
+                    else:
+                        r = requests.get(page_url, params=params, timeout=30, headers=self.HEADERS)
+
+                    log_d(f'Searching with URL: {r.url}')
+
+                    status = self.handle_error(r)
+                    if status is True:
+                        break  # Success, exit loop
+                    elif status is False:
+                        continue  # Banned, retry
+                    else:  # None
+                        return 'error'
+
+                soup = BeautifulSoup(r.text, 'html.parser')
+
+                if page == 1 and not no_hits_found_check(soup):
+                    listing = 'expunged galleries' if expunged else search_type
+                    log_w(f'No hits found with {listing}: {search_string}')
+                    return []
+
+                try:
+                    page_results = parse_page(soup, r.url)
+                except Exception:
+                    log.exception('Unparseable HTML from search results.')
+                    log_d(f'\n{soup.prettify()}\n')
+                    break
+
+                for title, g_url in page_results:
+                    if g_url not in seen_urls:
+                        seen_urls.add(g_url)
+                        found_galleries.append((title, g_url))
+
+                # The next link is only rendered when there is a further page to fetch.
+                page_url = next_page_url(soup, r.url)
+                if not page_url:
+                    break
+                params = {}  # the next link already carries the whole query
+
+            return found_galleries
+
+        log_i(f'Initiating {search_type} search on ehentai')
         self.begin_lock()
         try:
-            while True:
-                if is_hash:
-                    hash_url = self.e_url_o + '?f_shash=' + search_string
-                    if app_constants.INCLUDE_EH_EXPUNGED:
-                        hash_url += '&fs_exp=1'
-                    search_url = hash_url
-                    params = {}
-                else:  # Title search
-                    search_url = self.e_url_o
-                    params = {'f_search': search_string}
-                    if app_constants.INCLUDE_EH_EXPUNGED:
-                        params['f_sh'] = 'on'
+            found_galleries = run_pass(expunged=False)
+            if found_galleries == 'error':
+                return 'error'
 
-                if cookies:
-                    self.check_cookie(cookies)
-                    r = requests.get(search_url, params=params, timeout=30, headers=self.HEADERS, cookies=self.COOKIES)
-                else:
-                    r = requests.get(search_url, params=params, timeout=30, headers=self.HEADERS)
-
-                log_d(f'Searching with URL: {r.url}')
-
-                status = self.handle_error(r)
-                if status is True:
-                    break  # Success, exit loop
-                elif status is False:
-                    continue  # Banned, retry
-                else:  # None
+            # f_sh selects the expunged listing exclusively rather than adding it to the normal
+            # one, so the two sets are disjoint and reaching both means searching twice. Gated on
+            # the first coming back empty, spending the request only where the alternative fails.
+            if not found_galleries and app_constants.INCLUDE_EH_EXPUNGED:
+                log_i('Nothing in the normal listing, retrying among expunged galleries.')
+                time.sleep(random.randint(1, max(1, self.TIME_RAND)))
+                found_galleries = run_pass(expunged=True)
+                if found_galleries == 'error':
                     return 'error'
-
-            soup = BeautifulSoup(r.text, 'html.parser')
 
         except requests.ConnectionError as err:
             log.exception(f'Could not perform {search_type} search: {err}')
@@ -1579,49 +1696,11 @@ class EHen(CommonHen):
         finally:
             self.end_lock()
 
-        if not no_hits_found_check(soup):
-            log_w(f'No hits found with {search_type}: {search_string}')
-            return {}
-
-        log_i('Parsing search results...')
-        try:
-            if soup.body:
-                found_galleries[search_string] = []
-                gallery_list_container = soup.find(attrs={'class': 'itg'})
-
-                if gallery_list_container:
-                    # Handle both table (list) and div (thumbnail) views correctly
-                    if gallery_list_container.name == 'table':
-                        # This is for list view ('itl')
-                        visible_galleries = gallery_list_container.find_all('tr')
-                    else:
-                        # This is for thumbnail views ('gld')
-                        visible_galleries = gallery_list_container.find_all('div', class_='gl1t')
-
-                    log_i(f'Found {len(visible_galleries)} potential gallery entries in HTML.')
-
-                    for item in visible_galleries:
-                        link_element = item.select_one('a[href*="/g/"]')
-                        title_element = item.select_one('.glink')
-                        if link_element and title_element:
-                            title = title_element.text.strip()
-                            g_url = link_element['href']
-                            found_galleries[search_string].append((title, g_url))
-
-                elif '/g/' in r.url and soup.select_one('#gdn'):
-                    log_i('Landed directly on a gallery page.')
-                    title = soup.select_one('#gn').text
-                    found_galleries[search_string].append((title, r.url))
-        except Exception:
-            log.exception('Unparseable HTML from search results.')
-            log_d(f'\n{soup.prettify()}\n')
-
         if found_galleries:
-            log_i(f'Found {len(found_galleries.get(search_string, []))} potential match(es).')
-            return found_galleries
-        else:
-            log_w('Could not find any galleries from search.')
-            return {}
+            log_i(f'Found {len(found_galleries)} potential match(es).')
+            return {search_string: found_galleries}
+        log_w('Could not find any galleries from search.')
+        return {}
 
 class ExHen(EHen):
     "Fetches gallery metadata from exhen"
@@ -1638,25 +1717,85 @@ class ExHen(EHen):
 
 class ChaikaHen(CommonHen):
     "Fetches gallery metadata from panda.chaika.moe"
-    g_url = "http://panda.chaika.moe/gallery/"
-    g_api_url = "http://panda.chaika.moe/jsearch?gallery="
-    a_api_url = "http://panda.chaika.moe/jsearch?archive="
+    base_url = "https://panda.chaika.moe"
+    g_url = base_url + "/gallery/"
+    a_url = base_url + "/archive/"
+    g_api_url = base_url + "/jsearch?gallery="
+    a_api_url = base_url + "/jsearch?archive="
+    s_api_url = base_url + "/search/"
+    SHA1_RE = regex.compile(r'[a-f0-9]{40}', regex.IGNORECASE)
+    # An e-hentai style filter token, e.g. artist:"foo bar"$ or language:english$
+    EH_FILTER_RE = regex.compile(r'\b\w+:(?:"[^"]*"|\S+)')
+    EH_QUOTED_RE = regex.compile(r'"([^"]*)"')
+
     def __init__(self):
-        self.url = "http://panda.chaika.moe/jsearch?sha1="
+        self.url = self.base_url + "/jsearch?sha1="
         self._QUEUE_LIMIT = 1
+
+    @classmethod
+    def _plain_title(cls, query):
+        """Reduces an e-hentai style query to the bare title chaika can search on.
+
+        chaika has no filter syntax, so 'Some Title' artist:"x"$ language:english$ has to be
+        cut back down to Some Title before it is sent.
+        """
+        quoted = cls.EH_QUOTED_RE.search(query)
+        title = quoted.group(1) if quoted else cls.EH_FILTER_RE.sub('', query)
+        return title.strip()
+
+    def _get_json(self, url, params=None):
+        "GETs a chaika endpoint, returning the decoded json or None"
+        try:
+            r = requests.get(url, params=params, timeout=30, headers=self.HEADERS)
+            r.raise_for_status()
+            return r.json()
+        except requests.ConnectionError as err:
+            log_e("Could not reach chaika: {}".format(err))
+            raise app_constants.MetadataFetchFail("connection error")
+        except requests.RequestException:
+            log.exception('chaika request failed: {}'.format(url))
+        except ValueError:
+            log_e('chaika returned no usable json: {}'.format(url))
+        return None
 
     def search(self, search_string, **kwargs):
         """
-        search_string should be a list of hashes
-        will actually just put urls together
-        return search_string:[list of title & url tuples]
+        Searches chaika for an image hash or a title.
+        Returns a dict with search_string:[list of title & url tuples] of hits found.
         """
-        if not isinstance(search_string, (list,tuple)):
-            search_string = [search_string]
-        x = {}
-        for h in search_string:
-            x[h] = [("", self.url+h)]
-        return x
+        is_hash = isinstance(search_string, str) and self.SHA1_RE.fullmatch(search_string)
+
+        if is_hash:
+            log_i('Initiating Image Hash search on chaika')
+            data = self._get_json(self.url + search_string)
+            # jsearch?sha1= answers with a list of every archive holding that file
+            archives = data if isinstance(data, list) else []
+        else:
+            title = self._plain_title(search_string)
+            if not title:
+                return {}
+            log_i('Initiating Title search on chaika')
+            data = self._get_json(self.s_api_url, params={'title': title, 'json': '1'})
+            archives = data.get('archives') or [] if isinstance(data, dict) else []
+
+        # An archive url addresses one specific hit, which get_metadata resolves precisely.
+        found = [(a.get('title') or '', '{}{}/'.format(self.a_url, a['id']))
+                 for a in archives if isinstance(a, dict) and a.get('id')]
+
+        if not found and archives:
+            # No archive ids came back, so the hash endpoint itself is the only handle we have.
+            # get_metadata resolves that to the first hit, so offer exactly that one rather than
+            # a list of choices that all lead to the same place.
+            first = next((a for a in archives if isinstance(a, dict)), None)
+            if first is not None:
+                found = [(first.get('title') or '', self.url + search_string)]
+
+        if not found:
+            log_w('No hits found on chaika with: {}'.format(search_string))
+            return {}
+
+        log_i('Found {} result(s) on chaika'.format(len(found)))
+        return {search_string: found}
 
     def get_metadata(self, list_of_urls):
         """

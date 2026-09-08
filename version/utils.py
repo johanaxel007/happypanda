@@ -1109,25 +1109,30 @@ def title_parser(title):
     try:
         a = re.findall(r'((?<=\[) *[^\]]+( +\S+)* *(?=\]))', title)
         assert len(a) != 0
-        try:
-            artist = a[0][0].strip()
-        except IndexError:
-            artist = ''
+        lang = app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES
+
+        # The artist is the leading "[Circle (Artist)]" group, optionally preceded by event tags
+        # like "(C86)". It has to be the leading one: in "Guardian of Faith II [English]" the only
+        # bracketed group is a language, and one taken from there goes out as an artist: filter.
+        artist = ''
+        leading = re.match(r'^\s*(?:\([^)]*\)\s*)*\[([^\]]+)\]', title)
+        if leading:
+            candidate = leading.group(1).strip()
+            if candidate.lower().capitalize() not in lang:
+                artist = candidate
         parsed_title['artist'] = artist
 
-        try:
-            assert a[1]
-            lang = app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES
-            for x in a:
-                l = x[0].strip()
-                l = l.lower()
-                l = l.capitalize()
-                if l in lang:
-                    parsed_title['language'] = l
-                    break
-            else:
-                parsed_title['language'] = app_constants.G_DEF_LANGUAGE
-        except IndexError:
+        # Every bracketed group is a language candidate, including the only one: "Guardian of
+        # Faith II [English]" states its language in the single group it has, and defaulting
+        # instead sends the wrong language: filter on every search for it.
+        for x in a:
+            l = x[0].strip()
+            l = l.lower()
+            l = l.capitalize()
+            if l in lang:
+                parsed_title['language'] = l
+                break
+        else:
             parsed_title['language'] = app_constants.G_DEF_LANGUAGE
 
         t = title

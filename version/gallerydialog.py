@@ -576,8 +576,8 @@ class GalleryDialog(QWidget):
                 self.url_prog.setStyleSheet(danger)
                 QTimer.singleShot(3000, do_hide)
 
-        def gallery_picker(gallery, title_url_list, q):
-            self.parent()._web_metadata_picker(gallery, title_url_list, q, self)
+        def gallery_picker(gallery, title_url_list, q, extras=None):
+            self.parent()._web_metadata_picker(gallery, title_url_list, q, extras, self)
 
         try:
             dummy_gallery = self.make_gallery(self.gallery, False)

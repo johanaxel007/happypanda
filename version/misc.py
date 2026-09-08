@@ -18,7 +18,7 @@ import logging
 import math
 import functools
 
-from PyQt5.QtCore import (QModelIndex, Qt, QPoint, pyqtSignal, QTimer, QSize, QRect, QFileInfo, QPropertyAnimation,
+from PyQt5.QtCore import (QModelIndex, Qt, QPoint, QEvent, pyqtSignal, QTimer, QSize, QRect, QFileInfo, QPropertyAnimation,
                           QRectF, QPropertyAnimation, QByteArray, QPointF, QSizeF, qRound)
 from PyQt5.QtGui import (QTextCursor, QIcon, QMouseEvent, QFont, QPalette, QPainter, QBrush, QColor, QPen, QPixmap,
                          QPaintEvent, QFontMetrics, QPolygonF, QCursor, QTextOption, QTextLayout, QPalette)
@@ -29,6 +29,7 @@ from PyQt5.QtWidgets import (QWidget, QProgressBar, QLabel, QVBoxLayout, QHBoxLa
                              QMenu, QActionGroup, QCommonStyle, QTableWidget, QTableWidgetItem, QTableView, QStyleOption)
 
 import executors
+import pewnet
 import utils
 import app_constants
 import gallerydb
@@ -1812,12 +1813,33 @@ class SingleGalleryChoices(BasePopup):
     if text is passed, the text will be shown alongside gallery, else gallery be centered
     """
     USER_CHOICE = pyqtSignal(object)
-    def __init__(self, gallery, tuple_first_idx, text=None, parent=None):
+
+    # Covers are shown at roughly the size the source serves them at, large enough to tell two
+    # editions of one work apart without covering the list they belong to.
+    PREVIEW_SIZE = (200, 280)
+
+    def __init__(self, gallery, tuple_first_idx, text=None, parent=None, extras=None):
         super().__init__(parent, flags= Qt.Dialog | Qt.FramelessWindowHint)
+        extras = extras or {}
+        self.gallery = gallery
+        self._thumbnails = extras.get('thumbnails') or {}
+        self._preview_cache = {}
+        self._preview_requested = set()
+        self._preview_wanted = ''
         main_layout = QVBoxLayout()
         self.main_widget.setLayout(main_layout)
-        g_showcase = GalleryShowcaseWidget()
+
+        source_menu = QMenu(self)
+        source_menu.addAction('Open containing folder').triggered.connect(self.open_source_folder)
+        g_showcase = GalleryShowcaseWidget(menu=source_menu)
         g_showcase.set_gallery(gallery, (170 // 1.40, 170))
+        g_showcase.double_clicked.connect(lambda _: self.open_source_folder())
+
+        position = extras.get('position')
+        # An unattended search hands over a whole queue of these at once, and there is no other
+        # sign of how much of it is left.
+        if position and text:
+            text = '{}\n\nGallery {} of {} needing a choice.'.format(text, *position)
         if text:
             t_layout = QHBoxLayout()
             main_layout.addLayout(t_layout)
@@ -1836,13 +1858,95 @@ class SingleGalleryChoices(BasePopup):
         for t in tuple_first_idx:
             item = CustomListItem(t)
             item.setText(t[0])
+            item.setToolTip('{}\n\nRight click or double click to open in your browser.'.format(t[1]))
             self.list_w.addItem(item)
+        # A romaji listing title is not something the owner of a Japanese folder name can
+        # verify by eye. The cover usually settles it on its own; the source page always does.
+        self.list_w.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list_w.customContextMenuRequested.connect(self.open_in_browser)
+        self.list_w.itemDoubleClicked.connect(self.open_in_browser)
+
+        self._preview_popup = QLabel(self, Qt.ToolTip | Qt.FramelessWindowHint)
+        self._preview_popup.hide()
+        if self._thumbnails:
+            self.list_w.setMouseTracking(True)
+            self.list_w.viewport().setMouseTracking(True)  # itemEntered needs it on the viewport
+            self.list_w.viewport().installEventFilter(self)
+            self.list_w.itemEntered.connect(self.show_preview)
         self.buttons = self.add_buttons('Skip All', 'Skip', 'Choose',)
         self.buttons[2].clicked.connect(self.finish)
         self.buttons[1].clicked.connect(self.skip)
         self.buttons[0].clicked.connect(self.skipall)
         self.resize(400, 400)
         self.show()
+
+    def open_in_browser(self, pos_or_item):
+        "Opens the source page for the item under the cursor, leaving the dialog open."
+        item = pos_or_item if isinstance(pos_or_item, CustomListItem) else self.list_w.itemAt(pos_or_item)
+        if item:
+            utils.open_web_link(item.item[1])
+
+    def open_source_folder(self):
+        """Opens the local gallery in the file manager, selecting it when it is an archive.
+
+        open_path reports a path that is no longer there through the notification bar, which is
+        the right answer for a gallery whose files have since been moved or deleted.
+        """
+        path = self.gallery.path if self.gallery else ''
+        if path and not os.path.isdir(path):
+            utils.open_path(os.path.split(path)[0], path)
+        else:
+            utils.open_path(path)
+
+    def show_preview(self, item):
+        "Shows the hovered candidate's cover beside the cursor, fetching it the first time."
+        url = item.item[1]
+        self._preview_wanted = url
+        thumb_url = self._thumbnails.get(url)
+        if not thumb_url:
+            self._preview_popup.hide()
+            return
+
+        pixmap = self._preview_cache.get(url)
+        if pixmap:
+            self._place_preview(pixmap)
+            return
+
+        self._preview_popup.hide()
+        if url in self._preview_requested or not app_constants.DOWNLOAD_MANAGER:
+            return
+        self._preview_requested.add(url)
+        download = pewnet.Downloader.add_to_queue(thumb_url, None, app_constants.temp_dir)
+        download.preview_for = url
+        # A bound method, not a lambda: the download thread emits this, and only a slot with
+        # thread affinity gets queued back onto the gui thread instead of running there.
+        download.file_rdy.connect(self._preview_downloaded)
+
+    def _preview_downloaded(self, download):
+        pixmap = QPixmap(download.file)
+        if pixmap.isNull():
+            return
+        url = getattr(download, 'preview_for', '')
+        pixmap = pixmap.scaled(*self.PREVIEW_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._preview_cache[url] = pixmap
+        if self._preview_wanted == url:  # the cursor may have moved on while this was fetched
+            self._place_preview(pixmap)
+
+    def _place_preview(self, pixmap):
+        self._preview_popup.setPixmap(pixmap)
+        self._preview_popup.resize(pixmap.size())
+        self._preview_popup.move(QCursor.pos() + QPoint(20, 20))
+        self._preview_popup.show()
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Leave and watched is self.list_w.viewport():
+            self._preview_wanted = ''
+            self._preview_popup.hide()
+        return super().eventFilter(watched, event)
+
+    def closeEvent(self, event):
+        self._preview_popup.hide()  # a tool tip window outlives its parent's close
+        return super().closeEvent(event)
 
     def finish(self):
         item = self.list_w.selectedItems()

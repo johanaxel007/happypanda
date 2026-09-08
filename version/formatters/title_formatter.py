@@ -2,9 +2,20 @@
 
 import logging
 import re
+from enum import StrEnum
+
 import unicodedata
 
 log = logging.getLogger(__name__)
+
+
+# --- Enums ---
+class TranslationStyle(StrEnum):
+    """Enum for selecting the forbidden character translation style."""
+    DEFAULT = 'default'
+    GALLERY_INFO_COPY = 'gallery_info_copy'
+    SEARCH = 'search'
+
 
 # --- Constants ---
 # Container definitions
@@ -14,10 +25,35 @@ _container_tuples: list[tuple[str, str]] = [(c[0], c[1]) for c in CONTAINER_LIST
 CONTAINER_START: str = ''.join(t[0] for t in _container_tuples)
 CONTAINER_END: str = ''.join(t[1] for t in _container_tuples)
 
-# Forbidden character replacement map
+# Forbidden character replacement map (Default)
 FORBIDDEN_CHARS: str = '<>:""/|?*\\'
 REPLACER_CHARS: str = '＜＞：”＂／｜？＊＼'
 FORBIDDEN_TRANSLATION: dict = str.maketrans(FORBIDDEN_CHARS, REPLACER_CHARS)
+
+# Gallery Info Copy style replacement map
+# Matches behavior of x/gallery-info-copy userscript
+# Replaces: < > : " / \ | ? * and control chars (0x00-0x1F)
+_GALLERY_INFO_COPY_MAP: dict[str, str] = {
+    '<': '\uFF1C',  # ＜
+    '>': '\uFF1E',  # ＞
+    ':': '\uFF1A',  # ：
+    '"': '\uFF02',  # ＂
+    '/': '\uFF0F',  # ／
+    '\\': '\uFF0F',  # ／ (Backslash maps to Slash in this style)
+    '|': '\uFF5C',  # ｜
+    '?': '\uFF1F',  # ？
+    '*': '\uFF0A',  # ＊
+}
+# Map control characters 0x00-0x1F to '-'
+for _i in range(32):
+    _GALLERY_INFO_COPY_MAP[chr(_i)] = '-'
+
+GALLERY_INFO_COPY_TRANSLATION: dict = str.maketrans(_GALLERY_INFO_COPY_MAP)
+
+# Search style replacement map
+# The inverse of FORBIDDEN_TRANSLATION: folds the full-width stand-ins a filesystem forces onto
+# a title back to ASCII, most importantly '｜' -> '|', the separator sources actually index.
+SEARCH_TRANSLATION: dict = str.maketrans(REPLACER_CHARS, FORBIDDEN_CHARS)
 
 # Full-width to half-width conversion map
 DEFAULT_FULL: str = '１２３４５６７８９０（）［］｛｝～！＠＃＄％︿＆＿＋－＝；’：，．（）〜'
@@ -165,6 +201,7 @@ def to_half_width_including_forbidden(text: str) -> str:
 def replace_forbidden_chars(text: str) -> str:
     """
     Replaces characters forbidden in filenames with their full-width equivalents.
+    Uses the default translation map.
 
     Args:
         text: The string to process.
@@ -179,10 +216,11 @@ def replace_forbidden_chars(text: str) -> str:
 
 # --- Main Formatting Function ---
 def format_title(
-    text: str,
-    *,
-    convert_to_half_width_flag: bool = True,
-    use_python_normalization: bool = False,
+        text: str,
+        *,
+        convert_to_half_width_flag: bool = True,
+        use_python_normalization: bool = False,
+        translation_style: TranslationStyle = TranslationStyle.DEFAULT,
 ) -> str:
     """
     Cleans and reformats a title string based on the logic from the UserScript.
@@ -194,6 +232,8 @@ def format_title(
                                    uses Python's standard unicodedata.normalize('NFKC')
                                    for a broader conversion, overriding the script's
                                    specific mapping.
+        translation_style: The style of forbidden character replacement.
+                           Uses TranslationStyle enum.
 
     Returns:
         The formatted title string.
@@ -213,6 +253,11 @@ def format_title(
             formatted_text = formatted_text.translate(FULL_TO_HALF_TRANSLATION)
 
     if formatted_text:  # Only translate if not empty
-        formatted_text = formatted_text.translate(FORBIDDEN_TRANSLATION)
+        if translation_style == TranslationStyle.GALLERY_INFO_COPY:
+            formatted_text = formatted_text.translate(GALLERY_INFO_COPY_TRANSLATION)
+        elif translation_style == TranslationStyle.SEARCH:
+            formatted_text = formatted_text.translate(SEARCH_TRANSLATION)
+        else:
+            formatted_text = formatted_text.translate(FORBIDDEN_TRANSLATION)
 
     return formatted_text

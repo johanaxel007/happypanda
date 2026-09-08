@@ -244,6 +244,8 @@ HASH_GALLERY_PAGES = get('all', 'Advanced', 'hash gallery pages', int, str)
 
 # WEB
 INCLUDE_EH_EXPUNGED = get(False, 'Web', 'include eh expunged', bool)
+FILTER_RESULTS_BY_LANGUAGE = get(True, 'Web', 'filter results by language', bool)
+PICKER_PREVIEWS = get(True, 'Web', 'picker previews', bool)
 GLOBAL_EHEN_TIME = get(5, 'Web', 'global ehen time offset', int)
 GLOBAL_EHEN_LOCK = False
 DEFAULT_EHEN_URL = get('https://e-hentai.org/', 'Web', 'default ehen url', str)
@@ -255,10 +257,13 @@ CONTINUE_AUTO_METADATA_FETCHER = get(True, 'Web', 'continue auto metadata fetche
 HEN_DOWNLOAD_TYPE = get(DOWNLOAD_TYPE_ARCHIVE, 'Web', 'hen download type', int)
 DOWNLOAD_DIRECTORY = get('downloads', 'Web', 'download directory', str)
 TORRENT_CLIENT = get('', 'Web', 'torrent client', str)
-HEN_LIST = get(['chaikahen'], 'Web', 'hen list', list)
+# 'none' is the stored marker for "no fallback sources", so that a blank value can keep meaning
+# "never configured" and fall back to the default below. get() maps 'none' to None.
+HEN_LIST = get(['chaikahen'], 'Web', 'hen list', list) or []
 DOWNLOAD_GALLERY_TO_LIB = get(False, 'Web', 'download galleries to library', bool)
 USE_GLOBAL_EHEN_LOCK = get(True, 'Web', 'global ehen metadata fetch lock', bool)
 FUZZ_CONFIDENCE_THRESHOLD = get(70, 'Web', 'fuzz confidence threshold', int)
+USE_HASH_SEARCH = get(False, 'Web', 'use image hash search', bool)
 ALWAYS_APPLY_TITLE = get(REPLACE_TYPE_NEVER, 'Web', 'always apply title', int)
 ALWAYS_APPLY_ARTIST = get(REPLACE_TYPE_NEVER, 'Web', 'always apply artist', int)
 ALWAYS_APPLY_LANGUAGE = get(REPLACE_TYPE_NEVER, 'Web', 'always apply language', int)

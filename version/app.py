@@ -314,11 +314,11 @@ class AppWindow(QMainWindow):
         thread.finished.connect(thread.deleteLater)
         thread.start()
 
-    def _web_metadata_picker(self, gallery, title_url_list, queue, parent=None):
+    def _web_metadata_picker(self, gallery, title_url_list, queue, extras=None, parent=None):
         if not parent:
             parent = self
         text = "Which gallery do you want to extract metadata from?"
-        s_gallery_popup = misc.SingleGalleryChoices(gallery, title_url_list, text, parent)
+        s_gallery_popup = misc.SingleGalleryChoices(gallery, title_url_list, text, parent, extras)
         s_gallery_popup.USER_CHOICE.connect(queue.put)
 
     def get_metadata(self, gal=None):

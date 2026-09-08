@@ -89,6 +89,10 @@ def get(default, section, key=None, type_class=str, subtype_class=None):
             elif value.lower() == 'none':
                 value = None
             elif type_class in (list, tuple):
+                # A blank value means the key was never configured, so the default wins. An
+                # explicitly emptied list is stored as 'none' and already returned None above.
+                if not value.strip():
+                    return default
                 value = type_class([x for x in value.split('>|<') if x])
             else:
                 if subtype_class:
