@@ -5,10 +5,10 @@ beautifulsoup4
 rarfile
 watchdog
 robobrowser @ git+https://github.com/VultureProject/robobrowser@master
-Send2Trash==1.8.3
+Send2Trash==2.1.0
 pillow
 python-dateutil
-QtAwesome==1.4.0
+QtAwesome==1.4.2
 py7zr
 thefuzz
 pillow-jxl-plugin
