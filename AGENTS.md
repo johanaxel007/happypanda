@@ -62,6 +62,7 @@ venv/Scripts/pip.exe install -r requirements-dev.txt               # pytest + py
 venv\Scripts\pyinstaller.exe --noconfirm --clean HappyPanda.spec   # build -> dist/HappyPanda/
 
 python misc/analyze_fetch_log.py path/to/happypanda.log --failures # diagnose a fetch run
+venv/Scripts/python.exe misc/gui_smoke.py                          # exercise the gui headlessly
 ```
 
 The build reads its version string from `VS.txt`.
@@ -73,9 +74,14 @@ The build reads its version string from `VS.txt`.
 - **Verify before reporting done.** Run `pytest tests/ -q` after any edit under `version/`. Four
   failures in `tests/database/test_db.py::test_init_db` are **pre-existing** — stale assertions
   on exact mock call counts. Everything else must pass.
-- **Static checks are thin here.** There is no type checker and no lint gate configured, and the
-  GUI is not covered by tests. A change to dialogs, signals or settings needs the app actually
-  launched and the affected screen opened.
+- **Static checks are thin here.** There is no type checker and no lint gate configured. The
+  GUI has no pytest coverage, because the modules import each other flatly and a dialog needs a
+  QApplication; `misc/gui_smoke.py` stands in for the settings dialog and the gallery chooser
+  under the offscreen platform. Run it for a change to either, and still launch the app for
+  anything it does not reach.
+- **A signal is a hand-off to code that can delete you.** Widgets here carry
+  `WA_DeleteOnClose`, so a slot may destroy the widget that emitted. Emit last, and never touch
+  `self` afterwards - `misc/gui_smoke.py` holds the regression case.
 - **Diagnose from the log, not from guesswork.** `happypanda.log` records every query, every
   candidate score, and every guard rejection. `misc/analyze_fetch_log.py --failures` separates
   the three failure modes — source returned nothing, candidates scored too low, candidates
@@ -119,7 +125,13 @@ Load bearing, each because a real run got it wrong:
   substituted, leaving only the two spaces around it. `split_on_separator()` takes the raw
   folder name, never a formatted one, because formatting collapses that whitespace away.
 - **Scripts may not match.** A Japanese folder name against a romaji site title scores 0. Such a
-  pair is scored `None` ("unverifiable") rather than 0, and a lone unverifiable hit is used.
+  pair is scored `None` ("unverifiable") rather than 0, and a lone unverifiable hit is used —
+  unless the language filter is what left it alone, in which case it goes to the picker.
+- **A language is only evidence once it is known.** Every gallery whose folder name never stated
+  one is stored as `G_DEF_LANGUAGE`, which ships as `English`, so that value alone cannot be told
+  apart from "nobody knew". Filtering candidates on it discards correct ones. And when the filter
+  has removed a candidate's alternatives, that candidate is never auto-applied however well it
+  scored — an unrecognised tag shape survives the filter as "states no language".
 - **`TranslationStyle.SEARCH` for queries, not `DEFAULT`.** `DEFAULT` converts ASCII *to* full
   width for filenames; searching needs the inverse.
 
@@ -240,5 +252,9 @@ the first time a second consumer appears.
 for the online metadata pipeline, drawn from real failures. The four `test_init_db` failures are
 pre-existing and unrelated.
 
-The GUI has no automated coverage at all. Anything touching dialogs, signals, or the settings
-round-trip has to be exercised by launching the app.
+`misc/gui_smoke.py` covers the settings dialog and the gallery chooser headlessly — the
+settings round-trip, the chooser's covers and gestures, and two crash regressions. It runs in a
+temporary directory against the shipped defaults, which is deliberate: the repo's `settings.ini`
+is untracked, so the suite would otherwise test whatever configuration happens to be local. It
+reaches nothing else, so anything touching another dialog or signal still has to be exercised by
+launching the app.
