@@ -16,7 +16,8 @@ Two things make this code unforgiving:
 - **A wrong match is data loss.** With `Replace metadata` on, the matched gallery's title,
   artist, tags and date overwrite the local ones, with no undo. Not matching is a *better*
   outcome than matching the wrong gallery — a sibling volume, a different translation, a
-  same-series sequel.
+  same-series sequel. Undoing one after the fact is `@.agents/rules/gallery-database.md`, which
+  owns the repair protocol and the reasons a raw delete makes things worse.
 - **The sources ban by IP on volume.** Every extra query variation multiplies across the whole
   library. `MAX_SEARCH_ATTEMPTS` in `_auto_metadata_process` bounds it; `CommonHen.begin_lock` /
   `end_lock` pace it. Neither is decoration.

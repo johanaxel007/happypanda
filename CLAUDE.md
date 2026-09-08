@@ -20,6 +20,7 @@ propose the alternative rather than implementing it.
 2. **The gallery database is the only copy of the library index.** Thousands of galleries with
    tags, read counts and paths built up over years. Never write to it outside `gallerydb`, and
    treat schema changes as needing a migration path for existing users.
+    - *Reference:* `@.agents/rules/gallery-database.md`.
 3. **e-hentai and exhentai ban on request volume, by IP.** The user has been banned before.
    Anything that multiplies requests per gallery — a new query variation, following pagination,
    retrying — must stay inside the existing budget or be gated so it only fires when it can
