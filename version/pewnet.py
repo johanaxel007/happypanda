@@ -105,7 +105,7 @@ class Downloader(QObject):
         Returns a downloader item
         """
         if isinstance(item, str):
-            item = DownloaderItem(item)
+            item = DownloaderItem(item, session)
 
         log_i("Adding item to download queue: {}".format(item.download_url))
         if dir:
@@ -139,14 +139,17 @@ class Downloader(QObject):
         except KeyError:
             return 0
 
-    def _get_response(self, url):
+    def _get_response(self, url, session=None):
         """get response from url.
         Args:
             url : Url of the response
+            session: The item's own session, for a host that serves only to a logged in user
         Returns:
             requests.Response: Response from url
         """
-        if self._browser_session:
+        if session:
+            r = session.get(url, stream=True)
+        elif self._browser_session:
             r = self._browser_session.get(url, stream=True)
         else:
             r = requests.get(url, stream=True)
@@ -458,7 +461,7 @@ class Downloader(QObject):
 
         for single_url in download_url:
             # response
-            r = self._get_response(url=single_url)
+            r = self._get_response(url=single_url, session=item.session)
 
             # get total size
             current_response_filesize = self._get_total_size(response=r)
@@ -518,7 +521,7 @@ class Downloader(QObject):
         file_name_part = file_name + '.part'
 
         # response
-        r = self._get_response(url=download_url)
+        r = self._get_response(url=download_url, session=item.session)
         # get total size
         item.total_size = self._get_total_size(response=r)
 
@@ -1551,6 +1554,19 @@ class EHen(CommonHen):
     # rather than truncating it.
     MAX_GDATA_URLS = 25
 
+    def image_session(self):
+        """A requests session for fetching this source's images, with its login and referer.
+
+        The thumbnail host answers 403 to a request that does not name this source's own site as
+        its referer, whatever cookies are on it, so an image url from there needs both.
+        """
+        session = requests.Session()
+        session.headers.update(self.HEADERS)
+        session.headers['Referer'] = self.e_url_o
+        session.cookies.update(self.COOKIES or {})
+        session.cookies.update(getattr(self, 'cookies', None) or {})
+        return session
+
     def search(self, search_string, **kwargs):
         """
         Searches ehentai for the provided string (either a title query or a hash).
@@ -1627,7 +1643,7 @@ class EHen(CommonHen):
                 if page > 1:
                     # Still inside one lock, so begin_lock's pacing does not apply here.
                     log_i(f'Results page {page - 1} was full, following the next page link.')
-                    time.sleep(random.randint(1, max(1, self.TIME_RAND)))
+                    time.sleep(random.randint(3, max(3, self.TIME_RAND)))
 
                 while True:
                     if cookies:
@@ -1685,7 +1701,7 @@ class EHen(CommonHen):
             # the first coming back empty, spending the request only where the alternative fails.
             if not found_galleries and app_constants.INCLUDE_EH_EXPUNGED:
                 log_i('Nothing in the normal listing, retrying among expunged galleries.')
-                time.sleep(random.randint(1, max(1, self.TIME_RAND)))
+                time.sleep(random.randint(3, max(3, self.TIME_RAND)))
                 found_galleries = run_pass(expunged=True)
                 if found_galleries == 'error':
                     return 'error'
@@ -1724,8 +1740,14 @@ class ChaikaHen(CommonHen):
     a_api_url = base_url + "/jsearch?archive="
     s_api_url = base_url + "/search/"
     SHA1_RE = regex.compile(r'[a-f0-9]{40}', regex.IGNORECASE)
+    # chaika is a small archive, and a fallback pass issues its requests as fast as the loop
+    # can produce them. begin_lock cannot be reused to slow that down: it sleeps a minimum of
+    # three seconds, which is more than this source needs to stop bursting.
+    MIN_REQUEST_INTERVAL = 1.0
+    _last_request = 0.0
     # An e-hentai style filter token, e.g. artist:"foo bar"$ or language:english$
-    EH_FILTER_RE = regex.compile(r'\b\w+:(?:"[^"]*"|\S+)')
+    # A filter and the '$' that anchors it: artist:"foo bar"$ or language:english$.
+    EH_FILTER_RE = regex.compile(r'\b\w+:(?:"[^"]*"|\S+)\$?')
     EH_QUOTED_RE = regex.compile(r'"([^"]*)"')
 
     def __init__(self):
@@ -1739,12 +1761,19 @@ class ChaikaHen(CommonHen):
         chaika has no filter syntax, so 'Some Title' artist:"x"$ language:english$ has to be
         cut back down to Some Title before it is sent.
         """
-        quoted = cls.EH_QUOTED_RE.search(query)
+        # Anchored: a title long enough to be trimmed loses its quotes, which would leave the
+        # artist filter as the first quoted run in the query and send the artist name as the title.
+        quoted = cls.EH_QUOTED_RE.match(query)
         title = quoted.group(1) if quoted else cls.EH_FILTER_RE.sub('', query)
         return title.strip()
 
     def _get_json(self, url, params=None):
         "GETs a chaika endpoint, returning the decoded json or None"
+        wait = self.MIN_REQUEST_INTERVAL - (time.time() - ChaikaHen._last_request)
+        if wait > 0:
+            time.sleep(wait)
+        # On the class, not the instance: a fallback pass builds a fresh hen per source.
+        ChaikaHen._last_request = time.time()
         try:
             r = requests.get(url, params=params, timeout=30, headers=self.HEADERS)
             r.raise_for_status()
@@ -1782,10 +1811,10 @@ class ChaikaHen(CommonHen):
         found = [(a.get('title') or '', '{}{}/'.format(self.a_url, a['id']))
                  for a in archives if isinstance(a, dict) and a.get('id')]
 
-        if not found and archives:
-            # No archive ids came back, so the hash endpoint itself is the only handle we have.
-            # get_metadata resolves that to the first hit, so offer exactly that one rather than
-            # a list of choices that all lead to the same place.
+        if not found and archives and is_hash:
+            # No archive ids came back, so the hash endpoint itself is the only handle there is,
+            # and get_metadata resolves it to the first hit. A title search has no equivalent:
+            # self.url takes a hash, and feeding it a title addresses nothing.
             first = next((a for a in archives if isinstance(a, dict)), None)
             if first is not None:
                 found = [(first.get('title') or '', self.url + search_string)]
