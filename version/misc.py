@@ -1795,8 +1795,12 @@ class GalleryShowcaseWidget(QWidget):
         return super().leaveEvent(event)
 
     def mouseDoubleClickEvent(self, event):
+        # The base class goes first: a receiver of double_clicked may close the window this
+        # widget lives in, and the widget carries WA_DeleteOnClose, so anything touching it
+        # after the emit reaches into a C++ object that is already gone.
+        result = super().mouseDoubleClickEvent(event)
         self.double_clicked.emit(self.gallery)
-        return super().mouseDoubleClickEvent(event)
+        return result
 
     def contextMenuEvent(self, event):
         if self._menu:
@@ -1823,6 +1827,7 @@ class SingleGalleryChoices(BasePopup):
         extras = extras or {}
         self.gallery = gallery
         self._thumbnails = extras.get('thumbnails') or {}
+        self._preview_session = extras.get('session')
         self._preview_cache = {}
         self._preview_requested = set()
         self._preview_wanted = ''
@@ -1916,15 +1921,20 @@ class SingleGalleryChoices(BasePopup):
         if url in self._preview_requested or not app_constants.DOWNLOAD_MANAGER:
             return
         self._preview_requested.add(url)
-        download = pewnet.Downloader.add_to_queue(thumb_url, None, app_constants.temp_dir)
+        download = pewnet.DownloaderItem(thumb_url, self._preview_session)
         download.preview_for = url
         # A bound method, not a lambda: the download thread emits this, and only a slot with
-        # thread affinity gets queued back onto the gui thread instead of running there.
+        # thread affinity gets queued back onto the gui thread instead of running there. Both
+        # happen before the item is queued, because a worker can claim it the moment it is.
         download.file_rdy.connect(self._preview_downloaded)
+        pewnet.Downloader.add_to_queue(download, self._preview_session, app_constants.temp_dir)
 
     def _preview_downloaded(self, download):
         pixmap = QPixmap(download.file)
         if pixmap.isNull():
+            # The source answers a request it will not serve with an error page, which arrives
+            # as a perfectly ordinary file - unreadable as an image is the only symptom.
+            log_e('Cover preview is not a readable image: {}'.format(download.download_url))
             return
         url = getattr(download, 'preview_for', '')
         pixmap = pixmap.scaled(*self.PREVIEW_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation)

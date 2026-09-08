@@ -519,8 +519,11 @@ class AppWindow(QMainWindow):
         def restore_search_term(new_view):
             if not app_constants.DUAL_SEARCH:
                 self.search_bar.setText(new_view.get_current_view().sort_model.current_term)
-            if self.current_manga_view.get_current_view().gallery_window.isVisible():
-                self.current_manga_view.get_current_view().gallery_window.hide_animation.start()
+            # The hover window belongs to the grid view; the table view has no equivalent to
+            # dismiss, and reaching for one there is what makes switching tabs raise.
+            current_view = self.current_manga_view.get_current_view()
+            if isinstance(current_view, gallery.MangaView) and current_view.gallery_window.isVisible():
+                current_view.gallery_window.hide_animation.start()
 
         self.tab_manager = misc_db.ToolbarTabManager(self.toolbar, self)
         self.tab_manager.favorite_btn.clicked.connect(lambda: switch_view(True))
