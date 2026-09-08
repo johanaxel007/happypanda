@@ -1,3 +1,42 @@
+## Unreleased
+
+- New Features
+    - Image support for JXL, AVIF and TIF / TIFF files.
+    - Metadata fetching now verifies every candidate against the local folder name with a similarity score instead of taking the first hit, and picks a result automatically when it is an exact match.
+        - New option: `Web / Metadata / Confidence threshold`. How similar a search result title has to be to the folder name before it counts as a match. Lower values risk wrong matches, higher ones miss slightly differently worded titles. Default 70%.
+        - New option: `Web / Metadata / Search by image hash first`. An image hash only matches when your files are byte identical to the ones the source indexed, so this is **off by default**; turn it on only if you keep galleries exactly as downloaded. Leaving it off also skips a pointless delay on every gallery.
+    - The gallery chooser, shown when several search results are equally plausible, is usable on a long unattended run: it says which of how many galleries you are answering for, every choice carries its source URL as a tooltip, and right clicking or double clicking one opens it in your browser to settle it against the actual page. Double clicking or right clicking the local gallery at the top left opens its folder, with the file selected when it is an archive.
+        - Hovering a choice shows its cover, which usually settles which edition of a work it is without leaving the dialog. Covers are fetched once each, on hover, and reused afterwards.
+        - New option: `Web / Metadata / Look up cover art and native titles for the gallery picker`. A search listing carries one title, usually romaji, and no cover at all, which is little help in choosing when your own folder name is in Japanese. Every ambiguous gallery in a run is looked up together in batches, so this costs a handful of requests for a whole run rather than one per gallery, and no dialog waits on the request pacing to open. Default on.
+    - Search results in a language the gallery is not in are dropped rather than offered.
+        - New option: `Web / Metadata / Ignore results in a different language`. Only applies to a gallery whose own language is a translation, since an untranslated one falls back to the default language rather than a known one, and results that state no language are always kept. Default on.
+    - Gallery hover tooltips show the folder name rather than the stored title.
+    - A `HappyPanda.spec` file for building with PyInstaller.
+
+- Fixes
+    - **panda.chaika.moe metadata fetching works again.** It had been broken three ways at once: the fallback source list silently emptied itself and could never be restored, chaika's results were discarded by the new confidence check because chaika reports no title with them, and chaika was only ever queried by image hash. It now searches by title as well, addresses each hit individually, and talks to the site over HTTPS.
+    - Fetching metadata no longer crashes on a gallery whose source reports no publication date. A negative or missing timestamp is now read as "unknown" rather than aborting the whole run partway through.
+    - `Use currently applied gallery URL` now does what it says for every source. A gallery holding a chaika URL used to be searched for on e-hentai first, and was only fetched from its own URL after every one of those searches had failed.
+    - Gallery URLs on `e-hentai.org` are recognised again; only the older `g.e-hentai.org` form was, which also meant a link Happypanda had itself rewritten stopped being accepted afterwards.
+    - Temporary IP bans are detected properly and waited out, with the remaining time shown in the notification bar.
+    - A gallery with no artist prefix no longer adopts its language suffix as the artist. `Guardian of Faith II [English]` used to be filed under the artist "English", which then went out as an `artist:english$` filter on every search for it.
+    - A language tag is recognised even when it is the only bracketed group in the name, so `Some Title [English]` is no longer filed under the default language and searched for with the wrong language filter.
+    - Titles are no longer searched for with the full width characters a filesystem forces onto them. Most importantly `｜`, the separator between a romaji and a translated title, which no source indexes.
+    - A gallery whose folder name drops the source's trailing `-Subtitle-` is matched again. The extra text alone was enough to push an otherwise exact match below the confidence threshold.
+    - Search results are matched against gallery titles written in Japanese. A Japanese folder name and a romaji site title share no characters, so the right result used to score zero and be thrown away.
+    - `Also search expunged galleries` works again. e-hentai used to fold expunged galleries into ordinary search results; it now lists them separately and exclusively, so the option had quietly turned into "search **only** expunged galleries" - enabling it would have made every normal search fail. Expunged galleries are now reached with a second search, run only when the first found nothing, and the option is worth turning on for an older library whose galleries may since have been deleted from the source.
+    - Potential crash when RoboBrowser met an unsupported encoding.
+    - The notification bar renders above the full screen blur effect.
+
+- Changes
+    - Metadata title searches now try several forms of a title in a fixed order: as it stands, without the artist filter, cut at the `｜` separator, and without the language filter. The order is capped so a gallery that matches nothing costs a bounded number of requests.
+    - Search results paginate. Only a page that comes back full is followed, so a specific title still costs a single request while a broad one no longer stops at the first 25 hits.
+    - A candidate whose volume, chapter or sequel number differs from the local title is rejected outright, whatever it scores. `Kaizoku Kyonyuu` and `Kaizoku Kyonyuu 2` are otherwise a hair apart.
+    - Thumbnail generation and loading may use more threads.
+    - Updated QtAwesome to 1.4.0 and the icon set to Font Awesome 6.
+    - When several results tie, the one in the gallery's own language is offered first. Sources list newest first, which used to bury the release actually held locally underneath every later translation of it.
+    - The log now records the candidates a search settled on, with their scores, at the normal logging level. An ordering complaint about the chooser could not be looked into otherwise. It also records why a search found nothing: the closest rejected candidates with their scores, and anything dropped by the numbering check. `misc/analyze_fetch_log.py` summarises a run from it.
+
 ## Happypanda v1.7.0
 
 - New Features
