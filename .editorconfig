@@ -1,0 +1,42 @@
+root = true
+
+[*]
+end_of_line = crlf
+indent_style = space
+
+[*.py]
+indent_size = 4
+# Deliberately not set for Python: this codebase predates any formatting policy. 8 of 23 modules
+# carry a UTF-8 BOM, 14 have trailing whitespace and 6 have no final newline, so charset,
+# trim_trailing_whitespace and insert_final_newline would rewrite untouched lines the first time
+# an editor saved an old file and bury the real change. Turn them on with a deliberate
+# formatting pass, not as a side effect.
+max_line_length = 140
+
+[*.{html,css,js}]
+indent_size = 2
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{json,yml,yaml,toml}]
+indent_size = 2
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.ini]
+indent_size = 4
+trim_trailing_whitespace = false
+
+# Markdown uses two trailing spaces as a hard line break; stripping them joins stacked lines
+# into one run-on paragraph.
+[*.md]
+indent_size = 2
+charset = utf-8
+trim_trailing_whitespace = false
+insert_final_newline = true
+
+[*.spec]
+indent_size = 4
+charset = utf-8
