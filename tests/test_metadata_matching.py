@@ -551,41 +551,70 @@ def test_title_languages_reads_only_real_language_tags(title, expected):
     assert fetch.title_languages(title) == expected
 
 
+# The two families below are the ones a real run actually offered, taken from the log. The
+# yumoteliuce set is the one that went wrong: with Chinese, Spanish and Korean discarded, the
+# Thai release was the only survivor and was applied to an English gallery unseen.
+CAR_SEX_LOCAL = 'car sex instructor (COMIC BAVEL 2021-12)'
+CAR_SEX_THAI = ('[yumoteliuce] car sex instructor (COMIC BAVEL 2021-12) '
+                '[Thai \u0e20\u0e32\u0e29\u0e32\u0e44\u0e17\u0e22] [T@NUKI] [Digital]')
+CAR_SEX_CHINESE = ('[yumoteliuce] Car Sex instructor (COMIC BAVEL 2021-12) '
+                   '[Chinese] [\u5bae\u697d\u500b\u4eba\u7ffb\u8b6f] [Digital]')
+CAR_SEX_SPANISH = ('[yumoteliuce] car sex instructor (COMIC BAVEL 2021-12) '
+                   '[Spanish] [Anamnesis Scanlation] [Digital]')
+CAR_SEX_ENGLISH = '[yumoteliuce] car sex instructor (COMIC BAVEL 2021-12) [English] [Digital]'
+
+DOUBLE_LIVE_LOCAL = 'Double\u2605Live (COMIC BAVEL 2022-12)'
+DOUBLE_LIVE_ITALIAN = ('[Puyocha] Double\u2605Live | Doppia Vita (COMIC BAVEL 2022-12) '
+                       '[Italian] [Digital]')
+DOUBLE_LIVE_RUSSIAN = ('[Puyocha] Double\u2605Live | \u0414\u0432\u043e\u0439\u043d\u0430\u044f \u0436\u0438\u0437\u043d\u044c (COMIC BAVEL 2022-12) '
+                       '[Russian] [Mr_As] [Digital]')
+
+
+def test_a_language_stated_with_its_own_name_is_still_a_language(match_gallery):
+    """The wrong match that actually happened: '[Thai \u0e20\u0e32\u0e29\u0e32\u0e44\u0e17\u0e22]' read as no language at all,
+    so it survived a filter that removed every other translation and was applied unseen.
+    """
+    assert match_gallery(CAR_SEX_LOCAL,
+                         [(CAR_SEX_THAI, URL_A), (CAR_SEX_CHINESE, URL_B),
+                          (CAR_SEX_SPANISH, URL_C)]) is None
+
+
+def test_a_lone_survivor_of_the_language_filter_is_offered_not_applied(match_gallery):
+    """A tag shape the parser still does not know would otherwise be applied on its own."""
+    unknown_tag = '[yumoteliuce] car sex instructor (COMIC BAVEL 2021-12) [Tagalog-ish] [Digital]'
+    assert match_gallery(CAR_SEX_LOCAL,
+                         [(unknown_tag, URL_A), (CAR_SEX_CHINESE, URL_B)]) == 'picker:1'
+
+
 def test_a_translation_into_another_language_is_dropped(match_gallery):
     """An English gallery and a Russian one are different releases, whatever they score."""
-    english = '[Yamada] Kimi to Boku no Natsu | Our Summer [English]'
-    russian = '[Yamada] Kimi to Boku no Natsu | Our Summer [Russian]'
-    assert match_gallery('Kimi to Boku no Natsu ｜ Our Summer',
-                         [(russian, URL_B), (english, URL_A)]) == URL_A
+    assert match_gallery(DOUBLE_LIVE_LOCAL,
+                         [(DOUBLE_LIVE_RUSSIAN, URL_B), (DOUBLE_LIVE_ITALIAN, URL_C)]) is None
 
 
 def test_dropping_the_wrong_languages_can_leave_nothing(match_gallery):
-    """Failing to match beats applying a Spanish release's metadata to an English gallery."""
-    spanish = '[Yamada] Kimi to Boku no Natsu | Our Summer [Spanish]'
-    french = '[Yamada] Kimi to Boku no Natsu | Our Summer [French]'
-    assert match_gallery('Kimi to Boku no Natsu ｜ Our Summer',
-                         [(spanish, URL_B), (french, URL_C)]) is None
+    """Failing to match beats applying an Italian release's metadata to an English gallery."""
+    assert match_gallery(CAR_SEX_LOCAL,
+                         [(CAR_SEX_SPANISH, URL_B), (CAR_SEX_CHINESE, URL_C)]) is None
 
 
 def test_a_result_that_states_no_language_is_kept(match_gallery):
     """No tag is the normal shape of an untranslated listing, so it is not evidence of a clash."""
-    untagged = '[Yamada] Kimi to Boku no Natsu | Our Summer'
-    assert match_gallery('Kimi to Boku no Natsu ｜ Our Summer', [(untagged, URL_A)]) == URL_A
+    untagged = '[yumoteliuce] car sex instructor (COMIC BAVEL 2021-12) [Digital]'
+    assert match_gallery(CAR_SEX_LOCAL, [(untagged, URL_A)]) == URL_A
 
 
 def test_an_untranslated_gallery_is_never_filtered(match_gallery):
     """Its stored language is G_DEF_LANGUAGE for anything the folder name did not state."""
-    english = '[Yamada] Kimi to Boku no Natsu | Our Summer [English]'
-    assert match_gallery('Kimi to Boku no Natsu ｜ Our Summer', [(english, URL_A)],
-                         language='Japanese') == URL_A
+    assert match_gallery(CAR_SEX_LOCAL, [(CAR_SEX_ENGLISH, URL_A)], language='Japanese') == URL_A
 
 
 def test_the_language_filter_can_be_turned_off(match_gallery, monkeypatch):
+    """The same two candidates the filter rejects above, now both offered."""
     monkeypatch.setattr(app_constants, 'FILTER_RESULTS_BY_LANGUAGE', False)
-    english = '[Yamada] Kimi to Boku no Natsu | Our Summer [English]'
-    russian = '[Yamada] Kimi to Boku no Natsu | Our Summer [Russian]'
-    assert match_gallery('Kimi to Boku no Natsu ｜ Our Summer',
-                         [(russian, URL_B), (english, URL_A)]) == 'picker:2'
+    assert match_gallery(DOUBLE_LIVE_LOCAL,
+                         [(DOUBLE_LIVE_RUSSIAN, URL_B),
+                          (DOUBLE_LIVE_ITALIAN, URL_C)]) == 'picker:2'
 
 
 def test_the_untranslated_release_is_offered_first_to_an_untranslated_gallery(match_gallery):
@@ -683,3 +712,419 @@ def test_a_failed_preview_lookup_does_not_stop_the_picker(monkeypatch):
 
     galleries = [[None, [('A', URL_A)]]]
     assert fetch.Fetch()._candidate_previews(galleries, _Broken()) == {}
+
+# --- Metadata files beside a gallery ------------------------------------------------------
+# The E-Hentai Downloader userscript writes an info.txt whose first lines are bare: the romaji
+# title, the native title, and the gallery url, with no key in front of any of them. The
+# HDoujin parser reports success for any info.txt that has lines in it, so it claimed these and
+# extracted nothing from them.
+
+WESTERN_INFO = """mona
+
+https://exhentai.org/g/2266155/337f88a8c5/
+
+Category: Western
+Uploader: Bromax34
+Posted: 2022-07-07 19:25
+Parent: None
+Visible: Yes
+Language: English
+File Size: 163.2 MB
+Length: 25 pages
+Favorited: 171 times
+Rating: 4.35
+
+Tags:
+> language: english
+> parody: genshin impact
+> character: mona megistus
+> female: ass expansion, breast expansion, furry, sole female, transformation
+> other: no penetration
+
+
+Page 1: https://exhentai.org/s/4268875a6f/2266155-1
+Image 1: monas_curse_01.png
+"""
+
+DOUJIN_INFO = """[\u30ed\u30ea\u30e2] \u3060\u3089\u3057\u306a\u3044\u59c9
+[\u30ed\u30ea\u30e2] \u3060\u3089\u3057\u306a\u3044\u59c9
+https://exhentai.org/g/2144632/5a332a0018/
+
+Category: Doujinshi
+Uploader: Pokom
+Posted: 2022-02-17 14:01
+Parent: None
+Visible: Yes
+Language: Japanese
+File Size: 18.00 MB
+Length: 4 pages
+
+Tags:
+> parody: original
+> artist: rorimo
+> female: sister, sleeping, sole female
+> mixed: incest
+
+Uploader Comment:
+https://www.pixiv.net/artworks/93885643
+"""
+
+HDOUJIN_INFO = """Title: Some Gallery
+Artist: Yamada
+Circle: Some Circle
+Tags: sole female, sister
+URL: https://e-hentai.org/g/111/aaa/
+Description: notes here
+"""
+
+
+@pytest.fixture
+def metafile(tmp_path):
+    """Writes an info.txt into a gallery folder and returns what GMetafile makes of it."""
+    utils.init_utils()  # title_parser reads module globals that only init_utils sets
+
+    def run(contents, name='a gallery'):
+        folder = tmp_path / name
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'info.txt').write_text(contents, encoding='utf-8')
+        return utils.GMetafile(str(folder)).metadata
+
+    return run
+
+
+def test_the_url_is_read_from_a_bare_line(metafile):
+    """The one field that matters: it turns a failed search into a direct fetch."""
+    assert metafile(WESTERN_INFO)['link'] == 'https://exhentai.org/g/2266155/337f88a8c5/'
+    assert metafile(DOUJIN_INFO)['link'] == 'https://exhentai.org/g/2144632/5a332a0018/'
+
+
+def test_the_native_title_is_preferred_over_the_romaji_one(metafile):
+    """The romaji line is what the folder was named after, so searching it has already failed."""
+    assert metafile(DOUJIN_INFO)['title'] == '\u3060\u3089\u3057\u306a\u3044\u59c9'
+
+
+def test_a_gallery_with_one_title_leaves_the_native_line_blank(metafile):
+    assert metafile(WESTERN_INFO)['title'] == 'mona'
+
+
+def test_the_namespaced_tag_block_is_read(metafile):
+    tags = metafile(WESTERN_INFO)['tags']
+    assert tags['Female'] == ['ass expansion', 'breast expansion', 'furry', 'sole female',
+                              'transformation']
+    assert tags['Parody'] == ['genshin impact']
+
+
+@pytest.mark.parametrize('field, expected', [
+    ('type', 'Doujinshi'),
+    ('language', 'Japanese'),
+    ('artist', 'Rorimo'),          # from the artist namespace, not the bracketed folder prefix
+])
+def test_the_keyed_fields_are_read(metafile, field, expected):
+    assert metafile(DOUJIN_INFO)[field] == expected
+
+
+def test_the_posted_date_becomes_a_datetime(metafile):
+    assert metafile(WESTERN_INFO)['pub_date'].isoformat() == '2022-07-07T19:25:00'
+
+
+def test_an_hdoujin_info_txt_is_still_read_by_its_own_parser(metafile):
+    """Its url is keyed, so the bare-url check must not claim the file."""
+    parsed = metafile(HDOUJIN_INFO)
+    assert parsed['link'] == 'https://e-hentai.org/g/111/aaa/'
+    assert parsed['title'] == 'Some Gallery'
+
+
+def test_a_folder_with_no_metafile_yields_nothing(metafile, tmp_path):
+    utils.init_utils()
+    empty = tmp_path / 'no metafile'
+    empty.mkdir()
+    assert utils.GMetafile(str(empty)).metadata['link'] == ''
+
+
+def test_a_gallery_with_no_link_takes_the_one_beside_it(match_gallery, tmp_path, monkeypatch):
+    """Without this the file only helps galleries imported after it was understood."""
+    monkeypatch.setattr(app_constants, 'USE_GALLERY_LINK', True)
+    utils.init_utils()
+
+    fetcher = fetch.Fetch()
+    fetcher._hen_list = []
+    gallery = gallerydb.Gallery()
+    folder = tmp_path / 'seeded gallery'
+    folder.mkdir()
+    (folder / 'info.txt').write_text(WESTERN_INFO, encoding='utf-8')
+    gallery.path = str(folder)
+
+    assert fetcher._metafile_link(gallery) == 'https://exhentai.org/g/2266155/337f88a8c5/'
+
+
+def test_seeding_a_link_never_touches_the_stored_metadata(match_gallery, tmp_path):
+    """The file is a download-time snapshot; applying it would overwrite with a stale copy."""
+    utils.init_utils()
+    folder = tmp_path / 'untouched gallery'
+    folder.mkdir()
+    (folder / 'info.txt').write_text(DOUJIN_INFO, encoding='utf-8')
+
+    gallery = gallerydb.Gallery()
+    gallery.path = str(folder)
+    gallery.title = 'the title the user already has'
+    gallery.artist = 'Someone Else'
+
+    fetch.Fetch()._metafile_link(gallery)
+
+    assert gallery.title == 'the title the user already has'
+    assert gallery.artist == 'Someone Else'
+
+
+def test_an_unreadable_gallery_folder_is_not_fatal(tmp_path):
+    """A gallery on an unmounted drive must not stop the run before it starts."""
+    gallery = gallerydb.Gallery()
+    gallery.path = str(tmp_path / 'not here at all')
+    assert fetch.Fetch()._metafile_link(gallery) == ''
+
+# --- Cover previews reach an image host that checks the login ------------------------------
+# add_to_queue stored the session on a class attribute nothing reads, so every download went
+# out unauthenticated and exhentai's thumbnail host answered each one with a 403 page - which
+# arrives as an ordinary file, leaving a null pixmap as the only symptom.
+
+class _RecordingSession:
+    def __init__(self):
+        self.urls = []
+
+    def get(self, url, stream=False):
+        self.urls.append(url)
+        return 'response'
+
+
+def test_a_queued_download_keeps_the_session_it_was_given():
+    session = _RecordingSession()
+    try:
+        item = pewnet.Downloader.add_to_queue('https://s.exhentai.org/w/00/1-a.webp', session)
+        assert item.session is session
+    finally:
+        pewnet.Downloader._inc_queue.get_nowait()
+
+
+def test_a_download_is_made_with_the_items_own_session():
+    session = _RecordingSession()
+    item = pewnet.DownloaderItem('https://s.exhentai.org/w/00/1-a.webp', session)
+    # __new__ so the real __init__ does not go making a download directory.
+    downloader = pewnet.Downloader.__new__(pewnet.Downloader)
+
+    assert downloader._get_response(item.download_url, session=item.session) == 'response'
+    assert session.urls == ['https://s.exhentai.org/w/00/1-a.webp']
+
+
+def test_an_image_session_carries_the_sources_cookies(monkeypatch):
+    monkeypatch.setattr(pewnet.EHen, 'COOKIES', {'ipb_member_id': 'shared'})
+    # __new__ so __init__ does not go and load the real stored login off disk.
+    hen = pewnet.EHen.__new__(pewnet.EHen)
+    hen.cookies = {'ipb_pass_hash': 'per instance'}
+    hen.e_url_o = 'https://e-hentai.org/'
+
+    session = hen.image_session()
+
+    assert session.cookies.get('ipb_member_id') == 'shared'
+    assert session.cookies.get('ipb_pass_hash') == 'per instance'
+
+
+@pytest.mark.parametrize('hen_cls, site', [(pewnet.EHen, 'https://e-hentai.org/'),
+                                           (pewnet.ExHen, 'https://exhentai.org/')])
+def test_an_image_session_names_its_own_site_as_the_referer(hen_cls, site):
+    # Cookies alone get a 403 from the thumbnail host; it wants the referer as well.
+    hen = hen_cls.__new__(hen_cls)
+    hen.cookies = {}
+    hen.e_url_o = site
+
+    assert hen.image_session().headers['Referer'] == site
+
+# Both shapes below come from a scan of the whole library: the userscript does not always write
+# the same thing, and each of these was silently falling through to the HDoujin parser or
+# picking up text that only looked like a field.
+
+HASH_SUFFIXED_INFO = """Some Gallery [English]
+ある本
+https://exhentai.org/g/3211989/97eb195d68/#
+
+Category: Non-H
+Posted: 2025-01-27 16:32
+Language: English  TR
+
+Tags:
+> language: english, translated
+> artist: tsurui
+"""
+
+COMMENTED_INFO = """Some Gallery
+ある本
+https://exhentai.org/g/3851689/1b6b6f3f18/
+
+Category: Manga
+Posted: 2026-03-21 22:12
+Language: Japanese
+
+Uploader Comment:
+Circle: not a real field
+Category: Western
+Artist: ワダアルコ
+"""
+
+
+@pytest.mark.parametrize('suffix', [
+    '',
+    '#',        # copied from the gallery page itself
+    '?p=1',     # copied while on the second page of it
+    '?p=2#',
+])
+def test_a_url_line_carrying_where_it_was_copied_from_is_still_this_format(metafile, suffix):
+    """77 real galleries fell through to the HDoujin parser, which read nothing out of them.
+
+    Whatever follows the gallery id records where the link was copied from, so all of these
+    have to reduce to the one url that addresses the gallery.
+    """
+    parsed = metafile(HASH_SUFFIXED_INFO.replace('97eb195d68/#', '97eb195d68/' + suffix))
+    assert parsed['link'] == 'https://exhentai.org/g/3211989/97eb195d68/'
+    assert parsed['tags']['Artist'] == ['tsurui']
+
+
+def test_the_category_keeps_the_casing_the_source_wrote(metafile):
+    """'Non-H' is one of the app's own gallery types; recapitalising it makes it another."""
+    assert metafile(HASH_SUFFIXED_INFO)['type'] == 'Non-H'
+
+
+def test_a_translated_language_reads_as_the_language(metafile):
+    """The site marks a translation as 'English  TR'; only the first word names a language."""
+    assert metafile(HASH_SUFFIXED_INFO)['language'] == 'English'
+
+
+def test_free_text_below_the_header_is_not_read_as_fields(metafile):
+    """An uploader comment can hold anything, including lines shaped exactly like a field."""
+    parsed = metafile(COMMENTED_INFO)
+    assert parsed['type'] == 'Manga', 'a Category: line in a comment overrode the real one'
+    assert parsed['language'] == 'Japanese'
+
+# --- Is the stored language a fact, or just the default? --------------------------------------
+# G_DEF_LANGUAGE ships as 'English', and every gallery whose folder name never stated a language
+# is stored as that. Filtering on it discards correct candidates for a language nobody ever
+# established. These monkeypatch the default rather than trusting the ambient one: the repo's
+# settings.ini is untracked and sets Japanese, so the suite would otherwise never see the
+# configuration the application actually ships with.
+
+def test_a_language_that_is_only_the_default_is_not_a_fact(match_gallery, monkeypatch):
+    """The bug: an untagged folder reads as English on a stock install, and filters on it."""
+    monkeypatch.setattr(app_constants, 'G_DEF_LANGUAGE', 'English')
+    chinese = '[Yamada] Kimi to Boku no Natsu | Our Summer [Chinese]'
+    english = '[Yamada] Kimi to Boku no Natsu | Our Summer [English]'
+    assert match_gallery('Kimi to Boku no Natsu \uff5c Our Summer',
+                         [(chinese, URL_B), (english, URL_A)]) == 'picker:2'
+
+
+def test_a_language_the_folder_name_states_is_a_fact(match_gallery, monkeypatch):
+    """Stated outright, so it filters even though it equals the default."""
+    monkeypatch.setattr(app_constants, 'G_DEF_LANGUAGE', 'English')
+    chinese = '[Yamada] Kimi to Boku no Natsu | Our Summer [Chinese]'
+    english = '[Yamada] Kimi to Boku no Natsu | Our Summer [English]'
+    assert match_gallery('Kimi to Boku no Natsu \uff5c Our Summer [English]',
+                         [(chinese, URL_B), (english, URL_A)]) == 'picker:1'
+
+
+def test_a_language_that_differs_from_the_default_is_a_fact(match_gallery, monkeypatch):
+    """Nothing but a real parse could have set it, so it filters with no tag in the folder."""
+    monkeypatch.setattr(app_constants, 'G_DEF_LANGUAGE', 'Japanese')
+    chinese = '[Yamada] Kimi to Boku no Natsu | Our Summer [Chinese]'
+    english = '[Yamada] Kimi to Boku no Natsu | Our Summer [English]'
+    assert match_gallery('Kimi to Boku no Natsu \uff5c Our Summer',
+                         [(chinese, URL_B), (english, URL_A)]) == 'picker:1'
+
+
+@pytest.mark.parametrize('default, folder, language, expected', [
+    ('English', 'Some Title', 'English', False),            # the default, stated nowhere
+    ('English', 'Some Title [English]', 'English', True),   # stated by the folder
+    ('English', 'Some Title', 'Japanese', True),            # nothing else could have set it
+    ('Japanese', 'Some Title', 'Japanese', False),
+    ('Japanese', 'Some Title', 'English', True),
+    ('English', 'Some Title', '', False),                   # never established at all
+])
+def test_language_is_known(tmp_path, monkeypatch, default, folder, language, expected):
+    monkeypatch.setattr(app_constants, 'G_DEF_LANGUAGE', default)
+    path = tmp_path / folder
+    path.mkdir(parents=True, exist_ok=True)
+    gallery = gallerydb.Gallery()
+    gallery.path = str(path)
+    gallery.language = language
+    assert fetch.language_is_known(gallery) is expected
+
+# --- Reducing a query back to a bare title for chaika -----------------------------------------
+# chaika has no filter syntax, so the e-hentai style query has to be cut down. A title long
+# enough to be trimmed loses its surrounding quotes, which made the artist filter the first
+# quoted run in the query - and the artist name was sent as the title.
+
+@pytest.mark.parametrize('query, expected', [
+    ('"A Normal Quoted Title" artist:"tanaka taro"$ language:english$', 'A Normal Quoted Title'),
+    ('Some Very Long Trimmed Title artist:"tanaka taro"$ language:english$',
+     'Some Very Long Trimmed Title'),
+    ('Fucked Into Submission 3 artist:shindou$', 'Fucked Into Submission 3'),
+    ('"Title" language:japanese$', 'Title'),
+    ('Bare Title With No Filters', 'Bare Title With No Filters'),
+])
+def test_a_query_reduces_to_its_title_not_its_artist(query, expected):
+    assert pewnet.ChaikaHen._plain_title(query) == expected
+
+
+def test_a_title_search_never_addresses_the_hash_endpoint(monkeypatch):
+    """self.url takes a sha1; handing it a title addresses nothing at all."""
+    hen = pewnet.ChaikaHen()
+    # Archives with no ids: the branch that falls back to the endpoint itself.
+    monkeypatch.setattr(hen, '_get_json', lambda *a, **k: {'archives': [{'title': 'Some Title'}]})
+
+    assert hen.search('"Some Title" language:english$') == {}
+
+
+def test_a_hash_search_still_falls_back_to_the_hash_endpoint(monkeypatch):
+    """The same branch is correct for a hash, which is what self.url actually takes."""
+    sha1 = 'a' * 40
+    hen = pewnet.ChaikaHen()
+    monkeypatch.setattr(hen, '_get_json', lambda *a, **k: [{'title': 'Some Title'}])
+
+    found = hen.search(sha1)
+
+    assert found[sha1] == [('Some Title', hen.url + sha1)]
+
+
+def test_a_gallery_with_no_searchable_title_is_skipped(match_gallery, tmp_path, monkeypatch):
+    """path_title is '' for a drive root, and an empty query matches the whole site."""
+    monkeypatch.setattr(app_constants, 'SYSTEM_TRAY', type('T', (), {'showMessage': lambda *a, **k: None})())
+
+    fetcher = fetch.Fetch()
+    fetcher._hen_list = []
+    gallery = gallerydb.Gallery()
+    gallery.path = ''
+    gallery.artist = ''
+    gallery.language = ''
+    gallery.link = ''
+    gallery.hashes = []
+    gallery.title = ''
+
+    fetcher._auto_metadata_process([gallery], _StubHen({}), 'ehen')
+
+    assert not getattr(gallery, 'temp_url', '')
+    assert fetcher.error_galleries, 'the gallery should be reported, not crash the run'
+
+
+def test_chaika_paces_its_requests(monkeypatch):
+    """A fallback pass issues these in a loop; unpaced it reached 35 requests in a minute."""
+    class _Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
+
+    slept = []
+    monkeypatch.setattr(pewnet.time, 'sleep', lambda s: slept.append(s))
+    monkeypatch.setattr(pewnet.requests, 'get', lambda *a, **k: _Response())
+    monkeypatch.setattr(pewnet.ChaikaHen, '_last_request', pewnet.time.time())
+
+    pewnet.ChaikaHen()._get_json('https://panda.chaika.moe/jsearch?gallery=1')
+
+    assert slept, 'a request issued right after the previous one must wait'
+    assert 0 < slept[0] <= pewnet.ChaikaHen.MIN_REQUEST_INTERVAL
