@@ -155,6 +155,96 @@ class GMetafile:
 
             return True
 
+    # A bare gallery url on a line of its own, which is how this format states the source. A
+    # '#' or a '?p=2' after it is where the userscript copied the link from, not part of the
+    # gallery, and an url carrying one has to resolve to the same gallery as one without.
+    GALLERY_URL_RE = re.compile(r'^(https?://\S+?/g/\d+/[0-9a-f]+/?)(?:[?#]\S*)?$')
+    # One namespace of tags: "> female: sole female, sister".
+    TAG_LINE_RE = re.compile(r'^>\s*([^:]+):\s*(.+)$')
+    # Everything below one of these is free text the uploader wrote, which can hold anything -
+    # "Circle: foo" among it - so the keyed header stops here.
+    END_OF_HEADER = ('tags:', 'uploader comment:')
+
+    def _ehentai_downloader(self, fp):
+        """E-Hentai Downloader userscript.
+
+        Its info.txt opens with the romaji title, the native title (blank when the gallery has
+        only one), and the gallery url, each on a line of its own with no key in front. Below
+        that is a block of 'Key: Value' lines, then a 'Tags:' block of '> namespace: a, b'
+        entries, then whatever the uploader wrote.
+        """
+        if not fp.name.endswith('info.txt'):
+            return
+
+        lines = fp.read().splitlines()
+        url_line, url = None, ''
+        for i, line in enumerate(lines[:6]):
+            found = self.GALLERY_URL_RE.match(line.strip())
+            if found:
+                url_line, url = i, found.group(1)
+                break
+
+        # The keyed formats state their url with a key, so a bare one identifies this format.
+        if url_line is None:
+            # Reading it moved the handle; the next parser in the chain gets the same one.
+            fp.seek(0)
+            return
+
+        log_i('Detected metafile: E-Hentai Downloader text')
+        self.metadata['link'] = url
+
+        titles = [l.strip() for l in lines[:url_line] if l.strip()]
+        if titles:
+            # The native title is the better one to keep: the romaji line is what the folder was
+            # named after, so a search on it has already been tried and failed.
+            self.metadata['title'] = title_parser(titles[-1])['title']
+
+        header, tag_lines = [], []
+        section = header
+        for line in lines[url_line + 1:]:
+            stripped = line.strip()
+            if stripped.lower() in self.END_OF_HEADER:
+                section = tag_lines if stripped.lower() == 'tags:' else None
+                continue
+            if section is not None:
+                section.append(stripped)
+
+        tags = {}
+        for line in tag_lines:
+            tag_line = self.TAG_LINE_RE.match(line)
+            if tag_line:
+                namespace, values = tag_line.group(1).strip(), tag_line.group(2)
+                tags[namespace.capitalize()] = [v.strip().lower() for v in values.split(',') if v.strip()]
+
+        for line in header:
+            key, _, value = line.partition(':')
+            key, value = key.strip().lower(), value.strip()
+            if not value:
+                continue
+            if key == 'category':
+                # Stored as the source writes it: 'Non-H' and 'Artist CG' do not survive
+                # being recapitalised, and both other parsers keep the raw category too.
+                self.metadata['type'] = value
+            elif key == 'language':
+                # Written as "English" or "English  TR" for a translation; only the name of it
+                # is a language the app knows.
+                self.metadata['language'] = value.split()[0].capitalize()
+            elif key == 'posted':
+                try:
+                    self.metadata['pub_date'] = datetime.datetime.strptime(value, '%Y-%m-%d %H:%M')
+                except ValueError:
+                    log_d(f'Unparseable posted date in metafile: {value}')
+
+        if tags:
+            if app_constants.IGNORED_TAGS_APPLY_TO_METADATA_FILES:
+                tags = remove_ignored_tags(tags)
+            self.metadata['tags'] = tags
+
+        artist = tags.get('Artist') or tags.get('Group')
+        self.metadata['artist'] = artist[0].capitalize() if artist else title_parser(titles[0])['artist'] if titles else ''
+
+        return True
+
     def _hdoujindler(self, fp):
         "HDoujin Downloader"
         if fp.name.endswith('info.txt'):
@@ -219,7 +309,7 @@ class GMetafile:
         for fp in self.files:
             with fp:
                 z = False
-                for x in [self._eze, self._hdoujindler]:
+                for x in [self._eze, self._ehentai_downloader, self._hdoujindler]:
                     try:
                         if x(fp):
                             z = True
