@@ -667,7 +667,7 @@ class Watchers:
                 gallery_observer.start()
                 self.watchers.append(gallery_observer)
             except:
-                log.exception('Could not monitor: {}'.format(path.encode(errors='ignore')))
+                log.exception('Could not monitor: {}'.format(path))
     
     def stop_all(self):
         for watcher in self.watchers:
@@ -884,7 +884,7 @@ class ImportExport(QObject):
                     h_list = {}
             else:
                 if not h_list:
-                    log_e('Failed to export gallery: {}'.format(g.title.encode(errors='ignore')))
+                    log_e('Failed to export gallery: {}'.format(g.title))
                     continue
                 g_data['identifier'] = {'pages': g.chapters[0].pages}
                 for n in pages:

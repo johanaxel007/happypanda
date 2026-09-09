@@ -19,6 +19,9 @@ import logging
 import queue
 import io
 import uuid
+import pathlib
+from typing import Any
+
 from dateutil import parser as dateparser
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -245,7 +248,7 @@ class GalleryDB(database.db.DBBase):
     def rebuild_thumb(gallery):
         "Rebuilds gallery thumbnail"
         try:
-            log_i('Recreating thumb {}'.format(gallery.title.encode(errors='ignore')))
+            log_i('Recreating thumb {}'.format(gallery.title))
             if gallery.profile:
                 GalleryDB.clear_thumb(gallery.profile)
             gallery.profile = executors.Executors.generate_thumbnail(gallery, blocking=True)
@@ -270,7 +273,7 @@ class GalleryDB(database.db.DBBase):
         except FileNotFoundError:
             pass
         except:
-            log.exception('Failed to delete thumb {}'.format(os.path.split(path)[1].encode(errors='ignore')))
+            log.exception('Failed to delete thumb {}'.format(os.path.split(path)[1]))
 
     @staticmethod
     def clear_thumb_dir():
@@ -283,7 +286,7 @@ class GalleryDB(database.db.DBBase):
     def rebuild_gallery(gallery, thumb=False):
         "Rebuilds the galleries in DB"
         try:
-            log_i('Rebuilding {}'.format(gallery.title.encode(errors='ignore')))
+            log_i('Rebuilding {}'.format(gallery.title))
             log_i("Rebuilding gallery {}".format(gallery.id))
             HashDB.del_gallery_hashes(gallery.id)
             GalleryDB.modify_gallery(gallery.id,
@@ -445,7 +448,7 @@ class GalleryDB(database.db.DBBase):
         "Receives an object of class gallery, and appends it to DB"
         "Adds gallery of <Gallery> class into database"
         assert isinstance(object, Gallery), "add_gallery method only accepts gallery items"
-        log_i('Recevied gallery: {}'.format(object.path.encode(errors='ignore')))
+        log_i('Recevied gallery: {}'.format(object.path))
 
         #TODO: implement mass gallery adding!  User execute_many method for
         #effeciency!
@@ -471,6 +474,8 @@ class GalleryDB(database.db.DBBase):
     def del_gallery(cls, list_of_gallery, local=False):
         "Deletes all galleries in the list recursively."
         assert isinstance(list_of_gallery, list), "Please provide a valid list of galleries to delete"
+        deleted = 0
+        last_title = ''
         for gallery in list_of_gallery:
             if local:
                 app_constants.TEMP_PATH_IGNORE.append(os.path.normcase(gallery.path))
@@ -482,20 +487,28 @@ class GalleryDB(database.db.DBBase):
                     for path in paths:
                         s = utils.delete_path(path)
                         if not s:
-                            log_e('Failed to delete chapter {}:{}, {}'.format(path, gallery.id, gallery.title.encode('utf-8', 'ignore')))
+                            log_e('Failed to delete chapter {}:{}, {}'.format(path, gallery.id, gallery.title))
                             continue
                     s = utils.delete_path(gallery.path)
 
                 if not s:
                     log_e('Failed to delete gallery:{}, {}'.format(gallery.id,
-                                                      gallery.title.encode('utf-8', 'ignore')))
+                                                      gallery.title))
                     continue
 
             GalleryDB.clear_thumb(gallery.profile)
             cls.execute(cls, 'DELETE FROM series WHERE series_id=?', (gallery.id,))
             gallery.id = None
-            log_i('Successfully deleted: {}'.format(gallery.title.encode('utf-8', 'ignore')))
-            app_constants.NOTIF_BAR.add_text('Successfully deleted: {}'.format(gallery.title))
+            deleted += 1
+            last_title = gallery.title
+            log_i('Successfully deleted: {}'.format(gallery.title))
+
+        # one notification for the whole list: each add_text starts a timer thread of its own,
+        # and a bulk removal runs to hundreds of galleries
+        if deleted == 1:
+            app_constants.NOTIF_BAR.add_text('Successfully deleted: {}'.format(last_title))
+        elif deleted:
+            app_constants.NOTIF_BAR.add_text('Successfully deleted {} galleries'.format(deleted))
 
     @staticmethod
     def check_exists(name, galleries=None, filter=True):
@@ -1198,7 +1211,7 @@ class HashDB(database.db.DBBase):
                     return None
 
             if gallery.dead_link:
-                log_e("Could not generate hash of dead gallery: {}".format(gallery.title.encode(errors='ignore')))
+                log_e("Could not generate hash of dead gallery: {}".format(gallery.title))
                 return {}
 
             try:
@@ -1506,16 +1519,21 @@ class Gallery:
         self.profile = ""
         self._path = ""
         self.path_in_archive = ""
+        self.id = None  # Will be defaulted.
+        self.title = ''
+        self.profile = ''
+        self._path = ''
+        self.path_in_archive = ''
         self.is_archive = 0
-        self.artist = ""
+        self.artist = ''
         self._chapters = ChaptersContainer(self)
-        self.info = ""
+        self.info = ''
         self.fav = 0
         self.rating = 0
-        self.type = ""
-        self.link = ""
-        self.language = ""
-        self.status = ""
+        self.type = ''
+        self.link = ''
+        self.language = ''
+        self.status = ''
         self.tags = {}
         self.pub_date = None
         self.date_added = datetime.datetime.now().replace(microsecond=0)
@@ -1525,8 +1543,9 @@ class Gallery:
         self._db_v = None
         self.hashes = []
         self.exed = 0
-        self.file_type = "folder"
-        self.view = app_constants.ViewType.Default # default view
+        self.file_type = 'folder'
+        self.view = app_constants.ViewType.Default  # default view
+        self.temp_url = ''  # for metadata fetching
 
         self._grid_visible = False
         self._list_view_selected = False
@@ -1534,11 +1553,17 @@ class Gallery:
         self._profile_load_status = {}
         self.dead_link = False
         self.state = app_constants.GalleryState.Default
-        self.qtime = QTime() # used by views to record addition
+        self.qtime = QTime()  # used by views to record addition
 
     @property
     def path(self):
         return self._path
+
+    @property
+    def path_title(self):
+        """ The gallery title extracted from the physical folder name. """
+        path = pathlib.Path(self.path)
+        return path.parent.name if not path.is_dir() else path.name
 
     @path.setter
     def path(self, n_p):
@@ -2060,7 +2085,7 @@ class AdminDB(QObject):
         galleries = []
         for g in db_galleries:
             if not os.path.exists(g.path):
-                log_i("Gallery doesn't exist anymore: {}".format(g.title.encode(errors="ignore")))
+                log_i("Gallery doesn't exist anymore: {}".format(g.title))
             else:
                 galleries.append(g)
 
@@ -2151,7 +2176,7 @@ class AdminDB(QObject):
         GalleryDB.clear_thumb_dir()
         for n, g in enumerate(galleries):
             if not os.path.exists(g.path):
-                log_i("Gallery doesn't exist anymore: {}".format(g.title.encode(errors="ignore")))
+                log_i("Gallery doesn't exist anymore: {}".format(g.title))
             else:
                 GalleryDB.add_gallery(g)
             self.PROGRESS.emit(n)

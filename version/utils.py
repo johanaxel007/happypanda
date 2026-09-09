@@ -35,6 +35,11 @@ import webbrowser
 import py7zr
 from PIL import Image, ImageChops
 
+# Pillow refuses an image above twice this as a decompression bomb. A stitched cosplay set or a
+# large scan runs past the stock ceiling honestly, and a library that cannot thumbnail its own
+# pages is worse than the memory a single decode costs.
+Image.MAX_IMAGE_PIXELS = 400_000_000
+
 from PyQt5.QtGui import QImage, qRgba
 
 import app_constants
@@ -58,8 +63,8 @@ def init_utils():
     global ARCHIVE_FILTER
     global SUPPORT_RAR
 
-    IMG_FILES = ('.jpg','.bmp','.png','.gif', '.jpeg', '.webp')
-    IMG_FILTER = '*.jpg *.bmp *.png *.gif *.jpeg *.webp'
+    IMG_FILES = ('.jpg', '.bmp', '.png', '.gif', '.jpeg', '.webp', '.jxl', '.avif', '.tif', '.tiff')
+    IMG_FILTER = '*.jpg *.bmp *.png *.gif *.jpeg *.webp *.jxl *.avif *.tif *.tiff'
 
     ZIP_FILES = ('.zip', '.cbz')
     RAR_FILES = ('.rar', '.cbr')
@@ -155,6 +160,96 @@ class GMetafile:
 
             return True
 
+    # A bare gallery url on a line of its own, which is how this format states the source. A
+    # '#' or a '?p=2' after it is where the userscript copied the link from, not part of the
+    # gallery, and an url carrying one has to resolve to the same gallery as one without.
+    GALLERY_URL_RE = re.compile(r'^(https?://\S+?/g/\d+/[0-9a-f]+/?)(?:[?#]\S*)?$')
+    # One namespace of tags: "> female: sole female, sister".
+    TAG_LINE_RE = re.compile(r'^>\s*([^:]+):\s*(.+)$')
+    # Everything below one of these is free text the uploader wrote, which can hold anything -
+    # "Circle: foo" among it - so the keyed header stops here.
+    END_OF_HEADER = ('tags:', 'uploader comment:')
+
+    def _ehentai_downloader(self, fp):
+        """E-Hentai Downloader userscript.
+
+        Its info.txt opens with the romaji title, the native title (blank when the gallery has
+        only one), and the gallery url, each on a line of its own with no key in front. Below
+        that is a block of 'Key: Value' lines, then a 'Tags:' block of '> namespace: a, b'
+        entries, then whatever the uploader wrote.
+        """
+        if not fp.name.endswith('info.txt'):
+            return
+
+        lines = fp.read().splitlines()
+        url_line, url = None, ''
+        for i, line in enumerate(lines[:6]):
+            found = self.GALLERY_URL_RE.match(line.strip())
+            if found:
+                url_line, url = i, found.group(1)
+                break
+
+        # The keyed formats state their url with a key, so a bare one identifies this format.
+        if url_line is None:
+            # Reading it moved the handle; the next parser in the chain gets the same one.
+            fp.seek(0)
+            return
+
+        log_i('Detected metafile: E-Hentai Downloader text')
+        self.metadata['link'] = url
+
+        titles = [l.strip() for l in lines[:url_line] if l.strip()]
+        if titles:
+            # The native title is the better one to keep: the romaji line is what the folder was
+            # named after, so a search on it has already been tried and failed.
+            self.metadata['title'] = title_parser(titles[-1])['title']
+
+        header, tag_lines = [], []
+        section = header
+        for line in lines[url_line + 1:]:
+            stripped = line.strip()
+            if stripped.lower() in self.END_OF_HEADER:
+                section = tag_lines if stripped.lower() == 'tags:' else None
+                continue
+            if section is not None:
+                section.append(stripped)
+
+        tags = {}
+        for line in tag_lines:
+            tag_line = self.TAG_LINE_RE.match(line)
+            if tag_line:
+                namespace, values = tag_line.group(1).strip(), tag_line.group(2)
+                tags[namespace.capitalize()] = [v.strip().lower() for v in values.split(',') if v.strip()]
+
+        for line in header:
+            key, _, value = line.partition(':')
+            key, value = key.strip().lower(), value.strip()
+            if not value:
+                continue
+            if key == 'category':
+                # Stored as the source writes it: 'Non-H' and 'Artist CG' do not survive
+                # being recapitalised, and both other parsers keep the raw category too.
+                self.metadata['type'] = value
+            elif key == 'language':
+                # Written as "English" or "English  TR" for a translation; only the name of it
+                # is a language the app knows.
+                self.metadata['language'] = value.split()[0].capitalize()
+            elif key == 'posted':
+                try:
+                    self.metadata['pub_date'] = datetime.datetime.strptime(value, '%Y-%m-%d %H:%M')
+                except ValueError:
+                    log_d(f'Unparseable posted date in metafile: {value}')
+
+        if tags:
+            if app_constants.IGNORED_TAGS_APPLY_TO_METADATA_FILES:
+                tags = remove_ignored_tags(tags)
+            self.metadata['tags'] = tags
+
+        artist = tags.get('Artist') or tags.get('Group')
+        self.metadata['artist'] = artist[0].capitalize() if artist else title_parser(titles[0])['artist'] if titles else ''
+
+        return True
+
     def _hdoujindler(self, fp):
         "HDoujin Downloader"
         if fp.name.endswith('info.txt'):
@@ -219,7 +314,7 @@ class GMetafile:
         for fp in self.files:
             with fp:
                 z = False
-                for x in [self._eze, self._hdoujindler]:
+                for x in [self._eze, self._ehentai_downloader, self._hdoujindler]:
                     try:
                         if x(fp):
                             z = True
@@ -323,6 +418,39 @@ def all_opposite(*args):
             if x:
                 return False
     return True
+
+def refresh_dead_links(galleries):
+    """
+    Recomputes ``dead_link`` for every given gallery and returns the ones whose source is gone.
+
+    The flag is otherwise computed once, when the library is read out of the database, so a
+    drive that was not mounted then leaves every gallery on it looking dead for the rest of
+    the session, and a source deleted since is not flagged at all.
+    """
+    dead = []
+    for gallery in galleries:
+        gallery.dead_link = not os.path.exists(gallery.path)
+        if gallery.dead_link:
+            dead.append(gallery)
+    return dead
+
+def unreachable_roots(galleries):
+    """
+    Returns the drives of the given galleries that do not themselves exist, sorted, each in the
+    spelling it was first seen in. Empty on a system whose paths carry no drive.
+
+    A missing drive says the volume is gone rather than the galleries on it, which is the one
+    case where a whole library's worth of sources reads as deleted.
+    """
+    checked = {}
+    for gallery in galleries:
+        drive, _ = os.path.splitdrive(gallery.path)
+        if not drive:
+            continue
+        key = os.path.normcase(drive)
+        if key not in checked:
+            checked[key] = drive if not os.path.exists(drive + os.sep) else None
+    return sorted(d for d in checked.values() if d)
 
 def update_gallery_path(new_path, gallery):
     "Updates a gallery's chapters path"
@@ -915,6 +1043,47 @@ def open_chapter(chapterpath, archive=None):
         app_constants.NOTIF_BAR.add_text("Could not open chapter for unknown reasons. Check happypanda.log!")
         log_e(f'Could not open chapter {os.path.split(chapterpath)[1]}')
 
+NATURAL_SORT_RE = re.compile(r'(\d+)')
+
+
+def natural_sort_key(name):
+    """Orders names the way the file manager does, with digit runs read as numbers.
+
+    '2' therefore comes before '10' rather than after it, and '007' sorts as seven. Two
+    spellings of one number are separated by the digits themselves, which puts '01' ahead of
+    '1' as Windows does.
+    """
+    parts = NATURAL_SORT_RE.split(name)
+    return [(int(part), part) if i % 2 else part.casefold()
+            for i, part in enumerate(parts)]
+
+
+def first_image_in(folder, depth=2):
+    """The path of the image a folder's cover should be made from, or ''.
+
+    Some galleries keep no pages of their own and only subfolders of them - '01 本編',
+    '02 エフェクト'. The first subfolder holding an image stands in for them, and every level
+    is walked in the file manager's order so the cover is the page a reader would call the first.
+    """
+    try:
+        entries = sorted(os.scandir(folder), key=lambda e: natural_sort_key(e.name))
+    except OSError:
+        log_e(f'Could not read the gallery folder: {folder}')
+        return ''
+
+    entries = [e for e in entries if not e.name.startswith('.')]
+    for entry in entries:
+        if entry.name.lower().endswith(IMG_FILES) and entry.is_file():
+            return entry.path
+    if depth > 0:
+        for entry in entries:
+            if entry.is_dir():
+                found = first_image_in(entry.path, depth - 1)
+                if found:
+                    return found
+    return ''
+
+
 def get_gallery_img(gallery_or_path, chap_number=0):
     """
     Returns a path to image in gallery chapter
@@ -932,8 +1101,10 @@ def get_gallery_img(gallery_or_path, chap_number=0):
         name = os.path.split(path)[1]
     except IndexError:
         name = os.path.split(path)[0]
-    is_archive = True if archive or name.endswith(ARCHIVE_FILES) else False
     real_path = archive if archive else path
+    # A folder keeps the name when an archive is extracted in place, so what it is decides this
+    # rather than what it is called - the archive reader cannot be handed a directory.
+    is_archive = bool(archive or name.endswith(ARCHIVE_FILES)) and not os.path.isdir(real_path)
     img_path = None
     if is_archive:
         try:
@@ -944,9 +1115,9 @@ def get_gallery_img(gallery_or_path, chap_number=0):
             os.mkdir(temp_path)
             log_d(f'{temp_path = }')
             if not archive:
-                f_img_name = sorted([img for img in arc.namelist() if img.lower().endswith(IMG_FILES) and not img.startswith('.')])[0]
+                f_img_name = sorted([img for img in arc.namelist() if img.lower().endswith(IMG_FILES) and not img.startswith('.')], key=natural_sort_key)[0]
             else:
-                f_img_name = sorted([img for img in arc.dir_contents(path) if img.lower().endswith(IMG_FILES) and not img.startswith('.')])[0]
+                f_img_name = sorted([img for img in arc.dir_contents(path) if img.lower().endswith(IMG_FILES) and not img.startswith('.')], key=natural_sort_key)[0]
             log_d(f'{f_img_name = }')
             img_path = arc.extract(f_img_name, temp_path)
             log_d(f'{img_path = }')
@@ -955,9 +1126,7 @@ def get_gallery_img(gallery_or_path, chap_number=0):
             img_path = app_constants.NO_IMAGE_PATH
     elif os.path.isdir(real_path):
         log_i('Getting image from folder')
-        first_img = sorted([img.name for img in os.scandir(real_path) if img.name.lower().endswith(tuple(IMG_FILES)) and not img.name.startswith('.')])
-        if first_img:
-            img_path = os.path.join(real_path, first_img[0])
+        img_path = first_image_in(real_path)
 
     if img_path:
         return os.path.abspath(img_path)
@@ -1109,25 +1278,30 @@ def title_parser(title):
     try:
         a = re.findall(r'((?<=\[) *[^\]]+( +\S+)* *(?=\]))', title)
         assert len(a) != 0
-        try:
-            artist = a[0][0].strip()
-        except IndexError:
-            artist = ''
+        lang = app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES
+
+        # The artist is the leading "[Circle (Artist)]" group, optionally preceded by event tags
+        # like "(C86)". It has to be the leading one: in "Guardian of Faith II [English]" the only
+        # bracketed group is a language, and one taken from there goes out as an artist: filter.
+        artist = ''
+        leading = re.match(r'^\s*(?:\([^)]*\)\s*)*\[([^\]]+)\]', title)
+        if leading:
+            candidate = leading.group(1).strip()
+            if candidate.lower().capitalize() not in lang:
+                artist = candidate
         parsed_title['artist'] = artist
 
-        try:
-            assert a[1]
-            lang = app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES
-            for x in a:
-                l = x[0].strip()
-                l = l.lower()
-                l = l.capitalize()
-                if l in lang:
-                    parsed_title['language'] = l
-                    break
-            else:
-                parsed_title['language'] = app_constants.G_DEF_LANGUAGE
-        except IndexError:
+        # Every bracketed group is a language candidate, including the only one: "Guardian of
+        # Faith II [English]" states its language in the single group it has, and defaulting
+        # instead sends the wrong language: filter on every search for it.
+        for x in a:
+            l = x[0].strip()
+            l = l.lower()
+            l = l.capitalize()
+            if l in lang:
+                parsed_title['language'] = l
+                break
+        else:
             parsed_title['language'] = app_constants.G_DEF_LANGUAGE
 
         t = title

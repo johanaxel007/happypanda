@@ -314,11 +314,11 @@ class AppWindow(QMainWindow):
         thread.finished.connect(thread.deleteLater)
         thread.start()
 
-    def _web_metadata_picker(self, gallery, title_url_list, queue, parent=None):
+    def _web_metadata_picker(self, gallery, title_url_list, queue, extras=None, parent=None):
         if not parent:
             parent = self
         text = "Which gallery do you want to extract metadata from?"
-        s_gallery_popup = misc.SingleGalleryChoices(gallery, title_url_list, text, parent)
+        s_gallery_popup = misc.SingleGalleryChoices(gallery, title_url_list, text, parent, extras)
         s_gallery_popup.USER_CHOICE.connect(queue.put)
 
     def get_metadata(self, gal=None):
@@ -519,8 +519,11 @@ class AppWindow(QMainWindow):
         def restore_search_term(new_view):
             if not app_constants.DUAL_SEARCH:
                 self.search_bar.setText(new_view.get_current_view().sort_model.current_term)
-            if self.current_manga_view.get_current_view().gallery_window.isVisible():
-                self.current_manga_view.get_current_view().gallery_window.hide_animation.start()
+            # The hover window belongs to the grid view; the table view has no equivalent to
+            # dismiss, and reaching for one there is what makes switching tabs raise.
+            current_view = self.current_manga_view.get_current_view()
+            if isinstance(current_view, gallery.MangaView) and current_view.gallery_window.isVisible():
+                current_view.gallery_window.hide_animation.start()
 
         self.tab_manager = misc_db.ToolbarTabManager(self.toolbar, self)
         self.tab_manager.favorite_btn.clicked.connect(lambda: switch_view(True))
@@ -579,6 +582,13 @@ class AppWindow(QMainWindow):
         duplicate_check_simple.setIcon(app_constants.DUPLICATE_ICON)
         duplicate_check_simple.triggered.connect(lambda: self.duplicate_check()) # triggered emits False
         gallery_menu.addAction(duplicate_check_simple)
+
+        remove_missing_source = QAction("Remove galleries with a missing source", self)
+        remove_missing_source.setIcon(app_constants.CROSS_ICON_WH)
+        remove_missing_source.setStatusTip('Remove the galleries whose files are gone from the current tab, without touching any file')
+        remove_missing_source.triggered.connect(
+            lambda: gallery.CommonView.remove_missing_source(self.get_current_view()))
+        gallery_menu.addAction(remove_missing_source)
 
         self.toolbar.addWidget(gallery_action)
 
@@ -972,7 +982,7 @@ class AppWindow(QMainWindow):
                                 for d in dir_content:
                                     paths.append(d.path)
                             else:
-                                log_e("Monitored path does not exist: {}".format(p.encode(errors='ignore')))
+                                log_e("Monitored path does not exist: {}".format(p))
 
                         self.fetch_inst.series_path = paths
                         self.fetch_inst.LOCAL_EMITTER.connect(lambda g:self.addition_view.add_gallery(g, app_constants.KEEP_ADDED_GALLERIES))
@@ -1037,7 +1047,7 @@ class AppWindow(QMainWindow):
         
         log_i('Acceptable dropped items: {}'.format(len(acceptable)))
         log_i('Unacceptable dropped items: {}'.format(len(unaccept)))
-        log_d('Dropped items: {}\n{}'.format(acceptable, unaccept).encode(errors='ignore'))
+        log_d('Dropped items: {}\n{}'.format(acceptable, unaccept))
 
         if acceptable:
             self.notification_bar.add_text('Adding dropped items...')
@@ -1180,7 +1190,7 @@ class AppWindow(QMainWindow):
                 duplicates = []
                 for n, g in enumerate(galleries, 1):
                     notifbar.add_text('Checking gallery {}'.format(n))
-                    log_d('Checking gallery {}'.format(g.title.encode(errors="ignore")))
+                    log_d('Checking gallery {}'.format(g.title))
                     for y in galleries:
                         title = g.title.strip().lower() == y.title.strip().lower()
                         path = os.path.normcase(g.path) == os.path.normcase(y.path)

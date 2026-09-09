@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging, os, sys
 from typing import Optional, TypeVar
 
@@ -230,6 +230,8 @@ class SettingsDialog(QWidget):
             self.exhentai_ehen_url.setChecked(True)
         
         self.include_expunged.setChecked(app_constants.INCLUDE_EH_EXPUNGED)
+        self.filter_by_language.setChecked(app_constants.FILTER_RESULTS_BY_LANGUAGE)
+        self.picker_previews.setChecked(app_constants.PICKER_PREVIEWS)
         self.replace_metadata.setChecked(app_constants.REPLACE_METADATA)
         self.always_first_hit.setChecked(app_constants.ALWAYS_CHOOSE_FIRST_HIT)
         self.web_time_offset.setValue(app_constants.GLOBAL_EHEN_TIME)
@@ -242,7 +244,10 @@ class SettingsDialog(QWidget):
         self.always_apply_tags.setCurrentIndex(app_constants.ALWAYS_APPLY_TAGS)
         self.use_gallery_link.setChecked(app_constants.USE_GALLERY_LINK)
         self.use_global_ehen_lock.setChecked(app_constants.USE_GLOBAL_EHEN_LOCK)
-        self.fallback_chaika.setChecked(True) if 'chaikahen' in app_constants.HEN_LIST else None
+        self.fallback_chaika.setChecked('chaikahen' in app_constants.HEN_LIST)
+        self.fuzz_confidence_threshold.setValue(app_constants.FUZZ_CONFIDENCE_THRESHOLD)
+        self.use_hash_search.setChecked(app_constants.USE_HASH_SEARCH)
+
 
         # Web / Download
         if app_constants.HEN_DOWNLOAD_TYPE == 0:
@@ -463,6 +468,10 @@ class SettingsDialog(QWidget):
 
         app_constants.INCLUDE_EH_EXPUNGED = self.include_expunged.isChecked()
         set(app_constants.INCLUDE_EH_EXPUNGED, 'Web', 'include eh expunged')
+        app_constants.FILTER_RESULTS_BY_LANGUAGE = self.filter_by_language.isChecked()
+        set(app_constants.FILTER_RESULTS_BY_LANGUAGE, 'Web', 'filter results by language')
+        app_constants.PICKER_PREVIEWS = self.picker_previews.isChecked()
+        set(app_constants.PICKER_PREVIEWS, 'Web', 'picker previews')
 
         app_constants.REPLACE_METADATA = self.replace_metadata.isChecked()
         set(app_constants.REPLACE_METADATA, 'Web', 'replace metadata')
@@ -504,7 +513,15 @@ class SettingsDialog(QWidget):
         if self.fallback_chaika.isChecked():
             henlist.append('chaikahen')
         app_constants.HEN_LIST = henlist
-        set(app_constants.HEN_LIST, 'Web', 'hen list')
+        # Store an emptied list as 'none' rather than blank, so it reads back as "explicitly
+        # disabled" instead of "never configured" (which would restore the default).
+        set(henlist if henlist else 'none', 'Web', 'hen list')
+
+        app_constants.FUZZ_CONFIDENCE_THRESHOLD = self.fuzz_confidence_threshold.value()
+        set(app_constants.FUZZ_CONFIDENCE_THRESHOLD, 'Web', 'fuzz confidence threshold')
+
+        app_constants.USE_HASH_SEARCH = self.use_hash_search.isChecked()
+        set(app_constants.USE_HASH_SEARCH, 'Web', 'use image hash search')
 
         # Visual / General
         app_constants.GALLERY_EDIT_WIDTH = self.galleryedit_width.value()
@@ -1142,8 +1159,35 @@ class SettingsDialog(QWidget):
         ehen_url_l.addWidget(self.default_ehen_url)
         ehen_url_l.addWidget(self.exhentai_ehen_url, 1)
         web_metadata_m_l.addRow('Default EH:', ehen_url_l)
-        self.include_expunged = QCheckBox('Allow fetching from expunged galleries')
+        self.include_expunged = QCheckBox('Also search expunged galleries')
+        self.include_expunged.setToolTip('Expunged galleries are listed separately from normal ones and cannot be\n'
+                                         'searched together with them, so this costs a second search - but only for\n'
+                                         'a gallery the normal search already failed to find.\n'
+                                         'Worth enabling for an older library, where a gallery may since have been\n'
+                                         'deleted from the source.\n'
+                                         'DEFAULT: off')
         web_metadata_m_l.addRow(self.include_expunged)
+
+        filter_by_language_info = QLabel('Drop search results that are a translation into some other language.')
+        filter_by_language_info.setWordWrap(True)
+        self.filter_by_language = QCheckBox('Ignore results in a different language')
+        self.filter_by_language.setToolTip('Only applies to galleries whose own language is a translation, since an\n'
+                                           'untranslated one falls back to the default language rather than a known one.\n'
+                                           'Results that state no language are always kept.\n'
+                                           'DEFAULT: on')
+        web_metadata_m_l.addRow(filter_by_language_info)
+        web_metadata_m_l.addRow(self.filter_by_language)
+
+        picker_previews_info = QLabel('Show a cover and the native title for each choice when several galleries match.')
+        picker_previews_info.setWordWrap(True)
+        self.picker_previews = QCheckBox('Look up cover art and native titles for the gallery picker')
+        self.picker_previews.setToolTip('Search results carry one title and no cover, which is little help in choosing\n'
+                                        'when your folder name is in Japanese. Hover a choice to see its cover.\n'
+                                        'Every ambiguous gallery in a run is looked up together, so this costs a few\n'
+                                        'requests for the whole run rather than one per gallery.\n'
+                                        'DEFAULT: on')
+        web_metadata_m_l.addRow(picker_previews_info)
+        web_metadata_m_l.addRow(self.picker_previews)
         self.continue_a_metadata_fetcher = QCheckBox('Skip galleries that has already been processed in auto metadata fetcher')
         web_metadata_m_l.addRow(self.continue_a_metadata_fetcher)
         self.use_global_ehen_lock = QCheckBox('Use global metadata fetch lock')
@@ -1204,6 +1248,29 @@ class SettingsDialog(QWidget):
         web_metadata_m_l.addRow(QLabel(''))
         self.always_first_hit = QCheckBox('Always choose first gallery found')
         web_metadata_m_l.addRow(self.always_first_hit)
+
+        use_hash_search_info = QLabel('Try an image hash search before falling back to a title search.')
+        use_hash_search_info.setWordWrap(True)
+        self.use_hash_search = QCheckBox('Search by image hash first')
+        self.use_hash_search.setToolTip('An image hash only matches when your files are byte-identical to the ones\n'
+                                        'the metadata source indexed. Leave this off if you recompress or convert\n'
+                                        'galleries after downloading them, as the hashes will never match.\n'
+                                        'DEFAULT: off')
+        web_metadata_m_l.addRow(use_hash_search_info)
+        web_metadata_m_l.addRow(self.use_hash_search)
+
+        fuzz_confidence_info = QLabel('Confidence threshold for matching galleries during metadata search.')
+        fuzz_confidence_info.setWordWrap(True)
+        self.fuzz_confidence_threshold = QSpinBox()
+        self.fuzz_confidence_threshold.setRange(0, 100)
+        self.fuzz_confidence_threshold.setSuffix('%')
+        self.fuzz_confidence_threshold.setToolTip('How similar a search result title has to be to the local folder name to be considered a match.\n'
+                                              'Lower values may result in more incorrect matches.\n'
+                                              'Higher values may miss slightly different titles.\n'
+                                              'DEFAULT: 70%')
+        web_metadata_m_l.addRow(fuzz_confidence_info)
+        web_metadata_m_l.addRow('Confidence threshold:', self.fuzz_confidence_threshold)
+
         use_gallery_link_info = QLabel("Enable this option to fetch metadata using the currently applied URL on the gallery")
         self.use_gallery_link = QCheckBox('Use currently applied gallery URL')
         self.use_gallery_link.setToolTip("Metadata will be fetched from the current gallery URL if it's a supported gallery url")

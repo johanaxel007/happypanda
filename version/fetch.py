@@ -15,16 +15,19 @@
 import os
 import time
 import logging
-import random
 import queue
+import re
+import random
 
 from PyQt5.QtCore import QObject, pyqtSignal # need this for interaction with main thread
+from thefuzz import fuzz
 
 import gallerydb
 import app_constants
 import pewnet
 import settings
 import utils
+from formatters import title_formatter, TranslationStyle
 
 """This file contains functions to fetch gallery data"""
 
@@ -34,6 +37,274 @@ log_d = log.debug
 log_w = log.warning
 log_e = log.error
 log_c = log.critical
+
+# Splits a "romaji title | translated title" pair. Both separator forms are accepted because
+# a folder name carries the full-width one (see utils.title_parser for the same pattern).
+TITLE_SEPARATOR_RE = re.compile(r'[|｜]')
+# Some folder names had the separator deleted rather than substituted, leaving the two spaces
+# that surrounded it as the only trace of it. Only consulted when no real separator is present,
+# and only on a raw folder name, since formatting collapses runs of whitespace.
+COLLAPSED_SEPARATOR_RE = re.compile(r'\s{2,}')
+# A leading "[Circle (Artist)]" prefix, allowing one level of nested parentheses.
+GROUP_PREFIX_RE = re.compile(r'^\s*\[[^\[\]]*(?:\([^()]*\)[^\[\]]*)*\]\s*')
+# A single decorated token such as ~tag~ or *note*. Both delimiters must be the same
+# character and the content may contain neither it nor whitespace, so that hyphenated words
+# and underscored artist names survive and no match spans a whole title.
+DECORATION_RE = re.compile(r'\s*([=~*+])(?:(?!\1)\S)+\1\s*')
+# Any run of digits, used to tell a sequel or chapter apart from its siblings.
+NUMBER_RE = re.compile(r'\d+')
+# A trailing "-Subtitle-" or "~Subtitle~" segment, both delimiters the same. Requires four
+# characters of content and none of the delimiter inside, so an ordinary hyphenated ending is
+# left alone.
+TRAILING_SUBTITLE_RE = re.compile(r'\s*([-~])\s*[^-~]{4,}\s*\1\s*$')
+# Han, hiragana, katakana and the CJK compatibility block. Full-width punctuation is
+# deliberately excluded: it is folded to ASCII before comparison and says nothing about
+# which script a title is written in.
+CJK_RE = re.compile(r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]')
+
+# Any bracketed group, wherever it sits in the title.
+BRACKET_GROUP_RE = re.compile(r'\[([^\[\]]+)\]')
+# Language names as a source writes them in a bracketed tag - "[Russian]", "[English, Chinese]".
+# Only used to tell two candidates for the same work apart, so this covers the languages that
+# turn up in listings rather than every language a source recognises.
+LANGUAGE_TAGS = frozenset((
+    'english', 'japanese', 'chinese', 'korean', 'spanish', 'french', 'german', 'russian',
+    'portuguese', 'italian', 'thai', 'vietnamese', 'indonesian', 'polish', 'turkish', 'dutch',
+    'hungarian', 'czech', 'arabic', 'greek', 'ukrainian', 'danish', 'finnish', 'norwegian',
+    'swedish', 'romanian', 'bulgarian', 'hebrew', 'persian', 'tagalog', 'filipino', 'cebuano',
+    'esperanto', 'catalan', 'serbian', 'croatian', 'slovak', 'slovenian', 'estonian', 'latvian',
+    'lithuanian', 'albanian', 'mongolian', 'nepali', 'bengali', 'burmese', 'hindi', 'urdu',
+    'malay', 'latin', 'afrikaans', 'armenian', 'georgian', 'azerbaijani', 'kazakh', 'sinhala',
+    'swahili', 'welsh', 'javanese',
+))
+# The languages a work is written in rather than translated into. A local gallery in one of
+# these is not evidence of anything: the app stores G_DEF_LANGUAGE for every gallery whose
+# folder name never stated a language, so 'Japanese' is as often "unknown" as it is a fact.
+UNTRANSLATED_LANGUAGES = frozenset(('japanese', 'chinese', 'korean'))
+# The source's own default language, which it therefore does not tag: a japanese original carries
+# no language tag at all, and the absence of one is what says japanese. A 'language:japanese$'
+# filter consequently matches nothing on the whole site.
+UNTAGGED_LANGUAGE = 'japanese'
+# Ceilings on one gallery's search. The attempt cap bounds the request rate against a source that
+# bans on volume, and is reached only when every variation comes back empty.
+MAX_QUERY_LENGTH = 200
+MAX_SEARCH_ATTEMPTS = 4
+
+
+def title_languages(title):
+    """The languages a title declares in its bracketed tags, lowercased.
+
+    A tag holds one language, a comma separated list of them, or a language followed by its own
+    name for itself - "[Thai \u0e20\u0e32\u0e29\u0e32\u0e44\u0e17\u0e22]". Anything else in brackets - '[Digital]', '[Decensored]', a
+    translator - contributes nothing. An empty result means the title makes no claim, which is
+    the normal shape of an untranslated release.
+    """
+    found = set()
+    # The leading "[Circle (Artist)]" group never holds a language, and a circle name can begin
+    # with a word that is one.
+    for group in BRACKET_GROUP_RE.findall(GROUP_PREFIX_RE.sub('', title, count=1)):
+        for part in group.split(','):
+            words = part.strip().lower().split()
+            if not words:
+                continue
+            if part.strip().lower() in LANGUAGE_TAGS or words[0] in LANGUAGE_TAGS:
+                found.add(words[0])
+    return found
+
+
+def language_is_known(gallery):
+    """Whether a gallery's stored language is a fact about it or just the app's fallback.
+
+    Every gallery whose folder name never stated a language is stored as G_DEF_LANGUAGE, so
+    that value on its own cannot be told apart from "nobody knew". It counts as known when the
+    folder name states it outright, or when it differs from the default nothing else could
+    have set it to.
+    """
+    language = (gallery.language or '').strip().lower()
+    if not language:
+        return False
+    if language != (app_constants.G_DEF_LANGUAGE or '').strip().lower():
+        return True
+    return language in title_languages(gallery.path_title or '')
+
+
+def split_on_separator(title):
+    """Returns the part of the title before its 'romaji | translated' separator, or ''.
+
+    Give this the raw folder name rather than a formatted one: a deleted separator survives
+    only as the run of whitespace it left behind, and formatting collapses that away.
+    """
+    for pattern in (TITLE_SEPARATOR_RE, COLLAPSED_SEPARATOR_RE):
+        parts = pattern.split(title, 1)
+        if len(parts) < 2:
+            continue
+        head, tail = parts[0].strip(), parts[1].strip()
+        # Both sides have to carry title text, otherwise the gap was just the one after a
+        # "[Circle (Artist)]" prefix and splitting there yields nothing worth searching for.
+        if strip_group_prefix(head) or (head and not GROUP_PREFIX_RE.match(head)):
+            if tail:
+                return head
+    return ''
+
+
+def strip_group_prefix(title):
+    """Returns the title without its leading '[Circle (Artist)]' prefix, or '' when unchanged."""
+    stripped = GROUP_PREFIX_RE.sub('', title).strip()
+    return stripped if stripped and stripped != title else ''
+
+
+def title_numbers(title):
+    """The distinct numbers in a title.
+
+    A volume, chapter or sequel number is a tiny edit distance but decides which gallery this
+    actually is: 'Kaizoku Kyonyuu' and 'Kaizoku Kyonyuu 2' score 90 against each other. Compared
+    as a set rather than a sequence, so a title that repeats the number in its translated half
+    still matches one that does not.
+    """
+    return {int(n) for n in NUMBER_RE.findall(title)}
+
+
+def canonical_title(title):
+    """Reduces a title to the part worth comparing between a local folder and a search hit.
+
+    A site keeps the decorations a folder name has already lost - '[Circle (Artist)]',
+    '(COMIC LO 2020-01)', '[English]', '[Digital]', translator credits - and fuzz.ratio is
+    length sensitive, so those alone are enough to push an exact match below the threshold.
+    Both sides get the same treatment here so that like is compared with like.
+    """
+    cleaned = title_formatter.format_title(title, translation_style=TranslationStyle.SEARCH)
+    return strip_group_prefix(cleaned) or cleaned
+
+
+def search_form(title):
+    """The form a title takes inside a search query: normalised, then stripped of decorations."""
+    formatted = title_formatter.format_title(title, translation_style=TranslationStyle.SEARCH)
+    return DECORATION_RE.sub(' ', formatted).strip() or formatted
+
+
+def match_forms(title):
+    """The canonical forms of a search hit that are worth comparing against a local title.
+
+    A site title is often the full 'romaji | translated' pair while the folder kept only one
+    of the two halves, which costs an exact match around 40 points of a length sensitive
+    ratio. Each half is therefore offered alongside the whole, and so is each form without a
+    trailing '-Subtitle-', which a folder name drops just as readily.
+
+    Only the candidate is broken up this way. Doing the same to the local title would reduce
+    'Title -Sub A-' and 'Title -Sub B-' to the same string and score two different works a
+    perfect 100 against each other.
+    """
+    canonical = canonical_title(title)
+    forms = [canonical]
+    parts = [p.strip() for p in TITLE_SEPARATOR_RE.split(canonical)]
+    if len(parts) > 1:
+        forms.extend(p for p in parts if p and p not in forms)
+    for form in list(forms):
+        without_subtitle = TRAILING_SUBTITLE_RE.sub('', form).strip()
+        if without_subtitle and without_subtitle not in forms:
+            forms.append(without_subtitle)
+    return forms
+
+
+def build_query(title, artist, lang):
+    """Builds the search query, trimming an over-long title on a word boundary."""
+    # A title can carry its own quotes once the full-width ones are folded to ASCII
+    # ('M＆N Ji Kaikyaku Gashuu ＂Kaikyaku Otome＂'). Left in, they close the phrase
+    # early and the remainder is parsed as loose terms, which matches nothing.
+    title = ' '.join(title.replace('"', ' ').split())
+    filters = artist + lang
+    max_title_len = MAX_QUERY_LENGTH - len(filters) - 2  # -2 for quotes
+    if len(title) <= max_title_len:
+        return f'"{title}"{filters}'.strip()
+
+    # The title does not fit. Trim it on a word boundary and drop the quotes:
+    # a quoted phrase that was cut mid-title can never match anything.
+    trimmed = title[:max_title_len].rsplit(' ', 1)[0].strip() or title[:max_title_len].strip()
+    return f'{trimmed}{filters}'.strip()
+
+
+def language_filter(language):
+    """The 'language:x$' filter to search a gallery of the given language with, or ''.
+
+    Empty for a language the source leaves untagged, since filtering on one of those matches
+    nothing at all rather than narrowing anything.
+    """
+    language = (language or '').strip().lower()
+    if not language or language == UNTAGGED_LANGUAGE:
+        return ''
+    return f' language:{language}$'
+
+
+def search_queries(gallery, max_attempts=MAX_SEARCH_ATTEMPTS):
+    """The queries to search a gallery for, in descending order of how often they pay off.
+
+    Empty when the folder name reduces to nothing, which happens for a gallery whose path is a
+    drive root or one on a drive that is not mounted - an empty query matches the whole site.
+    """
+    sanitized_title = search_form(gallery.path_title)
+    # Split the raw folder name, not the formatted one: a deleted separator is only visible as
+    # the whitespace run that formatting collapses away.
+    split_raw = split_on_separator(gallery.path_title)
+
+    # Some galleries hold a language where their artist should be, from names like "Guardian of
+    # Faith II [English]" that have no artist prefix at all. An artist:english$ filter matches
+    # nothing, so drop it rather than search on it.
+    artist_name = (gallery.artist or '').strip()
+    if artist_name.lower().capitalize() in app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES:
+        log_w(f"Ignoring language '{artist_name}' stored as this gallery's artist")
+        artist_name = ''
+
+    has_artist = bool(artist_name)
+    artist_part = ""
+    if has_artist:
+        artist_name = artist_name.lower()
+        artist_part = f' artist:"{artist_name}"$' if ' ' in artist_name else f' artist:{artist_name}$'
+
+    # In descending order of how often they pay off: the folder title as-is, the romaji half
+    # before the '|' that a source usually indexes, then each of those without the
+    # "[Circle (Artist)]" prefix the artist filter already covers.
+    bases = [sanitized_title, search_form(split_raw) if split_raw else '']
+    title_variants = []
+    for variant in bases + [strip_group_prefix(b) for b in bases if b]:
+        if variant and variant not in title_variants:
+            title_variants.append(variant)
+
+    if not title_variants:
+        return []
+
+    lang_part = language_filter(gallery.language)
+    queries = []
+
+    def add_query(title_v, artist_v, lang_v):
+        query = build_query(title_v, artist_v, lang_v)
+        # Duplicates collapse: a title with no separator or no prefix yields fewer variants,
+        # and truncation can make two variants build the same query.
+        if query not in queries:
+            queries.append(query)
+
+    # The artist filter is worth exactly one attempt: the stored artist rarely matches the
+    # source's spelling, so dropping it is the most productive single variation, while pairing
+    # it with a fallback title never is and gets no slot.
+    add_query(title_variants[0], artist_part, lang_part)
+    add_query(title_variants[0], '', lang_part)
+    # The loosest form there is, and the one a source is likeliest to hold: the bare romaji
+    # half, nothing filtering it. Third rather than fifth because the budget runs out at four,
+    # and a gallery the source disagrees with on artist or language reaches nothing else.
+    add_query(title_variants[-1], '', '')
+    for title_v in title_variants[1:]:
+        add_query(title_v, '', lang_part)
+    if lang_part:
+        add_query(title_variants[0], '', '')
+    # Whatever budget is left over goes to the combinations skipped above.
+    for title_v in title_variants[1:]:
+        add_query(title_v, artist_part, lang_part)
+    if lang_part:
+        add_query(title_variants[0], artist_part, '')
+        for title_v in title_variants[1:]:
+            add_query(title_v, '', '')
+
+    return queries[:max_attempts]
+
 
 class Fetch(QObject):
     """
@@ -54,7 +325,7 @@ class Fetch(QObject):
     # WEB signals
     GALLERY_EMITTER = pyqtSignal(gallerydb.Gallery, object, object)
     AUTO_METADATA_PROGRESS = pyqtSignal(str)
-    GALLERY_PICKER = pyqtSignal(object, list, queue.Queue)
+    GALLERY_PICKER = pyqtSignal(object, list, queue.Queue, object)
     GALLERY_PICKER_QUEUE = queue.Queue()
     
 
@@ -93,7 +364,7 @@ class Fetch(QObject):
         folder_name = folder_name or path if folder_name or path else os.path.split(archive)[1]
 
         if utils.check_ignore_list(temp_p) and not gallerydb.GalleryDB.check_exists(temp_p, self.galleries_from_db, False):
-            log_i('Creating gallery: {}'.format(folder_name.encode('utf-8', 'ignore')))
+            log_i('Creating gallery: {}'.format(folder_name))
             new_gallery = gallerydb.Gallery()
             metafile = utils.GMetafile()
             if os.path.isdir(temp_p):
@@ -143,7 +414,7 @@ class Fetch(QObject):
                             if do_chapters:
                                 archive_g = sorted(contents)
                                 if not archive_g:
-                                    log_w('No chapters found for {}'.format(temp_p.encode(errors='ignore')))
+                                    log_w('No chapters found for {}'.format(temp_p))
                                     raise ValueError
                                 for g in archive_g:
                                     chap = new_gallery.chapters.create_chapter()
@@ -166,15 +437,15 @@ class Fetch(QObject):
                     else:
                         raise ValueError
                 except ValueError:
-                    log_w('Skipped {} in local search'.format(path.encode(errors='ignore')))
+                    log_w('Skipped {} in local search'.format(path))
                     self.skipped_paths.append((temp_p, 'Empty archive',))
                     return
                 except app_constants.CreateArchiveFail:
-                    log_w('Skipped {} in local search'.format(path.encode(errors='ignore')))
+                    log_w('Skipped {} in local search'.format(path))
                     self.skipped_paths.append((temp_p, 'Error creating archive',))
                     return
                 except app_constants.TitleParsingError:
-                    log_w('Skipped {} in local search'.format(path.encode(errors='ignore')))
+                    log_w('Skipped {} in local search'.format(path))
                     self.skipped_paths.append((temp_p, 'Error while parsing folder/archive name',))
                     return
 
@@ -191,10 +462,10 @@ class Fetch(QObject):
 
             self.LOCAL_EMITTER.emit(new_gallery)
             self._data.append(new_gallery)
-            log_i('Gallery successful created: {}'.format(folder_name.encode('utf-8', 'ignore')))
+            log_i('Gallery successful created: {}'.format(folder_name))
             return True
         else:
-            log_i('Gallery already exists or ignored: {}'.format(folder_name.encode('utf-8', 'ignore')))
+            log_i('Gallery already exists or ignored: {}'.format(folder_name))
             self.skipped_paths.append((temp_p, 'Already exists or ignored'))
             return False
 
@@ -253,10 +524,10 @@ class Fetch(QObject):
 
                     except ValueError:
                         self.skipped_paths.append((path, 'Empty directory'))
-                        log_w('Directory is empty: {}'.format(path.encode(errors='ignore')))
+                        log_w('Directory is empty: {}'.format(path))
                     except NotADirectoryError:
                         self.skipped_paths.append((path, 'Unsupported file'))
-                        log_w('Unsupported file: {}'.format(path.encode(errors='ignore')))
+                        log_w('Unsupported file: {}'.format(path))
 
                 progress += 1 # update the progress bar
                 self.PROGRESS.emit(progress)
@@ -284,7 +555,7 @@ class Fetch(QObject):
         if gallery:
             gallery.exed = 1
             self.GALLERY_EMITTER.emit(gallery, None, False)
-            log_d('Emitted gallery: {}'.format(gallery.title.encode(errors='ignore')))
+            log_d('Emitted gallery: {}'.format(gallery.title))
 
     def fetch_metadata(self, gallery=None, hen=None, proc=False):
         """
@@ -293,8 +564,8 @@ class Fetch(QObject):
         Set proc to true if you want to process the queue immediately
         """
         if gallery:
-            log_i("Fetching metadata for gallery: {}".format(gallery.title.encode(errors='ignore')))
-            log_i("Adding to queue: {}".format(gallery.title.encode(errors='ignore')))
+            log_i("Fetching metadata for gallery: {}".format(gallery.title))
+            log_i("Adding to queue: {}".format(gallery.title))
             if proc:
                 metadata = hen.add_to_queue(gallery.temp_url, True)
             else:
@@ -310,7 +581,7 @@ class Fetch(QObject):
             if gallery:
                 self.error_galleries.append((gallery, "No metadata found for gallery"))
                 log_i("An error occured while fetching metadata with gallery: {}".format(
-                    gallery.title.encode(errors='ignore')))
+                    gallery.title))
             return None
         self.AUTO_METADATA_PROGRESS.emit("Applying metadata...")
 
@@ -320,110 +591,304 @@ class Fetch(QObject):
             except KeyError:
                 self.AUTO_METADATA_PROGRESS.emit("No metadata found for gallery: {}".format(g.title))
                 self.error_galleries.append((g, "No metadata found for gallery"))
-                log_w("No metadata found for gallery: {}".format(g.title.encode(errors='ignore')))
+                log_w("No metadata found for gallery: {}".format(g.title))
                 continue
             log_i('({}/{}) Applying metadata for gallery: {}'.format(x, len(self.galleries_in_queue),
-                                                            g.title.encode(errors='ignore')))
+                                                            g.title))
             g = hen.apply_metadata(g, data, append = not app_constants.REPLACE_METADATA)
             self._return_gallery_metadata(g)
-            log_i('Successfully applied metadata to gallery: {}'.format(g.title.encode(errors='ignore')))
+            log_i('Successfully applied metadata to gallery: {}'.format(g.title))
         self.galleries_in_queue.clear()
         self.AUTO_METADATA_PROGRESS.emit('Finished applying metadata')
         log_i('Finished applying metadata')
 
     def _auto_metadata_process(self, galleries, hen, valid_url, **kwargs):
+        FUZZ_CONFIDENCE_THRESHOLD = app_constants.FUZZ_CONFIDENCE_THRESHOLD
+        RETRY_DELAY_SECONDS = 3
+        RETRY_FALLBACK_DELAY_SECONDS = max(RETRY_DELAY_SECONDS - 2, 1)
+        # A short or generic title can clear the threshold dozens of times over. Logging every
+        # one of those buries the run, so only the head of the ranking is written out.
+        MAX_LOGGED_CANDIDATES = 10
+
         hen.LAST_USED = time.time()
         self.AUTO_METADATA_PROGRESS.emit("Checking gallery urls...")
-        if len(galleries) == 1: log_d(f'Fetching metadata for 1 gallery')
+        if len(galleries) == 1: log_d('Fetching metadata for 1 gallery')
         else:                   log_d(f'Fetching metadata for {len(galleries)} galleries')
 
-        fetched_galleries = []
         checked_pre_url_galleries = []
         multiple_hit_galleries = []
-        for x, gallery in enumerate(galleries, 1):
-            custom_args = {} # send to hen class
-            log_i("Checking gallery url")
 
+        def process_and_filter_results(results, query, local_title, local_language, language_known):
+            """Uses thefuzz to filter, sort, and verify search results. Returns an empty list on failure.
+
+            A result carrying no title cannot be verified against the local one. Such a result is
+            kept with a score of None ("unverified") rather than being scored 0, because some
+            sources (panda.chaika.moe) resolve a gallery without ever reporting its title.
+            """
+            if not results or query not in results:
+                return [], False
+
+            title_url_list = results[query]
+            log_d(f"Initial search returned {len(title_url_list)} result(s). Filtering with thefuzz...")
+
+            # 1. Score each result, or mark it unverified when the source gave us no title.
+            #    Both sides are canonicalised so the site's extra decorations don't drag an
+            #    otherwise exact match below the threshold.
+            local_numbers = title_numbers(local_title)
+            local_is_cjk = bool(CJK_RE.search(local_title))
+            local_language = (local_language or '').strip().lower()
+            dropped_for_language = False
+            filtered = []
+            number_mismatches = []
+            for title, url in title_url_list:
+                if not title:
+                    filtered.append((title, url, None))
+                    continue
+
+                scores = []
+                cross_script = False
+                for form in match_forms(title):
+                    if title_numbers(form) != local_numbers:
+                        # Different volume, chapter or sequel. Disqualifying whatever it
+                        # scores, since these sit close enough to be picked by mistake.
+                        continue
+                    if bool(CJK_RE.search(form)) != local_is_cjk:
+                        # A Japanese folder name and a romaji site title share no characters,
+                        # so a ratio between them reads as 0 however right the hit is. Unverified
+                        # rather than wrong: the search matched it on the site's own title.
+                        cross_script = True
+                        continue
+                    scores.append(fuzz.ratio(local_title, form))
+
+                if scores:
+                    filtered.append((title, url, max(scores)))
+                elif cross_script:
+                    filtered.append((title, url, None))
+                else:
+                    number_mismatches.append(title)
+
+            if number_mismatches:
+                log_i(f"Discarded {len(number_mismatches)} result(s) with different numbering (local: {sorted(local_numbers) or 'none'}):")
+                for title in number_mismatches[:3]:
+                    log_i(f"  - '{title}'")
+
+            # 2. Keep results that meet the confidence threshold, plus the unverified ones
+            confident_results_with_scores = [
+                (title, url, score) for title, url, score in filtered
+                if score is None or score >= FUZZ_CONFIDENCE_THRESHOLD
+            ]
+
+            # 2b. A release translated into another language is a different release. Needs the
+            #      local language to be known rather than defaulted, and to be a translation:
+            #      an untranslated listing states no language for this to disagree with.
+            if (app_constants.FILTER_RESULTS_BY_LANGUAGE and language_known
+                    and local_language in LANGUAGE_TAGS
+                    and local_language not in UNTRANSLATED_LANGUAGES):
+                kept, wrong_language = [], []
+                for result in confident_results_with_scores:
+                    languages = title_languages(result[0] or '')
+                    (wrong_language if languages and local_language not in languages else kept).append(result)
+                if wrong_language:
+                    log_i(f"Discarded {len(wrong_language)} result(s) not in {local_language}:")
+                    for title, _, _ in wrong_language[:3]:
+                        log_i(f"  - '{title}'")
+                confident_results_with_scores = kept
+                dropped_for_language = bool(wrong_language)
+
+            # 3. Best score first, with a same-language hit ahead of an equally good one in
+            #    another language. Ties are common, and the source lists newest first, which
+            #    floats a recent translation above the release actually held locally.
+            def rank(item):
+                title, _, score = item
+                languages = title_languages(title or '')
+                same_language = (local_language in UNTRANSLATED_LANGUAGES if not languages
+                                 else local_language in languages)
+                return (-1 if score is None else score, same_language)
+
+            sorted_confident_results = sorted(confident_results_with_scores, key=rank, reverse=True)
+
+            # At info rather than debug: this ranking is the only record of why one candidate
+            # was offered ahead of another, and it is needed from logs collected without debug.
+            log_i(f"Found {len(sorted_confident_results)} confident result(s) (threshold: {FUZZ_CONFIDENCE_THRESHOLD}). Sorting them:")
+            for title, _, score in sorted_confident_results[:MAX_LOGGED_CANDIDATES]:
+                log_i(f"  - Score: {'unverified' if score is None else score} for '{title}'")
+            if len(sorted_confident_results) > MAX_LOGGED_CANDIDATES:
+                log_i(f"  - ... and {len(sorted_confident_results) - MAX_LOGGED_CANDIDATES} more")
+
+            # Nothing cleared the bar, so report the closest misses. Without these the log
+            # cannot distinguish "the source returned nothing" from "the threshold is too high".
+            if not sorted_confident_results and filtered:
+                near_misses = sorted(filtered, key=lambda item: item[2] or 0, reverse=True)[:3]
+                log_i(f"Best of {len(filtered)} rejected result(s):")
+                for title, _, score in near_misses:
+                    log_i(f"  - Score: {score} for '{title}'")
+
+            # 4. Return the results, and whether anything was dropped for its language: a lone
+            #    survivor of that is the least verified candidate, not the most.
+            return sorted_confident_results, dropped_for_language
+
+        # Helper function to reduce code duplication
+        def _try_search(query, local_title, local_language, language_known):
+            """Performs a search and returns the confident results."""
+            found_results = hen.search(query)
+            if found_results == 'error':
+                return 'error'
+            return process_and_filter_results(found_results, query, local_title, local_language,
+                                              language_known)
+
+        def _select_match(gallery_obj, confident_results, kind, dropped_for_language=False):
+            """Takes the URL from an unambiguous hit, or queues the gallery for the picker.
+
+            Only called with a non-empty result list, so it always resolves to something and
+            returns True to mark the search as successful.
+            """
+            if dropped_for_language and len(confident_results) == 1:
+                # Nothing weighed this against the alternatives, because the filter removed
+                # them - and a tag shape the parser cannot read survives that as "states no
+                # language". Ask, rather than apply a language nobody checked.
+                log_i(f"One {kind} match survived the language filter; asking rather than applying.")
+                multiple_hit_galleries.append([gallery_obj, [(t, u) for t, u, _ in confident_results]])
+                return True
+
+            perfect_matches = [res for res in confident_results if res[2] == 100]
+
+            if len(perfect_matches) == 1:
+                log_i(f"Single perfect {kind} match (score 100) found. Selecting automatically.")
+                gallery_obj.temp_url = perfect_matches[0][1]
+            elif len(confident_results) == 1:
+                log_i(f"Single confident {kind} match found and verified.")
+                gallery_obj.temp_url = confident_results[0][1]
+            else:
+                choices_to_present = perfect_matches if perfect_matches else confident_results
+                log_i(f"Multiple ({len(choices_to_present)}) confident {kind} matches found.")
+                multiple_hit_galleries.append([gallery_obj, [(t, u) for t, u, _ in choices_to_present]])
+            return True
+
+        for x, gallery in enumerate(galleries, 1):
+            search_successful = False
+            log_i(f"--- Processing gallery {x}/{len(galleries)}: {gallery.title} ---")
+            self.AUTO_METADATA_PROGRESS.emit(f"({x}/{len(galleries)}) Searching for: {gallery.title}")
+
+            # --- Stage 0: Pre-flight checks ---
             # coming from GalleryDialog
-            if hasattr(gallery, "_g_dialog_url"):
-                if gallery._g_dialog_url:
+            if hasattr(gallery, "_g_dialog_url") and gallery._g_dialog_url:
+                if self._hen_supports(gallery._g_dialog_url, hen):
                     gallery.temp_url = gallery._g_dialog_url
                     checked_pre_url_galleries.append(gallery)
-                    # to process even if this gallery is last and fails
-                    if x == len(galleries):
-                        self.fetch_metadata(hen=hen)
-                    continue
+                else:
+                    # The url belongs to another source. Hand the gallery to the fallback pass
+                    # that can read it, rather than to an api that cannot parse it.
+                    log_i("Gallery url belongs to a different source, deferring to the fallback")
+                    self.error_galleries.append((gallery, "Gallery url is not supported by this source"))
+                # to process even if this gallery is last and fails
+                if x == len(galleries): self.fetch_metadata(hen=hen)
+                continue
+
+            # A gallery imported before its metadata file was understood carries no link,
+            # while the file beside it names the exact gallery. Reading it turns a search that
+            # has already failed into a direct fetch.
+            if not gallery.link and app_constants.USE_GALLERY_LINK:
+                gallery.link = self._metafile_link(gallery)
 
             if gallery.link and app_constants.USE_GALLERY_LINK:
                 log_i("Using existing gallery url")
-                check = self._website_checker(gallery.link)
-                if check == valid_url:
+                if self._hen_supports(gallery.link, hen):
                     # convert g.e-h to e-h
                     gallery.link = pewnet.HenManager.gtoEh(gallery.link)
                     gallery.temp_url = gallery.link
                     checked_pre_url_galleries.append(gallery)
-                    if x == len(galleries):
-                        self.fetch_metadata(hen=hen)
+                    if x == len(galleries): self.fetch_metadata(hen=hen)
                     continue
 
-            self.AUTO_METADATA_PROGRESS.emit("({}/{}) Generating gallery hash: {}".format(x, len(galleries), gallery.title))
-            log_i("Generating gallery hash: {}".format(gallery.title.encode(errors='ignore')))
-            g_hash = None
-            try:
-                if not gallery.hashes:
-                    color_img = kwargs['color'] if 'color' in kwargs else False # used for similarity search on EH
-                    hash_dict = gallerydb.execute(gallerydb.HashDB.gen_gallery_hash, False, gallery, 0, 'mid', color_img)
-                    if color_img and 'color' in hash_dict:
-                        custom_args['color'] = hash_dict['color'] # will be path to filename
-                        g_hash = hash_dict['color']
-                    elif hash_dict:
-                        g_hash = hash_dict['mid']
+                # The url is usable, just not by this source. Hand the gallery straight to the
+                # fallback pass that owns it: searching for a gallery we already have the url
+                # for only burns requests against an api that will never match it.
+                if any(self._hen_supports(gallery.link, h) for h in self._hen_list):
+                    log_i("Gallery url belongs to a fallback source, skipping search")
+                    self.error_galleries.append((gallery, "Gallery url is not supported by this source"))
+                    if x == len(galleries): self.fetch_metadata(hen=hen)
+                    continue
+                # Otherwise no configured source can read it, so fall through to searching.
+
+            # Sorting uses the language whatever its provenance, since ordering the choices
+            # differently cannot lose anything; only discarding needs it to be a fact.
+            gallery_language_known = language_is_known(gallery)
+
+            # --- Common: the title every search hit is verified against ---
+            # path_title is the raw folder name, still carrying the full-width stand-ins a
+            # filesystem forces onto forbidden characters. canonical_title folds both sides back.
+            compare_title = canonical_title(gallery.path_title)
+
+            # --- Stage 1: Image Hash Search (opt-in) ---
+            # Off by default: it only matches when the local files are byte-identical to the ones
+            # the source hashed, which recompressing or converting a gallery breaks.
+            if app_constants.USE_HASH_SEARCH:
+                log_i("Attempt 1: Image Hash Search")
+                g_hash = None
+                try:
+                    if gallery.hashes:
+                        g_hash = gallery.hashes[random.randint(0, len(gallery.hashes)-1)]
+                    else:
+                        hash_dict = gallerydb.execute(gallerydb.HashDB.gen_gallery_hash, False, gallery, 0, 'mid', False)
+                        if hash_dict: g_hash = hash_dict['mid']
+                except (app_constants.CreateArchiveFail, ValueError):
+                    log_w("Could not get a valid hash for gallery.")
+                    g_hash = None
+
+                if g_hash:
+                    search_result = _try_search(g_hash, compare_title, gallery.language,
+                                                gallery_language_known)
+                    if search_result == 'error':
+                        app_constants.GLOBAL_EHEN_LOCK = False; self.FINISHED.emit(True); return
+
+                    confident_results_with_scores, dropped_for_language = search_result
+                    if confident_results_with_scores:
+                        search_successful = _select_match(gallery, confident_results_with_scores,
+                                                          'hash', dropped_for_language)
                 else:
-                    g_hash = gallery.hashes[random.randint(0, len(gallery.hashes)-1)]
-            except app_constants.CreateArchiveFail:
-                pass
-            if not g_hash:
-                self.error_galleries.append((gallery, "Could not generate hash"))
-                log_e("Could not generate hash for gallery: {}".format(gallery.title.encode(errors='ignore')))
-                if x == len(galleries):
-                    self.fetch_metadata(hen=hen)
-                continue
-            gallery.hash = g_hash
+                    log_w("No hash available for gallery.")
 
-            # dict -> hash:[list of title,url tuples] or None
-            self.AUTO_METADATA_PROGRESS.emit("({}/{}) Searching url for gallery: {}".format(x, len(galleries), gallery.title))
-            found_url = hen.search(gallery.hash, **custom_args)
-            if found_url == 'error':
-                app_constants.GLOBAL_EHEN_LOCK = False
-                self.FINISHED.emit(True)
-                return
-            if not gallery.hash in found_url:
-                self.error_galleries.append((gallery, "Could not find url for gallery"))
-                self.AUTO_METADATA_PROGRESS.emit("Could not find url for gallery: {}".format(gallery.title))
-                log_w('Could not find url for gallery: {}'.format(gallery.title.encode(errors='ignore')))
-                if x == len(galleries):
-                    self.fetch_metadata(hen=hen)
-                continue
-            title_url_list = found_url[gallery.hash]
+                if not search_successful:
+                    log_i(f"Hash search failed. Waiting {RETRY_DELAY_SECONDS}s before falling back to title search.")
+                    time.sleep(RETRY_DELAY_SECONDS)
 
-            if not len(title_url_list) > 1 or app_constants.ALWAYS_CHOOSE_FIRST_HIT:
-                title = title_url_list[0][0]
-                url = title_url_list[0][1]
+            # --- Stage 2: Title Search ---
+            if not search_successful:
+                queries = search_queries(gallery)
+                if not queries:
+                    log_w('Gallery has no searchable title, skipping')
+                    self.error_galleries.append((gallery, "Gallery has no searchable title"))
+                    if x == len(galleries): self.fetch_metadata(hen=hen)
+                    continue
+
+                log_i(f"--- Title Search ({len(queries)} query variation(s)) ---")
+                for i, query in enumerate(queries):
+                    log_i(f"Attempt 2.{chr(97+i)}: Searching with query: {query}")
+                    search_result = _try_search(query, compare_title, gallery.language,
+                                                gallery_language_known)
+
+                    if search_result == 'error':
+                        app_constants.GLOBAL_EHEN_LOCK = False; self.FINISHED.emit(True); return
+
+                    confident_results_with_scores, dropped_for_language = search_result
+                    if confident_results_with_scores:
+                        search_successful = _select_match(gallery, confident_results_with_scores,
+                                                          'title', dropped_for_language)
+                        break
+
+                    if i < len(queries) - 1:  # Don't sleep after the last attempt
+                        time.sleep(RETRY_FALLBACK_DELAY_SECONDS)
+
+            # --- Process Final Results ---
+            if search_successful:
+                if gallery.temp_url:
+                    self.AUTO_METADATA_PROGRESS.emit(f"({x}/{len(galleries)}) Adding to queue: {gallery.title}")
+                    self.fetch_metadata(gallery, hen, x == len(galleries))
             else:
-                multiple_hit_galleries.append([gallery, title_url_list])
-                if x == len(galleries):
-                    self.fetch_metadata(hen=hen)
-                continue
-
-            if not gallery.link:
-                if isinstance(hen, (pewnet.EHen, pewnet.ExHen)):
-                    gallery.link = url
-                    self.GALLERY_EMITTER.emit(gallery, None, None)
-            gallery.temp_url = url
-            self.AUTO_METADATA_PROGRESS.emit("({}/{}) Adding to queue: {}".format(
-                x, len(galleries), gallery.title))
-
-            self.fetch_metadata(gallery, hen, x == len(galleries))
+                self.error_galleries.append((gallery, "Could not find a confident URL match for gallery"))
+                self.AUTO_METADATA_PROGRESS.emit(f"Could not find url for gallery: {gallery.title}")
+                log_e(f'All search attempts failed for gallery: {gallery.title}')
+                if x == len(galleries): self.fetch_metadata(hen=hen)
 
         if checked_pre_url_galleries:
             for x, gallery in enumerate(checked_pre_url_galleries, 1):
@@ -432,20 +897,39 @@ class Fetch(QObject):
                 self.fetch_metadata(gallery, hen, x == len(checked_pre_url_galleries))
 
         if multiple_hit_galleries:
+            previews = self._candidate_previews(multiple_hit_galleries, hen)
+            # Cover urls point at the source's own image host, which serves a logged in user
+            # only. One session is built here and reused for every cover in the run.
+            preview_session = hen.image_session() if previews else None
             skip_all = False
             multiple_hit_g_queue = []
             for x, g_data in enumerate(multiple_hit_galleries, 1):
                 gallery = g_data[0]
-                log_w("Multiple galleries found for gallery: {}".format(gallery.title.encode(errors='ignore')))
+                log_w("Multiple galleries found for gallery: {}".format(gallery.title))
                 if skip_all:
                     log_w("Skipping gallery")
                     continue
-                title_url_list = g_data[1]
+                title_url_list, thumbnails = g_data[1], {}
+                if previews:
+                    labelled = []
+                    for title, url in title_url_list:
+                        preview = previews.get(url, {})
+                        native = preview.get('native', '')
+                        if native and native != title:
+                            title = f'{title}\n{native}'
+                        if preview.get('thumb'):
+                            thumbnails[url] = preview['thumb']
+                        labelled.append((title, url))
+                    title_url_list = labelled
 
-                self.AUTO_METADATA_PROGRESS.emit("Multiple galleries found for gallery: {}".format(gallery.title))
+                self.AUTO_METADATA_PROGRESS.emit("({}/{}) Multiple galleries found for gallery: {}".format(
+                    x, len(multiple_hit_galleries), gallery.title))
                 app_constants.SYSTEM_TRAY.showMessage('Happypanda', 'Multiple galleries found for gallery:\n{}'.format(gallery.title),
                                     minimized=True)
-                self.GALLERY_PICKER.emit(gallery, title_url_list, self.GALLERY_PICKER_QUEUE)
+                self.GALLERY_PICKER.emit(gallery, title_url_list, self.GALLERY_PICKER_QUEUE,
+                                         {'position': (x, len(multiple_hit_galleries)),
+                                          'thumbnails': thumbnails,
+                                          'session': preview_session})
                 user_choice = self.GALLERY_PICKER_QUEUE.get()
 
                 if user_choice == None:
@@ -454,14 +938,12 @@ class Fetch(QObject):
                     log_w("Skipping gallery")
                     continue
 
-                title = user_choice[0]
-                url = user_choice[1]
-
+                title, url = user_choice
+                gallery.temp_url = url
                 if not gallery.link:
                     gallery.link = url
                     if isinstance(hen, (pewnet.EHen, pewnet.ExHen)):
                         self.GALLERY_EMITTER.emit(gallery, None, None)
-                gallery.temp_url = url
                 self.AUTO_METADATA_PROGRESS.emit("({}/{}) Adding to queue: {}".format(
                     x, len(multiple_hit_galleries), gallery.title))
                 multiple_hit_g_queue.append(gallery)
@@ -470,11 +952,88 @@ class Fetch(QObject):
                 self.fetch_metadata(g, hen, x == len(multiple_hit_g_queue))
 
 
+    def _metafile_link(self, gallery):
+        """The gallery url stated by a metadata file in the gallery's own folder, or ''.
+
+        Only the url is taken. The rest of such a file is a snapshot from download time, and
+        applying it here would overwrite the stored metadata with a stale copy of itself
+        moments before the fetch replaces it with a current one.
+        """
+        try:
+            if not gallery.path or not os.path.isdir(gallery.path):
+                return ''
+            link = utils.GMetafile(gallery.path).metadata['link']
+        except Exception:
+            log.exception('Could not read the metadata file beside the gallery')
+            return ''
+        if link:
+            log_i('Found a gallery url in the metadata file beside the gallery')
+        return link
+
+    def _candidate_previews(self, multiple_hit_galleries, hen):
+        """The native title and cover url of every candidate across the given galleries.
+
+        A search listing carries one title, usually romaji, and no cover, which is not enough to
+        tell two candidates for the same work apart when the local folder name is in Japanese.
+        The api returns both titles and a thumbnail url and takes MAX_GDATA_URLS galleries per
+        call, so candidates are deduplicated across the whole set and looked up in batches: a
+        few hundred of them cost a handful of requests, made once, rather than one call each.
+
+        Returns {url: {'native': title, 'thumb': url}}, empty when the lookup cannot be made.
+        """
+        if not app_constants.PICKER_PREVIEWS or not isinstance(hen, pewnet.EHen):
+            return {}
+
+        urls = []
+        for _, title_url_list in multiple_hit_galleries:
+            for _, url in title_url_list:
+                if url not in urls:
+                    urls.append(url)
+
+        chunk_size = pewnet.EHen.MAX_GDATA_URLS
+        chunks = [urls[i:i + chunk_size] for i in range(0, len(urls), chunk_size)]
+        previews = {}
+        for chunk in chunks:
+            try:
+                result = hen.get_metadata(chunk)
+                if not result or result == 'error':
+                    continue
+                metadata_json, gid_to_url = result
+                # The raw response rather than parse_metadata's, because none of this may reach
+                # anything that writes to a gallery - it exists only to be looked at.
+                for entry in metadata_json.get('gmetadata', []):
+                    url = gid_to_url.get(entry.get('gid'))
+                    if url and 'error' not in entry:
+                        previews[url] = {'native': entry.get('title_jpn', ''),
+                                         'thumb': entry.get('thumb', '')}
+            except Exception:
+                log.exception('Could not look up previews for the gallery picker')
+
+        log_i(f'Looked up previews for {len(previews)}/{len(urls)} candidate(s) '
+              f'in {len(chunks)} request(s).')
+        return previews
+
+    def _hen_supports(self, url, hen):
+        """True when the given hen can actually fetch metadata for this url.
+
+        Accepts a hen instance or class. Looser than comparing against valid_url: e-hentai and
+        exhentai share the gallery id/token url format, so either host is readable by either.
+        """
+        site = self._website_checker(url)
+        if not site:
+            return False
+        hen_cls = hen if isinstance(hen, type) else type(hen)
+        if issubclass(hen_cls, pewnet.ChaikaHen):
+            return site == 'chaikahen'
+        return site in ('ehen', 'exhen')
+
     def _website_checker(self, url):
         log_i("Checking if valid URL: {}".format(url))
         if not url:
             return None
-        if 'g.e-hentai.org/g/' in url:
+        # Both the legacy g.e-hentai.org host and the current e-hentai.org one, since gtoEh
+        # rewrites stored links to the latter and they have to still validate afterwards.
+        if 'e-hentai.org/g/' in url:
             return 'ehen'
         elif 'exhentai.org/g/' in url:
             return 'exhen'
@@ -524,9 +1083,13 @@ class Fetch(QObject):
                 valid_url = 'ehen'
                 log_i("Using Exhentai")
             try:
-                self._auto_metadata_process(self.galleries, hen, valid_url, color=True)
+                self._auto_metadata_process(self.galleries, hen, valid_url)
             except app_constants.MetadataFetchFail as err:
                 fetch_cancelled(err)
+                return
+            except Exception:
+                log.exception('Auto metadata fetcher failed')
+                fetch_cancelled('unexpected error, see happypanda.log')
                 return
 
             if self.error_galleries:
@@ -544,10 +1107,18 @@ class Fetch(QObject):
                         if hen == pewnet.ChaikaHen:
                             valid_url = "chaikahen"
                             log_i("using chaika hen")
+                        # CommonHen.QUEUE is shared by every hen class, so anything the previous
+                        # source left behind would be fetched against this one's api.
+                        pewnet.CommonHen.QUEUE.clear()
+                        self.galleries_in_queue.clear()
                         try:
                             self._auto_metadata_process(galleries, hen(), valid_url)
                         except app_constants.MetadataFetchFail as err:
                             fetch_cancelled(err)
+                            return
+                        except Exception:
+                            log.exception('Fallback metadata fetcher failed')
+                            fetch_cancelled('unexpected error, see happypanda.log')
                             return
 
             if not self.error_galleries:
@@ -560,7 +1131,7 @@ class Fetch(QObject):
                                             'Could not fetch metadata for {} galleries. Check happypanda.log for more details!'.format(len(self.error_galleries)),
                                             minimized=True)
                 for tup in self.error_galleries:
-                    log_e("{}: {}".format(tup[1], tup[0].title.encode(errors='ignore')))
+                    log_e("{}: {}".format(tup[1], tup[0].title))
                 self.FINISHED.emit(self.error_galleries)
             log_i('Auto metadata fetcher is done')
             app_constants.GLOBAL_EHEN_LOCK = False

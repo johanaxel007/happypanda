@@ -159,32 +159,35 @@ def load_icons():
     global CIRCLE_ICON
     global INBOX_ICON
     global SPINNER_ICON
+    global SETTINGS_ICON
 
-    G_LISTS_ICON_WH = qta.icon("fa.bars", color="white")
-    G_LISTS_ICON = qta.icon("fa.bars", color="black")
-    LIST_ICON = qta.icon("fa.bars", color="white")
-    ARTISTS_ICON = qta.icon("fa.users", color="white")
-    ARTIST_ICON = qta.icon("fa.user", color="black")
-    NSTAGS_ICON = qta.icon("fa.sitemap", color="white")
-    PLUS_ICON = qta.icon("fa.plus", color="white")
-    ARROW_RIGHT_ICON = qta.icon("fa.angle-double-right", color="white")
-    ARROW_LEFT_ICON = qta.icon("fa.angle-double-left", color="white")
-    GRID_ICON = qta.icon("fa.th", color="white")
-    GRIDL_ICON = qta.icon("fa.th-large", color="white")
-    SEARCH_ICON = qta.icon("fa.search", color="white")
-    CROSS_ICON = qta.icon("fa.times", color="black")
-    CROSS_ICON_WH = qta.icon("fa.times", color="white")
-    MANAGER_ICON = qta.icon("fa.tasks", color="white")
-    DOWNLOAD_ICON = qta.icon("fa.arrow-circle-o-down", color="white")
-    RANDOM_ICON = qta.icon("fa.random", color="white")
-    DUPLICATE_ICON = qta.icon("fa.files-o", color="white")
-    SORT_ICON_DESC = qta.icon("fa.sort-amount-desc", color="white")
-    SORT_ICON_ASC = qta.icon("fa.sort-amount-asc", color="white")
-    REFRESH_ICON = qta.icon("fa.refresh", color="black")
-    STAR_ICON = qta.icon("fa.star", color="white")
-    CIRCLE_ICON = qta.icon("fa.circle", color="white")
-    INBOX_ICON = qta.icon("fa.inbox", color="white")
-    SPINNER_ICON = qta.icon("fa.spinner", color="white")
+    G_LISTS_ICON_WH = qta.icon("fa6s.bars", color="white")
+    G_LISTS_ICON = qta.icon("fa6s.bars", color="black")
+    LIST_ICON = qta.icon("fa6s.bars", color="white")
+    ARTISTS_ICON = qta.icon("fa6s.users", color="white")
+    ARTIST_ICON = qta.icon("fa6s.user", color="black")
+    NSTAGS_ICON = qta.icon("fa6s.sitemap", color="white")
+    PLUS_ICON = qta.icon("fa6s.plus", color="white")
+    ARROW_RIGHT_ICON = qta.icon("fa6s.angles-right", color="white")
+    ARROW_LEFT_ICON = qta.icon("fa6s.angles-left", color="white")
+    GRID_ICON = qta.icon("fa6s.table-cells", color="white")
+    GRID_ICON = qta.icon("fa6s.table-cells", color="white")
+    GRIDL_ICON = qta.icon("fa6s.table-cells-large", color="white")
+    SEARCH_ICON = qta.icon("fa6s.magnifying-glass", color="white")
+    CROSS_ICON = qta.icon("fa6s.xmark", color="black")
+    CROSS_ICON_WH = qta.icon("fa6s.xmark", color="white")
+    MANAGER_ICON = qta.icon("fa6s.list-check", color="white")
+    DOWNLOAD_ICON = qta.icon("fa6.circle-down", color="white")
+    RANDOM_ICON = qta.icon("fa6s.shuffle", color="white")
+    DUPLICATE_ICON = qta.icon("fa6.copy", color="white")
+    SORT_ICON_DESC = qta.icon("fa6s.arrow-down-wide-short", color="white")
+    SORT_ICON_ASC = qta.icon("fa6s.arrow-up-wide-short", color="white")
+    REFRESH_ICON = qta.icon("fa6s.rotate", color="black")
+    STAR_ICON = qta.icon("fa6s.star", color="white")
+    CIRCLE_ICON = qta.icon("fa6s.circle", color="white")
+    INBOX_ICON = qta.icon("fa6s.inbox", color="white")
+    SPINNER_ICON = qta.icon("fa6s.spinner", color="white")
+    SETTINGS_ICON = qta.icon("fa6s.sliders", color="white")
 
 # image paths
 GALLERY_DEF_ICO_PATH = os.path.join(static_dir, "gallery_def_ico.ico")
@@ -202,6 +205,7 @@ IGNORE_PATHS = get([], 'Application', 'ignore paths', list)
 IGNORE_EXTS = get([], 'Application', 'ignore exts', list)
 SCANNING_FOR_GALLERIES = False # if a scan for new galleries is being done
 TEMP_PATH_IGNORE = []
+DEAD_LINK_WARN_SHARE = 0.5 # share of a tab that has to look deleted before its bulk removal warns
 
 # Ignored tags
 IGNORED_TAGS = get(dict(), 'Application', 'ignored tags', utils.tag_to_dict)
@@ -241,6 +245,8 @@ HASH_GALLERY_PAGES = get('all', 'Advanced', 'hash gallery pages', int, str)
 
 # WEB
 INCLUDE_EH_EXPUNGED = get(False, 'Web', 'include eh expunged', bool)
+FILTER_RESULTS_BY_LANGUAGE = get(True, 'Web', 'filter results by language', bool)
+PICKER_PREVIEWS = get(True, 'Web', 'picker previews', bool)
 GLOBAL_EHEN_TIME = get(5, 'Web', 'global ehen time offset', int)
 GLOBAL_EHEN_LOCK = False
 DEFAULT_EHEN_URL = get('https://e-hentai.org/', 'Web', 'default ehen url', str)
@@ -252,9 +258,13 @@ CONTINUE_AUTO_METADATA_FETCHER = get(True, 'Web', 'continue auto metadata fetche
 HEN_DOWNLOAD_TYPE = get(DOWNLOAD_TYPE_ARCHIVE, 'Web', 'hen download type', int)
 DOWNLOAD_DIRECTORY = get('downloads', 'Web', 'download directory', str)
 TORRENT_CLIENT = get('', 'Web', 'torrent client', str)
-HEN_LIST = get(['chaikahen'], 'Web', 'hen list', list)
+# 'none' is the stored marker for "no fallback sources", so that a blank value can keep meaning
+# "never configured" and fall back to the default below. get() maps 'none' to None.
+HEN_LIST = get(['chaikahen'], 'Web', 'hen list', list) or []
 DOWNLOAD_GALLERY_TO_LIB = get(False, 'Web', 'download galleries to library', bool)
 USE_GLOBAL_EHEN_LOCK = get(True, 'Web', 'global ehen metadata fetch lock', bool)
+FUZZ_CONFIDENCE_THRESHOLD = get(70, 'Web', 'fuzz confidence threshold', int)
+USE_HASH_SEARCH = get(False, 'Web', 'use image hash search', bool)
 ALWAYS_APPLY_TITLE = get(REPLACE_TYPE_NEVER, 'Web', 'always apply title', int)
 ALWAYS_APPLY_ARTIST = get(REPLACE_TYPE_NEVER, 'Web', 'always apply artist', int)
 ALWAYS_APPLY_LANGUAGE = get(REPLACE_TYPE_NEVER, 'Web', 'always apply language', int)
@@ -716,7 +726,7 @@ ABOUT =\
 <p>License: <a href="https://www.gnu.org/licenses/gpl-2.0.txt"> GENERAL PUBLIC LICENSE, Version 2</a></p>
 <p>Happypanda was created using:</p>
 <ul>
-<li>Python 3.13</li>
+<li>Python {}</li>
 <li>The Qt5 Framework</li>
 <li>Various python libraries (see github repo)</li>
 </ul>
@@ -724,7 +734,8 @@ ABOUT =\
 rachmadaniHaryono (big thanks!), nonamethanks, ImoutoChan, Moshidesu, peaceanpizza, utterbull, LePearlo, Kramoule, mycropen</p>
 
 </body></html>
-""".format(vs, database.db_constants.CURRENT_DB_VERSION)
+""".format(vs, database.db_constants.CURRENT_DB_VERSION,
+          f'{sys.version_info.major}.{sys.version_info.minor}')
 
 TROUBLE_GUIDE =\
 """
