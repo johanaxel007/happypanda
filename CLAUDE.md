@@ -1,6 +1,6 @@
 # Happypanda
 
-PyQt5 desktop manga/doujinshi library manager. Python 3.13, SQLite, single-process GUI app.
+PyQt5 desktop manga/doujinshi library manager. Python 3.14, SQLite, single-process GUI app.
 
 This is a fork of a community-maintained continuation of an abandoned project. Parts of the
 codebase are old and inconsistent — dated syntax, deprecated packages, uneven formatting.

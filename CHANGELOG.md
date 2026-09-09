@@ -46,6 +46,7 @@
     - Updated QtAwesome to 1.4.0 and the icon set to Font Awesome 6.
     - When several results tie, the one in the gallery's own language is offered first. Sources list newest first, which used to bury the release actually held locally underneath every later translation of it.
     - The log now records the candidates a search settled on, with their scores, at the normal logging level. An ordering complaint about the chooser could not be looked into otherwise. It also records why a search found nothing: the closest rejected candidates with their scores, and anything dropped by the numbering check. `misc/analyze_fetch_log.py` summarises a run from it.
+    - Happypanda now runs on Python 3.14, which the About page reads off the running interpreter rather than repeating from a literal that has to be remembered on every upgrade. Every dependency is pinned to the version it was tested against, so a fresh install resolves the same way twice; Werkzeug is held below 3.2, which removes a type RoboBrowser still uses.
 
 ## Happypanda v1.7.0
 
