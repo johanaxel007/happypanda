@@ -474,6 +474,8 @@ class GalleryDB(database.db.DBBase):
     def del_gallery(cls, list_of_gallery, local=False):
         "Deletes all galleries in the list recursively."
         assert isinstance(list_of_gallery, list), "Please provide a valid list of galleries to delete"
+        deleted = 0
+        last_title = ''
         for gallery in list_of_gallery:
             if local:
                 app_constants.TEMP_PATH_IGNORE.append(os.path.normcase(gallery.path))
@@ -497,8 +499,16 @@ class GalleryDB(database.db.DBBase):
             GalleryDB.clear_thumb(gallery.profile)
             cls.execute(cls, 'DELETE FROM series WHERE series_id=?', (gallery.id,))
             gallery.id = None
+            deleted += 1
+            last_title = gallery.title
             log_i('Successfully deleted: {}'.format(gallery.title))
-            app_constants.NOTIF_BAR.add_text('Successfully deleted: {}'.format(gallery.title))
+
+        # one notification for the whole list: each add_text starts a timer thread of its own,
+        # and a bulk removal runs to hundreds of galleries
+        if deleted == 1:
+            app_constants.NOTIF_BAR.add_text('Successfully deleted: {}'.format(last_title))
+        elif deleted:
+            app_constants.NOTIF_BAR.add_text('Successfully deleted {} galleries'.format(deleted))
 
     @staticmethod
     def check_exists(name, galleries=None, filter=True):
