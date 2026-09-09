@@ -35,6 +35,11 @@ import webbrowser
 import py7zr
 from PIL import Image, ImageChops
 
+# Pillow refuses an image above twice this as a decompression bomb. A stitched cosplay set or a
+# large scan runs past the stock ceiling honestly, and a library that cannot thumbnail its own
+# pages is worse than the memory a single decode costs.
+Image.MAX_IMAGE_PIXELS = 400_000_000
+
 from PyQt5.QtGui import QImage, qRgba
 
 import app_constants
@@ -1005,6 +1010,47 @@ def open_chapter(chapterpath, archive=None):
         app_constants.NOTIF_BAR.add_text("Could not open chapter for unknown reasons. Check happypanda.log!")
         log_e(f'Could not open chapter {os.path.split(chapterpath)[1]}')
 
+NATURAL_SORT_RE = re.compile(r'(\d+)')
+
+
+def natural_sort_key(name):
+    """Orders names the way the file manager does, with digit runs read as numbers.
+
+    '2' therefore comes before '10' rather than after it, and '007' sorts as seven. Two
+    spellings of one number are separated by the digits themselves, which puts '01' ahead of
+    '1' as Windows does.
+    """
+    parts = NATURAL_SORT_RE.split(name)
+    return [(int(part), part) if i % 2 else part.casefold()
+            for i, part in enumerate(parts)]
+
+
+def first_image_in(folder, depth=2):
+    """The path of the image a folder's cover should be made from, or ''.
+
+    Some galleries keep no pages of their own and only subfolders of them - '01 本編',
+    '02 エフェクト'. The first subfolder holding an image stands in for them, and every level
+    is walked in the file manager's order so the cover is the page a reader would call the first.
+    """
+    try:
+        entries = sorted(os.scandir(folder), key=lambda e: natural_sort_key(e.name))
+    except OSError:
+        log_e(f'Could not read the gallery folder: {folder}')
+        return ''
+
+    entries = [e for e in entries if not e.name.startswith('.')]
+    for entry in entries:
+        if entry.name.lower().endswith(IMG_FILES) and entry.is_file():
+            return entry.path
+    if depth > 0:
+        for entry in entries:
+            if entry.is_dir():
+                found = first_image_in(entry.path, depth - 1)
+                if found:
+                    return found
+    return ''
+
+
 def get_gallery_img(gallery_or_path, chap_number=0):
     """
     Returns a path to image in gallery chapter
@@ -1022,8 +1068,10 @@ def get_gallery_img(gallery_or_path, chap_number=0):
         name = os.path.split(path)[1]
     except IndexError:
         name = os.path.split(path)[0]
-    is_archive = True if archive or name.endswith(ARCHIVE_FILES) else False
     real_path = archive if archive else path
+    # A folder keeps the name when an archive is extracted in place, so what it is decides this
+    # rather than what it is called - the archive reader cannot be handed a directory.
+    is_archive = bool(archive or name.endswith(ARCHIVE_FILES)) and not os.path.isdir(real_path)
     img_path = None
     if is_archive:
         try:
@@ -1034,9 +1082,9 @@ def get_gallery_img(gallery_or_path, chap_number=0):
             os.mkdir(temp_path)
             log_d(f'{temp_path = }')
             if not archive:
-                f_img_name = sorted([img for img in arc.namelist() if img.lower().endswith(IMG_FILES) and not img.startswith('.')])[0]
+                f_img_name = sorted([img for img in arc.namelist() if img.lower().endswith(IMG_FILES) and not img.startswith('.')], key=natural_sort_key)[0]
             else:
-                f_img_name = sorted([img for img in arc.dir_contents(path) if img.lower().endswith(IMG_FILES) and not img.startswith('.')])[0]
+                f_img_name = sorted([img for img in arc.dir_contents(path) if img.lower().endswith(IMG_FILES) and not img.startswith('.')], key=natural_sort_key)[0]
             log_d(f'{f_img_name = }')
             img_path = arc.extract(f_img_name, temp_path)
             log_d(f'{img_path = }')
@@ -1045,9 +1093,7 @@ def get_gallery_img(gallery_or_path, chap_number=0):
             img_path = app_constants.NO_IMAGE_PATH
     elif os.path.isdir(real_path):
         log_i('Getting image from folder')
-        first_img = sorted([img.name for img in os.scandir(real_path) if img.name.lower().endswith(tuple(IMG_FILES)) and not img.name.startswith('.')])
-        if first_img:
-            img_path = os.path.join(real_path, first_img[0])
+        img_path = first_image_in(real_path)
 
     if img_path:
         return os.path.abspath(img_path)

@@ -75,6 +75,12 @@ def _task_thumbnail(gallery_or_path, img: str = None, width: int = None, height:
         r_image.save(new_img_path, "PNG", quality=80)
     except IndexError:
         new_img_path = app_constants.NO_IMAGE_PATH
+    except Exception:
+        # Anything a decoder can raise: an oversized image, a truncated file, a format the
+        # plugins turned out not to cover. Left uncaught it stays inside the worker's future,
+        # where the only symptom is a gallery that never stops saying it is loading.
+        log.exception('Could not generate a thumbnail for %s', gallery_or_path)
+        new_img_path = app_constants.NO_IMAGE_PATH
 
     return new_img_path
 
