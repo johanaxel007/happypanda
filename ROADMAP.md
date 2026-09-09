@@ -168,3 +168,26 @@ budget. `misc/analyze_fetch_log.py` then reports the split between `Single perfe
 **Sequencing note.** Raising the confidence threshold to 95% already removed the 70–94 band this
 would have caught, so what remains is the narrow 95–99 band. Do the measurement before assuming
 there is anything left to fix.
+
+---
+
+## Migrate from Qt5 to Qt6
+
+PyQt5 5.15.11 / Qt 5.15.2 is the last supported Qt5, and the surface to move is ~572 edits across
+16 modules. The full analysis, including the binding decision and a phased plan, is in
+[`Documentation/Design/QT6_MIGRATION.md`](Documentation/Design/QT6_MIGRATION.md) — read that
+before touching this, so a session does not repeat the measurement.
+
+**What exists already.** The inventory is done and pinned to commit `69b1ae0`: 517 enum call
+sites across 154 symbols, every one resolved to its Qt6 scope; the nine removed-API families with
+their call sites; and a two-way compatibility matrix for PyQt5 against PyQt6. `misc/gui_smoke.py`
+is the only GUI gate and is itself PyQt5, so it is the first thing to port.
+
+**The hard part is not the mechanical diff — it is that nothing can test the result.** 98% of the
+edits are forward-compatible, and that is measured, not assumed: all 517 enum sites already accept
+the Qt6 spelling on the shipping PyQt5, with identical values. So the bulk can land incrementally
+against the running Qt5 app. What remains is 62 widget subclasses and 7 custom painters with no
+automated coverage, each of which fails only when a user opens that particular dialog, and
+rescoping errors surface lazily at paint time rather than at import. The shakedown dominates the
+schedule, and per Core Constraint 1 it has to run against a copy of the database, because a
+mis-scoped button comparison inside a delete confirmation is silent data loss.
