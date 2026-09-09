@@ -36,6 +36,11 @@ Application code lives in `version/` — not a package. The modules import each 
 (`import app_constants`, not `import version.app_constants`), so `version/` itself has to be on
 `sys.path`. `conftest.py` does that for tests; `version/main.py` is the entry point at runtime.
 
+`main.py` also imports `pillow_jxl` and `pillow_avif` for their side effect. The JPEG XL plugin
+does not register itself with Pillow, so a script that reads library images outside the app has
+to import it too, or every `.jxl` page comes back as `UnidentifiedImageError` and the diagnosis
+lands on the wrong cause.
+
 There is a circular import between `app_constants` and `gallerydb` (`app_constants` annotates
 with `gallerydb.Gallery` while `gallerydb` imports `app_constants`). Importing `fetch` or
 `pewnet` first leaves `gallerydb` half initialised, so import in this order:

@@ -24,6 +24,7 @@ exception to that constraint.
 | `series.exed` is set to 1 once metadata has been applied | a fetch run skips these when `Skip galleries that has already been processed` is on, so a gallery re-queued for another attempt needs it cleared |
 | `series_path` and `link` come back as **`bytes` for some rows**, `str` for others | decode defensively; a `str`-only assumption raises `TypeError` partway through a scan of the whole table |
 | inbox → library is the manual *Send to library* action in `misc.py`, not something a fetch does | a gallery in the library got there because someone put it there |
+| `series.profile` is the path of the generated thumbnail, and `''` means none was ever made | the grid renders an empty one as *Thumbnail regeneration needed!* and the `res/default.jpg` placeholder as the stock cover, so the column says which of the two a gallery is stuck on |
 
 Re-derive counts rather than trusting a number written here; they change every run.
 
