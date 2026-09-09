@@ -583,6 +583,13 @@ class AppWindow(QMainWindow):
         duplicate_check_simple.triggered.connect(lambda: self.duplicate_check()) # triggered emits False
         gallery_menu.addAction(duplicate_check_simple)
 
+        remove_missing_source = QAction("Remove galleries with a missing source", self)
+        remove_missing_source.setIcon(app_constants.CROSS_ICON_WH)
+        remove_missing_source.setStatusTip('Remove the galleries whose files are gone from the current tab, without touching any file')
+        remove_missing_source.triggered.connect(
+            lambda: gallery.CommonView.remove_missing_source(self.get_current_view()))
+        gallery_menu.addAction(remove_missing_source)
+
         self.toolbar.addWidget(gallery_action)
 
         spacer_tool = QWidget() 

@@ -419,6 +419,39 @@ def all_opposite(*args):
                 return False
     return True
 
+def refresh_dead_links(galleries):
+    """
+    Recomputes ``dead_link`` for every given gallery and returns the ones whose source is gone.
+
+    The flag is otherwise computed once, when the library is read out of the database, so a
+    drive that was not mounted then leaves every gallery on it looking dead for the rest of
+    the session, and a source deleted since is not flagged at all.
+    """
+    dead = []
+    for gallery in galleries:
+        gallery.dead_link = not os.path.exists(gallery.path)
+        if gallery.dead_link:
+            dead.append(gallery)
+    return dead
+
+def unreachable_roots(galleries):
+    """
+    Returns the drives of the given galleries that do not themselves exist, sorted, each in the
+    spelling it was first seen in. Empty on a system whose paths carry no drive.
+
+    A missing drive says the volume is gone rather than the galleries on it, which is the one
+    case where a whole library's worth of sources reads as deleted.
+    """
+    checked = {}
+    for gallery in galleries:
+        drive, _ = os.path.splitdrive(gallery.path)
+        if not drive:
+            continue
+        key = os.path.normcase(drive)
+        if key not in checked:
+            checked[key] = drive if not os.path.exists(drive + os.sep) else None
+    return sorted(d for d in checked.values() if d)
+
 def update_gallery_path(new_path, gallery):
     "Updates a gallery's chapters path"
     for chap in gallery.chapters:

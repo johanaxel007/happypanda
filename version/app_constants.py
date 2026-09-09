@@ -205,6 +205,7 @@ IGNORE_PATHS = get([], 'Application', 'ignore paths', list)
 IGNORE_EXTS = get([], 'Application', 'ignore exts', list)
 SCANNING_FOR_GALLERIES = False # if a scan for new galleries is being done
 TEMP_PATH_IGNORE = []
+DEAD_LINK_WARN_SHARE = 0.5 # share of a tab that has to look deleted before its bulk removal warns
 
 # Ignored tags
 IGNORED_TAGS = get(dict(), 'Application', 'ignored tags', utils.tag_to_dict)

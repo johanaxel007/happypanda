@@ -8,29 +8,6 @@ Delete an entry when it ships; describe the shipped behaviour in `CHANGELOG.md` 
 
 ---
 
-## Bulk remove galleries whose source is gone
-
-Galleries whose files have been deleted from disk — usually because an external deduplication
-tool replaced them with a better copy — stay in the library and have to be dismissed one at a
-time.
-
-**What exists already.** `Gallery.dead_link` is set at load time in
-`gallerydb.default_exec`/`gallery_map` from a plain `os.path.exists(gallery.path)`, and the
-delegate already paints *"Cannot find gallery source!"* over those covers
-(`version/gallery.py`). `GalleryDB.del_gallery(list_of_gallery, local=False)` already takes a
-list and already defaults to leaving the filesystem alone.
-
-**What is missing.** A way to select all of them at once, and one confirmation in front of it.
-
-**The hard part.** Nothing technical — the risk is entirely that this deletes rows from the one
-copy of the library index, so the confirmation has to state the count and be dismissible, and
-the action must never fall through to a filesystem delete. Note also that `dead_link` is
-computed once at load: a drive that was not mounted at startup makes *every* gallery on it look
-dead. The confirmation should be refused, or the flag recomputed, when the share of dead
-galleries is implausibly large.
-
----
-
 ## Scan for better versions of a gallery already held
 
 Two variants of one feature, and they want to be built together as a single

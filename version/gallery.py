@@ -1471,26 +1471,80 @@ class CommonView:
 
         if msgbox.exec() == msgbox.Yes:
             #view_cls.setUpdatesEnabled(False)
-            gallery_list = []
-            gallery_db_list = []
-            log_i('Removing {} galleries'.format(len(index_list)))
-            for index in index_list:
-                gallery = index.data(Qt.UserRole + 1)
-                gallery_list.append(gallery)
-                log_i('Attempt to remove: {} by {}'.format(gallery.title,
-                                            gallery.artist))
-                if gallery.id:
-                    gallery_db_list.append(gallery)
-            gallerydb.execute(gallerydb.GalleryDB.del_gallery, True, gallery_db_list, local=local, priority=0)
-
-            rows = len(gallery_list)
-            view_cls.gallery_model._gallery_to_remove.extend(gallery_list)
-            view_cls.gallery_model.removeRows(view_cls.gallery_model.rowCount() - rows, rows)
-            view_cls.sort_model.refresh()
-
+            CommonView.remove_galleries(view_cls, [i.data(Qt.UserRole + 1) for i in index_list], local)
             #view_cls.STATUS_BAR_MSG.emit('Gallery removed!')
             #view_cls.setUpdatesEnabled(True)
         #view_cls.sort_model.setDynamicSortFilter(True)
+
+    @staticmethod
+    def remove_galleries(view_cls, gallery_list: list, local=False):
+        """
+        Drops the given galleries from the view and the database, without asking first.
+
+        ``local`` additionally sends their files to the recycle bin, so a caller that only
+        means to forget an entry has to leave it false.
+        """
+        gallery_db_list = []
+        log_i('Removing {} galleries'.format(len(gallery_list)))
+        for gallery in gallery_list:
+            log_i('Attempt to remove: {} by {}'.format(gallery.title,
+                                        gallery.artist))
+            if gallery.id:
+                gallery_db_list.append(gallery)
+        gallerydb.execute(gallerydb.GalleryDB.del_gallery, True, gallery_db_list, local=local, priority=0)
+
+        rows = len(gallery_list)
+        view_cls.gallery_model._gallery_to_remove.extend(gallery_list)
+        view_cls.gallery_model.removeRows(view_cls.gallery_model.rowCount() - rows, rows)
+        view_cls.sort_model.refresh()
+
+    @staticmethod
+    def remove_missing_source(view_cls):
+        """
+        Asks, then drops every gallery in the view whose source is gone from the library index.
+        The files themselves are never touched, and whether a source is gone is recomputed
+        rather than taken from the flag the gallery was loaded with.
+        """
+        if view_cls.view_type == app_constants.ViewType.Duplicate:
+            app_constants.NOTIF_BAR.add_text('Removing missing sources is not available on the duplicate tab.')
+            return
+        if app_constants.GLOBAL_EHEN_LOCK or app_constants.SCANNING_FOR_GALLERIES:
+            app_constants.NOTIF_BAR.add_text('Please wait until the running metadata fetch or gallery scan has finished.')
+            return
+
+        galleries = view_cls.gallery_model._data
+        dead = utils.refresh_dead_links(galleries)
+        view_cls.viewport().update() # the recompute may have cleared the covers' missing source warning
+        if not dead:
+            app_constants.NOTIF_BAR.add_text('No galleries with a missing source were found.')
+            return
+
+        unreachable = utils.unreachable_roots(dead)
+        if unreachable:
+            msgbox = QMessageBox(view_cls)
+            msgbox.setIcon(QMessageBox.Warning)
+            msgbox.setWindowTitle('Drive not available')
+            msgbox.setText('{} galleries look deleted because {} could not be reached.\n\n'
+                           'Reconnect the drive and try again.'.format(len(dead), ', '.join(unreachable)))
+            msgbox.exec()
+            return
+
+        msgbox = QMessageBox(view_cls)
+        msgbox.setIcon(QMessageBox.Question)
+        msgbox.setWindowTitle('Remove galleries with a missing source')
+        msgbox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msgbox.setDefaultButton(QMessageBox.No)
+        text = ('Remove {} of {} galleries from this tab?\n\n'
+                'Their files are already gone; only the library entries are deleted, and this '
+                'cannot be undone.'.format(len(dead), len(galleries)))
+        if len(dead) >= app_constants.DEAD_LINK_WARN_SHARE * len(galleries):
+            text += ('\n\nThat is most of this tab. Check that the galleries were really '
+                     'deleted, and not just moved, before continuing.')
+        msgbox.setText(text)
+        msgbox.setDetailedText('\n'.join('{}\n  - {}'.format(g.title, g.path) for g in dead))
+
+        if msgbox.exec() == QMessageBox.Yes:
+            CommonView.remove_galleries(view_cls, dead)
 
     @staticmethod
     def find_index(view_cls, gallery_id, sort_model=False):

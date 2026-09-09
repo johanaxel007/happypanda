@@ -244,5 +244,67 @@ assert not hasattr(gallery.MangaTableView, 'gallery_window'), (
     'app.restore_search_term is now either wrong or hiding something')
 say('views: the table view still has no hover window, which is what the tab switch guard assumes')
 
+# --- the guards in front of the bulk removal ---------------------------------------------------
+# Every gallery on a drive that was not mounted at startup reads as deleted, so the two paths that
+# refuse are the whole safety of the feature, and a normal run reaches neither. Nothing here
+# answers Yes: the deletion itself would need the database thread.
+import string  # noqa: E402
+from PyQt5.QtWidgets import QMessageBox  # noqa: E402
+
+shown = []
+
+
+def record_exec(self):
+    shown.append(self.text())
+    return QMessageBox.No
+
+
+QMessageBox.exec = record_exec
+app_constants.NOTIF_BAR = type('_Bar', (), {'add_text': lambda self, t, **kw: shown.append(t)})()
+
+missing_drive = next((l + ':' for l in reversed(string.ascii_uppercase)
+                      if not os.path.exists(l + ':' + os.sep)), None)
+
+
+def a_view(paths):
+    galleries = []
+    for p in paths:
+        g = gallerydb.Gallery()
+        g.title, g.path = os.path.basename(p), p
+        galleries.append(g)
+    # the table view, because the grid's delegate builds its file icons out of the database
+    view = gallery.MangaTableView(app_constants.ViewType.Default)
+    view.gallery_model = gallery.GalleryModel(galleries, None)
+    view.sort_model = gallery.SortFilterModel(view)
+    view.sort_model.change_model(view.gallery_model)
+    view.setModel(view.sort_model)
+    return view
+
+
+here = os.getcwd()
+os.mkdir(os.path.join(here, 'still-here'))
+view = a_view([os.path.join(here, 'still-here')])
+shown.clear()
+gallery.CommonView.remove_missing_source(view)
+assert len(shown) == 1 and 'No galleries' in shown[0], shown
+assert view.gallery_model.rowCount() == 1
+say('bulk removal: a library whose sources are all present asks nothing')
+
+if missing_drive:
+    view = a_view([os.path.join(missing_drive + os.sep, 'Manga', str(n)) for n in range(4)])
+    shown.clear()
+    gallery.CommonView.remove_missing_source(view)
+    assert len(shown) == 1 and missing_drive in shown[0], shown
+    assert view.gallery_model.rowCount() == 4, 'an unreachable drive must remove nothing'
+    say('bulk removal: an unreachable drive is refused by name, not counted for deletion')
+
+view = a_view([os.path.join(here, 'gone-%d' % n) for n in range(4)])
+shown.clear()
+gallery.CommonView.remove_missing_source(view)
+assert len(shown) == 1 and 'Remove 4 of 4' in shown[0], shown
+assert 'most of this tab' in shown[0], 'the share warning did not fire on a whole dead library'
+assert view.gallery_model.rowCount() == 4, 'answering No must remove nothing'
+say('bulk removal: a wholly dead library states the count and warns, and No removes nothing')
+
 say('')
 say('GUI SMOKE OK')
