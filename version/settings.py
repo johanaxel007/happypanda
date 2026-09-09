@@ -12,6 +12,7 @@
 #along with Happypanda.  If not, see <http://www.gnu.org/licenses/>.
 #"""
 import configparser
+import locale
 import os
 import logging
 import pickle
@@ -31,15 +32,32 @@ else:
     phappypanda_path = '.happypanda'
 
 if not os.path.isfile(settings_path):
-    open(settings_path, 'x')
+    open(settings_path, 'x', encoding='utf-8')
 
 class Config(configparser.ConfigParser):
+    # The encoding a legacy ini turned out to be in, '' when it read as UTF-8. Recorded
+    # rather than logged because this module is imported and read before logging exists.
+    legacy_encoding = ''
+
     def __init__(self):
         super().__init__()
 
-    def read(self, filenames, encoding = None):
+    def read(self, filenames, encoding = 'utf-8-sig'):
+        """Reads the ini as UTF-8, tolerating a BOM and an ini left in the system locale.
+
+        A frozen build runs without UTF-8 mode whatever the environment says, so an ini it
+        wrote is in whichever encoding that machine's locale happens to be. Reading such a
+        file as UTF-8 raises before there is a window to report it in, so fall back and
+        rewrite it. utf-8-sig additionally absorbs the BOM a Windows text editor adds.
+        """
         self.custom_cls_file = filenames
-        super().read(filenames, encoding)
+        try:
+            super().read(filenames, encoding)
+        except UnicodeDecodeError:
+            self.clear()  # a decode part way through leaves the sections it had already parsed
+            self.legacy_encoding = locale.getencoding()
+            super().read(filenames, self.legacy_encoding)
+            self.save()
 
     def save(self, encoding = 'utf-8', space_around_delimeters=True):
         try:
@@ -49,7 +67,7 @@ class Config(configparser.ConfigParser):
                     with open(file, 'w', encoding=encoding) as cf:
                         self.write(cf, space_around_delimeters)
             else:
-                with open(self.custom_cls_file, 'w') as cf:
+                with open(self.custom_cls_file, 'w', encoding=encoding) as cf:
                     self.write(cf, space_around_delimeters)
         except PermissionError:
             log_e('Could not save settings: PermissionError')

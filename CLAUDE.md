@@ -203,6 +203,11 @@ local ignore rules do not travel with a clone.
   those do not need converting on sight.
 - Logging goes through the module-level `log_i` / `log_d` / `log_w` / `log_e` aliases, never
   `print()`.
+- Every text-mode `open()` names its `encoding`. A frozen build never enables Python's UTF-8
+  mode however the environment is set, so an unmarked open reads and writes in whatever the
+  machine's locale happens to be, and the exe and a source run then disagree. `utf-8` to write,
+  `utf-8-sig` to read anything a user may have edited by hand. `misc/gui_smoke.py` under
+  `-X warn_default_encoding -W error::EncodingWarning` is the gate.
 - New settings read through `settings.get` with a default, and a blank ini value means "never
   configured" — an intentionally empty list is stored as `none` (see `HEN_LIST`).
 
@@ -258,8 +263,8 @@ for the online metadata pipeline, drawn from real failures. The four `test_init_
 pre-existing and unrelated.
 
 `misc/gui_smoke.py` covers the settings dialog and the gallery chooser headlessly — the
-settings round-trip, the chooser's covers and gestures, and two crash regressions. It runs in a
-temporary directory against the shipped defaults, which is deliberate: the repo's `settings.ini`
-is untracked, so the suite would otherwise test whatever configuration happens to be local. It
-reaches nothing else, so anything touching another dialog or signal still has to be exercised by
-launching the app.
+settings round-trip, the ini's encoding, the chooser's covers and gestures, and two crash
+regressions. It runs in a temporary directory against the shipped defaults, which is
+deliberate: the repo's `settings.ini` is untracked, so the suite would otherwise test whatever
+configuration happens to be local. It reaches nothing else, so anything touching another
+dialog or signal still has to be exercised by launching the app.

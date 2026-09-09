@@ -29,6 +29,7 @@ import database
 import app
 import app_constants
 # import gallerydb
+import settings
 import utils
 
 # Pillow plugins
@@ -73,7 +74,7 @@ def start(test=False):
         print("happypanda_debug.log created at {}".format(os.getcwd()))
         # create log
         try:
-            with open(debug_log_path, 'x') as f:
+            with open(debug_log_path, 'x', encoding='utf-8') as f:
                 pass
         except FileExistsError:
             pass
@@ -86,7 +87,7 @@ def start(test=False):
         app_constants.DEBUG = True
     else:
         try:
-            with open(log_path, 'x') as f:
+            with open(log_path, 'x', encoding='utf-8') as f:
                 pass
         except FileExistsError:
             pass
@@ -109,6 +110,10 @@ def start(test=False):
     log_e = log.error
     log_c = log.critical
 
+    if settings.config.legacy_encoding:
+        log_w('settings.ini was in %s rather than UTF-8 and has been rewritten'
+              % settings.config.legacy_encoding)
+
     if not args.exceptions:
         def uncaught_exceptions(ex_type, ex, tb):
             log_c(''.join(traceback.format_tb(tb)))
@@ -123,7 +128,7 @@ def start(test=False):
         fault_log_file = os.path.join(fault_log_dir, f'fault_{datetime.datetime.now().strftime("%y-%m-%d_%H-%M-%S")}.log')
         if not os.path.isdir(fault_log_dir): os.makedirs(fault_log_dir, exist_ok=True)
 
-        fault_log = open(fault_log_file, 'a')
+        fault_log = open(fault_log_file, 'a', encoding='utf-8')
         faulthandler.enable(fault_log, all_threads=True)
 
     if app_constants.FORCE_HIGH_DPI_SUPPORT:

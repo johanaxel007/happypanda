@@ -67,6 +67,30 @@ assert d2.filter_by_language.isChecked() is False
 assert d2.picker_previews.isChecked() is False
 say('settings: both round trip through accept() into a reopened dialog')
 
+# --- the ini is UTF-8 whatever the system locale is -----------------------------------------
+# A frozen build never enables UTF-8 mode however the environment is set, so without an
+# explicit encoding the exe and a source run store a non-ASCII path differently.
+JP = 'D:/\u6f2b\u753b/\u30e9\u30a4\u30d6\u30e9\u30ea'
+settings.set(JP, 'General', 'smoke path')
+settings.config.save()
+assert JP.encode('utf-8') in open(settings.settings_path, 'rb').read(), 'ini not written as UTF-8'
+
+reread = settings.Config()
+reread.read(settings.settings_path)
+assert reread['General']['smoke path'] == JP, reread['General']['smoke path']
+say('ini: a non-ASCII value round trips as UTF-8 whatever the locale encoding is')
+
+legacy = os.path.join(os.getcwd(), 'legacy.ini')
+with open(legacy, 'wb') as f:
+    f.write(('[General]\nsmoke path = %s\n' % JP).encode('cp932'))
+settings.locale.getencoding = lambda: 'cp932'  # so the case runs on a machine of any locale
+migrated = settings.Config()
+migrated.read(legacy)
+assert migrated['General']['smoke path'] == JP, migrated['General']['smoke path']
+assert migrated.legacy_encoding == 'cp932', migrated.legacy_encoding
+assert JP.encode('utf-8') in open(legacy, 'rb').read(), 'the legacy ini was not rewritten'
+say('ini: one left in the system locale is read and rewritten as UTF-8 rather than crashing')
+
 # --- the picker ---------------------------------------------------------------------------
 opened_paths = []
 opened_links = []
@@ -125,7 +149,7 @@ say('picker: a choice opens on the source site, empty space is a no-op')
 p.open_source_folder()
 assert opened_paths == [(gallery_dir, '')], opened_paths
 archive = os.path.join(gallery_dir, 'gallery.zip')
-open(archive, 'w').close()
+open(archive, 'w', encoding='utf-8').close()
 g.path = archive
 p.open_source_folder()
 assert opened_paths[-1] == (gallery_dir, archive), opened_paths

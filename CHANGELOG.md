@@ -37,6 +37,7 @@
     - Following a second page of search results now waits as long as any other request rather than as little as a second.
     - Potential crash when RoboBrowser met an unsupported encoding.
     - The notification bar renders above the full screen blur effect.
+    - `settings.ini` is written and read as UTF-8 whatever the machine's locale is. A frozen build never turns on Python's UTF-8 mode however the environment is set, while running from source does, so the two disagreed about how to store a non-ASCII library path and neither could read the other's. An ini left behind in the old encoding is migrated on the next launch rather than aborting startup before there is a window to report it in, and a byte order mark left by a text editor no longer hides the first section.
 
 - Changes
     - Metadata title searches now try several forms of a title in a fixed order: as it stands, without the artist filter, cut at the `｜` separator, and without the language filter. The order is capped so a gallery that matches nothing costs a bounded number of requests.

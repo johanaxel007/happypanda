@@ -248,7 +248,7 @@ def create_db_path(db_path=db_constants.DB_PATH):
     head = os.path.split(db_path)[0]
     os.makedirs(head, exist_ok=True)
     if not os.path.isfile(db_path):
-        with open(db_path, 'x') as f:
+        with open(db_path, 'x', encoding='utf-8') as f:
             pass
     return db_path
 
