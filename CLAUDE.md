@@ -195,8 +195,9 @@ cmd /c "mklink /J .claude\skills .agents\skills"
 | `CLAUDE.md`/`AGENTS.md` | Byte-identical twins — update both together                          |
 | `misc/`                 | Developer tooling that is not part of the app                        |
 
-Three skills, each owning a distinct moment: `create-implementation-plan` before the work,
-`review-changes` on a diff that already exists, and `manage-skill` when authoring a skill or rule.
+Four skills, each owning a distinct moment: `create-implementation-plan` before the work,
+`review-changes` on a diff that already exists, `create-design-doc` when an analysis is worth
+keeping in `Documentation/Design/`, and `manage-skill` when authoring a skill or rule.
 Adding one is `manage-skill`'s job — it owns the frontmatter rules and the description-cost budget.
 
 `AGENTS.md` is a copy of this file for harnesses that read that name instead. When you change
