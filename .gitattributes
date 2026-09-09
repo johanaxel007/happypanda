@@ -4,6 +4,16 @@
 * text=auto
 
 ###############################################################################
+# Preserve Markdown hard line breaks.
+#
+# Two trailing spaces are Markdown's hard line break. The design docs under
+# Documentation/ rely on them so stacked **Label:** fields do not render as one
+# run-on paragraph. .editorconfig keeps editors from stripping them; this keeps
+# `git apply --whitespace=fix` from doing it during patch application.
+###############################################################################
+*.md whitespace=-blank-at-eol
+
+###############################################################################
 # Set default behavior for command prompt diff.
 #
 # This is need for earlier builds of msysgit that does not have it on by
