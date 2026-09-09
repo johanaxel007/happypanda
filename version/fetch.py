@@ -287,10 +287,9 @@ def search_queries(gallery, max_attempts=MAX_SEARCH_ATTEMPTS):
     # it with a fallback title never is and gets no slot.
     add_query(title_variants[0], artist_part, lang_part)
     add_query(title_variants[0], '', lang_part)
-    # The loosest form there is, and the one a source is likeliest to hold: the title cut back
-    # past its prefix to the romaji half, asked for with nothing filtering it. Third because the
-    # budget runs out at four, and a gallery whose artist or language is the thing the source
-    # disagrees with never reaches this query otherwise.
+    # The loosest form there is, and the one a source is likeliest to hold: the bare romaji
+    # half, nothing filtering it. Third rather than fifth because the budget runs out at four,
+    # and a gallery the source disagrees with on artist or language reaches nothing else.
     add_query(title_variants[-1], '', '')
     for title_v in title_variants[1:]:
         add_query(title_v, '', lang_part)
