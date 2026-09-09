@@ -28,21 +28,24 @@ exception to that constraint.
 
 Re-derive counts rather than trusting a number written here; they change every run.
 
-## Foreign keys are not enforced
+## The cascade belongs to the connection, not the schema alone
 
-`PRAGMA foreign_keys` reports **0**, and four tables carry a `series_id`:
+Four tables carry a `series_id`:
 
 ```
 chapters · series_tags_map · hashes · series_list_map
 ```
 
-Nothing stops a delete from `series` leaving all four holding rows that point at a gallery which
-no longer exists, and SQLite reports no error when it happens. `series_tags_map` is the largest
-table in the database by a wide margin, so the orphans are not a rounding error.
+Each declares `ON DELETE CASCADE`, but SQLite honours that only where `PRAGMA foreign_keys` is on,
+and it is **off** by default on every new connection. `database/db.py` turns it on for the one the
+application opens, so a delete through `gallerydb` takes the child rows with it. A connection
+opened anywhere else starts with the pragma off, and a delete on it leaves all four tables holding
+rows that point at a gallery which no longer exists, with no error reported. `series_tags_map` is
+the largest table in the database by a wide margin, so the orphans are not a rounding error.
 
 **Never `DELETE FROM series` directly.** `GalleryDB.del_gallery(list_of_galleries, local=False)`
-already takes a list and already leaves the filesystem alone; it exists because the cascade has to
-be done by hand.
+already takes a list, already leaves the filesystem alone, and runs on the connection whose pragma
+makes the cascade real. A repair script has to set that pragma itself.
 
 ## The one-off repair exception
 
