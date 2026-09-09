@@ -1090,6 +1090,85 @@ def test_a_hash_search_still_falls_back_to_the_hash_endpoint(monkeypatch):
     assert found[sha1] == [('Some Title', hen.url + sha1)]
 
 
+# --- The search ladder ------------------------------------------------------------------------
+# Every title below is a real one from a run that found nothing for it. The source held the
+# gallery; the four attempts were spent on variations that could not reach it.
+
+
+def _searchable(folder, artist='', language=''):
+    "A gallery whose folder name is the given one. The path need not exist."
+    gallery = gallerydb.Gallery()
+    gallery.path = r'J:\Doujin\{}\gallery.zip'.format(folder)
+    gallery.artist = artist
+    gallery.language = language
+    return gallery
+
+
+@pytest.mark.parametrize('language, expected', [
+    ('Japanese', ''),
+    ('japanese', ''),
+    ('English', ' language:english$'),
+    ('Chinese', ' language:chinese$'),
+    ('', ''),
+])
+def test_only_a_language_the_source_tags_becomes_a_filter(language, expected):
+    """A japanese original carries no language tag, so the filter matches nothing at all.
+
+    Measured against one artist: 25 galleries unfiltered, none of them with the japanese filter,
+    including the untagged originals the english filter correctly leaves out.
+    """
+    assert fetch.language_filter(language) == expected
+
+
+def test_a_japanese_gallery_is_searched_for_without_a_language_filter():
+    queries = fetch.search_queries(
+        _searchable('[Suzupony (Suzunomoku)] Naruko The Quartetto',
+                    'Suzupony (Suzunomoku)', 'Japanese'))
+
+    assert queries, 'the gallery has a searchable title'
+    assert not any('language:' in q for q in queries)
+
+
+@pytest.mark.parametrize('folder, artist, bare', [
+    # No separator: the bare form is the title without its "[Circle (Artist)]" prefix.
+    ('[70 Nenshiki Yuukyuu Kikan (Ohagi-san)] Coppelia Brothel',
+     '70 Nenshiki Yuukyuu Kikan (Ohagi-san)', '"Coppelia Brothel"'),
+    # A separator as well: the bare form is the romaji half alone.
+    ('[23.4do (Ichiri)] Boku no Risou no Isekai Seikatsu 11 | My Ideal Life in Another World 11',
+     '23.4do (Ichiri)', '"Boku no Risou no Isekai Seikatsu 11"'),
+])
+def test_the_bare_title_is_reachable_inside_the_attempt_budget(folder, artist, bare):
+    """Nothing filtered, nothing prefixed - the form a source is likeliest to hold.
+
+    It has to be one of the four attempts rather than the fifth, or a gallery whose artist or
+    language is the thing the source disagrees with never gets asked for at all.
+    """
+    queries = fetch.search_queries(_searchable(folder, artist, 'English'))
+
+    assert len(queries) <= fetch.MAX_SEARCH_ATTEMPTS, 'the request budget is unchanged'
+    assert bare in queries
+
+
+def test_the_artist_and_the_language_still_get_the_first_attempts():
+    """They are the two most productive variations and keep their slots."""
+    queries = fetch.search_queries(
+        _searchable('[70 Nenshiki Yuukyuu Kikan (Ohagi-san)] Coppelia Brothel',
+                    '70 Nenshiki Yuukyuu Kikan (Ohagi-san)', 'English'))
+
+    assert queries[0].endswith(' artist:"70 nenshiki yuukyuu kikan (ohagi-san)"$ language:english$')
+    assert queries[1].endswith('" language:english$')
+
+
+def test_a_gallery_with_no_searchable_title_yields_no_queries():
+    """path_title is '' for a drive root, and an empty query matches the whole site."""
+    gallery = gallerydb.Gallery()
+    gallery.path = ''
+    gallery.artist = ''
+    gallery.language = ''
+
+    assert fetch.search_queries(gallery) == []
+
+
 def test_a_gallery_with_no_searchable_title_is_skipped(match_gallery, tmp_path, monkeypatch):
     """path_title is '' for a drive root, and an empty query matches the whole site."""
     monkeypatch.setattr(app_constants, 'SYSTEM_TRAY', type('T', (), {'showMessage': lambda *a, **k: None})())

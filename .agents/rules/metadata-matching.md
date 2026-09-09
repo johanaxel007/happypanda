@@ -19,8 +19,10 @@ Two things make this code unforgiving:
   same-series sequel. Undoing one after the fact is `@.agents/rules/gallery-database.md`, which
   owns the repair protocol and the reasons a raw delete makes things worse.
 - **The sources ban by IP on volume.** Every extra query variation multiplies across the whole
-  library. `MAX_SEARCH_ATTEMPTS` in `_auto_metadata_process` bounds it; `CommonHen.begin_lock` /
-  `end_lock` pace it. Neither is decoration.
+  library. `MAX_SEARCH_ATTEMPTS` bounds it; `CommonHen.begin_lock` / `end_lock` pace it. Neither
+  is decoration. The queries themselves are built by `search_queries()`, which is where a
+  reordering belongs — it returns at most that many, so a variation added there costs nothing
+  until it displaces one that was already earning its slot.
 
 ## Measure before you change matching
 
@@ -39,6 +41,13 @@ The analyzer separates the three failure modes, and they need opposite fixes:
 | `No hits found` on every query | the query never reached the gallery | query building |
 | candidates returned, `Found 0 confident result(s)` | the titles disagree | scoring / canonicalisation |
 | `Discarded N result(s) with different numbering` | a guard rejected them | usually correct; check the numbers |
+
+Two things have to stay inside the budget whatever else moves. **A filter only narrows a
+language the source tags at all** — e-hentai tags one only when it is not its own default, so
+`language:japanese$` matches nothing on the entire site and `language_filter()` returns nothing
+for it. And **the plain title**, no prefix and no filters, is the form a source is likeliest to
+hold; a gallery whose stored artist or language is the thing the source disagrees with is only
+reachable through it.
 
 An attempt that never wins across a whole run is dead weight — give its slot to something that
 does, rather than raising `MAX_SEARCH_ATTEMPTS`. The cap is deliberately 4 and all four slots

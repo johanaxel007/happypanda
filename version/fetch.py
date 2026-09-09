@@ -81,6 +81,14 @@ LANGUAGE_TAGS = frozenset((
 # these is not evidence of anything: the app stores G_DEF_LANGUAGE for every gallery whose
 # folder name never stated a language, so 'Japanese' is as often "unknown" as it is a fact.
 UNTRANSLATED_LANGUAGES = frozenset(('japanese', 'chinese', 'korean'))
+# The source's own default language, which it therefore does not tag: a japanese original carries
+# no language tag at all, and the absence of one is what says japanese. A 'language:japanese$'
+# filter consequently matches nothing on the whole site.
+UNTAGGED_LANGUAGE = 'japanese'
+# Ceilings on one gallery's search. The attempt cap bounds the request rate against a source that
+# bans on volume, and is reached only when every variation comes back empty.
+MAX_QUERY_LENGTH = 200
+MAX_SEARCH_ATTEMPTS = 4
 
 
 def title_languages(title):
@@ -196,6 +204,107 @@ def match_forms(title):
         if without_subtitle and without_subtitle not in forms:
             forms.append(without_subtitle)
     return forms
+
+
+def build_query(title, artist, lang):
+    """Builds the search query, trimming an over-long title on a word boundary."""
+    # A title can carry its own quotes once the full-width ones are folded to ASCII
+    # ('M＆N Ji Kaikyaku Gashuu ＂Kaikyaku Otome＂'). Left in, they close the phrase
+    # early and the remainder is parsed as loose terms, which matches nothing.
+    title = ' '.join(title.replace('"', ' ').split())
+    filters = artist + lang
+    max_title_len = MAX_QUERY_LENGTH - len(filters) - 2  # -2 for quotes
+    if len(title) <= max_title_len:
+        return f'"{title}"{filters}'.strip()
+
+    # The title does not fit. Trim it on a word boundary and drop the quotes:
+    # a quoted phrase that was cut mid-title can never match anything.
+    trimmed = title[:max_title_len].rsplit(' ', 1)[0].strip() or title[:max_title_len].strip()
+    return f'{trimmed}{filters}'.strip()
+
+
+def language_filter(language):
+    """The 'language:x$' filter to search a gallery of the given language with, or ''.
+
+    Empty for a language the source leaves untagged, since filtering on one of those matches
+    nothing at all rather than narrowing anything.
+    """
+    language = (language or '').strip().lower()
+    if not language or language == UNTAGGED_LANGUAGE:
+        return ''
+    return f' language:{language}$'
+
+
+def search_queries(gallery, max_attempts=MAX_SEARCH_ATTEMPTS):
+    """The queries to search a gallery for, in descending order of how often they pay off.
+
+    Empty when the folder name reduces to nothing, which happens for a gallery whose path is a
+    drive root or one on a drive that is not mounted - an empty query matches the whole site.
+    """
+    sanitized_title = search_form(gallery.path_title)
+    # Split the raw folder name, not the formatted one: a deleted separator is only visible as
+    # the whitespace run that formatting collapses away.
+    split_raw = split_on_separator(gallery.path_title)
+
+    # Some galleries hold a language where their artist should be, from names like "Guardian of
+    # Faith II [English]" that have no artist prefix at all. An artist:english$ filter matches
+    # nothing, so drop it rather than search on it.
+    artist_name = (gallery.artist or '').strip()
+    if artist_name.lower().capitalize() in app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES:
+        log_w(f"Ignoring language '{artist_name}' stored as this gallery's artist")
+        artist_name = ''
+
+    has_artist = bool(artist_name)
+    artist_part = ""
+    if has_artist:
+        artist_name = artist_name.lower()
+        artist_part = f' artist:"{artist_name}"$' if ' ' in artist_name else f' artist:{artist_name}$'
+
+    # In descending order of how often they pay off: the folder title as-is, the romaji half
+    # before the '|' that a source usually indexes, then each of those without the
+    # "[Circle (Artist)]" prefix the artist filter already covers.
+    bases = [sanitized_title, search_form(split_raw) if split_raw else '']
+    title_variants = []
+    for variant in bases + [strip_group_prefix(b) for b in bases if b]:
+        if variant and variant not in title_variants:
+            title_variants.append(variant)
+
+    if not title_variants:
+        return []
+
+    lang_part = language_filter(gallery.language)
+    queries = []
+
+    def add_query(title_v, artist_v, lang_v):
+        query = build_query(title_v, artist_v, lang_v)
+        # Duplicates collapse: a title with no separator or no prefix yields fewer variants,
+        # and truncation can make two variants build the same query.
+        if query not in queries:
+            queries.append(query)
+
+    # The artist filter is worth exactly one attempt: the stored artist rarely matches the
+    # source's spelling, so dropping it is the most productive single variation, while pairing
+    # it with a fallback title never is and gets no slot.
+    add_query(title_variants[0], artist_part, lang_part)
+    add_query(title_variants[0], '', lang_part)
+    # The loosest form there is, and the one a source is likeliest to hold: the title cut back
+    # past its prefix to the romaji half, asked for with nothing filtering it. Third because the
+    # budget runs out at four, and a gallery whose artist or language is the thing the source
+    # disagrees with never reaches this query otherwise.
+    add_query(title_variants[-1], '', '')
+    for title_v in title_variants[1:]:
+        add_query(title_v, '', lang_part)
+    if lang_part:
+        add_query(title_variants[0], '', '')
+    # Whatever budget is left over goes to the combinations skipped above.
+    for title_v in title_variants[1:]:
+        add_query(title_v, artist_part, lang_part)
+    if lang_part:
+        add_query(title_variants[0], artist_part, '')
+        for title_v in title_variants[1:]:
+            add_query(title_v, '', '')
+
+    return queries[:max_attempts]
 
 
 class Fetch(QObject):
@@ -495,14 +604,9 @@ class Fetch(QObject):
         log_i('Finished applying metadata')
 
     def _auto_metadata_process(self, galleries, hen, valid_url, **kwargs):
-        MAX_QUERY_LENGTH = 200
         FUZZ_CONFIDENCE_THRESHOLD = app_constants.FUZZ_CONFIDENCE_THRESHOLD
         RETRY_DELAY_SECONDS = 3
         RETRY_FALLBACK_DELAY_SECONDS = max(RETRY_DELAY_SECONDS - 2, 1)
-        # Ceiling on the query variations per gallery, reached only when every one comes back
-        # empty. It bounds the request rate against a source that bans on volume; four covers the
-        # full title and the romaji half of it, each with and then without the artist filter.
-        MAX_SEARCH_ATTEMPTS = 4
         # A short or generic title can clear the threshold dozens of times over. Logging every
         # one of those buries the run, so only the head of the ranking is written out.
         MAX_LOGGED_CANDIDATES = 10
@@ -514,22 +618,6 @@ class Fetch(QObject):
 
         checked_pre_url_galleries = []
         multiple_hit_galleries = []
-
-        def build_query(title, artist, lang):
-            """Builds the search query, trimming an over-long title on a word boundary."""
-            # A title can carry its own quotes once the full-width ones are folded to ASCII
-            # ('M＆N Ji Kaikyaku Gashuu ＂Kaikyaku Otome＂'). Left in, they close the phrase
-            # early and the remainder is parsed as loose terms, which matches nothing.
-            title = ' '.join(title.replace('"', ' ').split())
-            filters = artist + lang
-            max_title_len = MAX_QUERY_LENGTH - len(filters) - 2  # -2 for quotes
-            if len(title) <= max_title_len:
-                return f'"{title}"{filters}'.strip()
-
-            # The title does not fit. Trim it on a word boundary and drop the quotes:
-            # a quoted phrase that was cut mid-title can never match anything.
-            trimmed = title[:max_title_len].rsplit(' ', 1)[0].strip() or title[:max_title_len].strip()
-            return f'{trimmed}{filters}'.strip()
 
         def process_and_filter_results(results, query, local_title, local_language, language_known):
             """Uses thefuzz to filter, sort, and verify search results. Returns an empty list on failure.
@@ -767,76 +855,12 @@ class Fetch(QObject):
 
             # --- Stage 2: Title Search ---
             if not search_successful:
-                sanitized_title = search_form(gallery.path_title)
-                # Split the raw folder name, not the formatted one: a deleted separator is
-                # only visible as the whitespace run that formatting collapses away.
-                split_raw = split_on_separator(gallery.path_title)
-
-                # Some galleries hold a language where their artist should be, from names
-                # like "Guardian of Faith II [English]" that have no artist prefix at all. An
-                # artist:english$ filter matches nothing, so drop it rather than search on it.
-                artist_name = (gallery.artist or '').strip()
-                if artist_name.lower().capitalize() in app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES:
-                    log_w(f"Ignoring language '{artist_name}' stored as this gallery's artist")
-                    artist_name = ''
-
-                has_artist = bool(artist_name)
-                artist_part = ""
-                if has_artist:
-                    artist_name = artist_name.lower()
-                    artist_part = f' artist:"{artist_name}"$' if ' ' in artist_name else f' artist:{artist_name}$'
-
-                # In descending order of how often they pay off: the folder title as-is, the
-                # romaji half before the '|' that a source usually indexes, then each of those
-                # without the "[Circle (Artist)]" prefix the artist filter already covers.
-                bases = [sanitized_title, search_form(split_raw) if split_raw else '']
-                title_variants = []
-                for variant in bases + [strip_group_prefix(b) for b in bases if b]:
-                    if variant and variant not in title_variants:
-                        title_variants.append(variant)
-
-                # Artist filter: try with, then without. Dropping it recovers a large share of
-                # galleries, because the local artist rarely matches the source's spelling exactly.
-                artist_variants = [artist_part, ''] if has_artist else ['']
-                lang_part = f" language:{gallery.language.lower()}$" if gallery.language else ""
-
-                if not title_variants:
-                    # The folder name reduced to nothing - a gallery whose path is a drive root,
-                    # or one on a drive that is not mounted. An empty query matches the whole site.
+                queries = search_queries(gallery)
+                if not queries:
                     log_w('Gallery has no searchable title, skipping')
                     self.error_galleries.append((gallery, "Gallery has no searchable title"))
                     if x == len(galleries): self.fetch_metadata(hen=hen)
                     continue
-
-                queries = []
-                def add_query(title_v, artist_v, lang_v):
-                    query = build_query(title_v, artist_v, lang_v)
-                    # Duplicates collapse: a title with no separator or no prefix yields fewer
-                    # variants, and truncation can make two variants build the same query.
-                    if query not in queries:
-                        queries.append(query)
-
-                # The artist filter is worth exactly one attempt: the stored artist rarely
-                # matches the source's spelling, so dropping it is the most productive single
-                # variation, while pairing it with a fallback title never is and gets no slot.
-                add_query(title_variants[0], artist_part, lang_part)
-                add_query(title_variants[0], '', lang_part)
-                for title_v in title_variants[1:]:
-                    add_query(title_v, '', lang_part)
-                # The language filter itself may be the thing that is wrong: 'Japanese' is the
-                # app default for galleries with none set, and folder names disagree with it
-                # often enough that this needs to stay reachable inside the attempt budget.
-                if lang_part:
-                    add_query(title_variants[0], '', '')
-                # Whatever budget is left over goes to the combinations skipped above.
-                for title_v in title_variants[1:]:
-                    add_query(title_v, artist_part, lang_part)
-                if lang_part:
-                    add_query(title_variants[0], artist_part, '')
-                    for title_v in title_variants[1:]:
-                        add_query(title_v, '', '')
-
-                queries = queries[:MAX_SEARCH_ATTEMPTS]
 
                 log_i(f"--- Title Search ({len(queries)} query variation(s)) ---")
                 for i, query in enumerate(queries):

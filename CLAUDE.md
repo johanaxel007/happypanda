@@ -133,6 +133,10 @@ Load bearing, each because a real run got it wrong:
   apart from "nobody knew". Filtering candidates on it discards correct ones. And when the filter
   has removed a candidate's alternatives, that candidate is never auto-applied however well it
   scored — an unrecognised tag shape survives the filter as "states no language".
+- **A language filter only narrows a language the source tags.** e-hentai tags one only when
+  it is not its own default, so `language:japanese$` matches nothing on the whole site — the
+  absence of a tag is what says Japanese. `search_queries()` builds the ladder, and the plain
+  title with no prefix and no filters has to stay inside `MAX_SEARCH_ATTEMPTS`.
 - **`TranslationStyle.SEARCH` for queries, not `DEFAULT`.** `DEFAULT` converts ASCII *to* full
   width for filenames; searching needs the inverse.
 
