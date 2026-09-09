@@ -1821,6 +1821,11 @@ class SingleGalleryChoices(BasePopup):
     # Covers are shown at roughly the size the source serves them at, large enough to tell two
     # editions of one work apart without covering the list they belong to.
     PREVIEW_SIZE = (200, 280)
+    # How far from the cursor the hover card sits, on whichever side of it has the room.
+    CARD_OFFSET = 20
+    # The card is sized by its own text, up to this. A url long enough to need the whole width
+    # wraps into it rather than stretching the card across the screen.
+    CARD_MAX_WIDTH = 360
 
     def __init__(self, gallery, tuple_first_idx, text=None, parent=None, extras=None):
         super().__init__(parent, flags= Qt.Dialog | Qt.FramelessWindowHint)
@@ -1863,7 +1868,6 @@ class SingleGalleryChoices(BasePopup):
         for t in tuple_first_idx:
             item = CustomListItem(t)
             item.setText(t[0])
-            item.setToolTip('{}\n\nRight click or double click to open in your browser.'.format(t[1]))
             self.list_w.addItem(item)
         # A romaji listing title is not something the owner of a Japanese folder name can
         # verify by eye. The cover usually settles it on its own; the source page always does.
@@ -1871,13 +1875,11 @@ class SingleGalleryChoices(BasePopup):
         self.list_w.customContextMenuRequested.connect(self.open_in_browser)
         self.list_w.itemDoubleClicked.connect(self.open_in_browser)
 
-        self._preview_popup = QLabel(self, Qt.ToolTip | Qt.FramelessWindowHint)
-        self._preview_popup.hide()
-        if self._thumbnails:
-            self.list_w.setMouseTracking(True)
-            self.list_w.viewport().setMouseTracking(True)  # itemEntered needs it on the viewport
-            self.list_w.viewport().installEventFilter(self)
-            self.list_w.itemEntered.connect(self.show_preview)
+        self._build_preview_card()
+        self.list_w.setMouseTracking(True)
+        self.list_w.viewport().setMouseTracking(True)  # itemEntered needs it on the viewport
+        self.list_w.viewport().installEventFilter(self)
+        self.list_w.itemEntered.connect(self.show_preview)
         self.buttons = self.add_buttons('Skip All', 'Skip', 'Choose',)
         self.buttons[2].clicked.connect(self.finish)
         self.buttons[1].clicked.connect(self.skip)
@@ -1903,22 +1905,56 @@ class SingleGalleryChoices(BasePopup):
         else:
             utils.open_path(path)
 
+    def _build_preview_card(self):
+        """Builds the one window a hovered choice gets: its cover, its url and what to do with it.
+
+        All three share a window because two of them cannot be kept apart. Qt shows a tool tip
+        on its own schedule and at its own position, so a tool tip and a cover window aimed at
+        the same spot end up stacked, with the cover underneath.
+        """
+        self._preview_popup = QFrame(self, Qt.ToolTip | Qt.FramelessWindowHint)
+        # The card follows the cursor around the row it describes and must never take it.
+        self._preview_popup.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._preview_popup.setFrameShape(QFrame.StyledPanel)
+        self._preview_popup.setAutoFillBackground(True)
+
+        layout = QVBoxLayout(self._preview_popup)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        self._preview_image = QLabel()
+        self._preview_image.setAlignment(Qt.AlignCenter)
+        self._preview_separator = QFrame()
+        self._preview_separator.setFrameShape(QFrame.HLine)
+        self._preview_separator.setFrameShadow(QFrame.Sunken)
+        self._preview_url = QLabel()
+        self._preview_url.setWordWrap(True)
+        self._preview_hint = QLabel('Right click or double click to open in your browser.')
+        self._preview_hint.setWordWrap(True)
+        # Smaller than the url it acts on, and directly under it: the two belong together.
+        hint_font = self._preview_hint.font()
+        hint_font.setPointSizeF(max(hint_font.pointSizeF() - 1, 6))
+        self._preview_hint.setFont(hint_font)
+
+        for widget in (self._preview_image, self._preview_separator,
+                       self._preview_url, self._preview_hint):
+            layout.addWidget(widget)
+        self._show_preview_cover(None)
+        self._preview_popup.hide()
+
     def show_preview(self, item):
-        "Shows the hovered candidate's cover beside the cursor, fetching it the first time."
+        "Shows the hovered candidate's card beside the cursor, fetching its cover the first time."
         url = item.item[1]
         self._preview_wanted = url
-        thumb_url = self._thumbnails.get(url)
-        if not thumb_url:
-            self._preview_popup.hide()
-            return
-
+        self._preview_url.setText(url)
         pixmap = self._preview_cache.get(url)
+        self._show_preview_cover(pixmap)
+        self._place_preview()
         if pixmap:
-            self._place_preview(pixmap)
             return
 
-        self._preview_popup.hide()
-        if url in self._preview_requested or not app_constants.DOWNLOAD_MANAGER:
+        thumb_url = self._thumbnails.get(url)
+        if not thumb_url or url in self._preview_requested or not app_constants.DOWNLOAD_MANAGER:
             return
         self._preview_requested.add(url)
         download = pewnet.DownloaderItem(thumb_url, self._preview_session)
@@ -1940,13 +1976,53 @@ class SingleGalleryChoices(BasePopup):
         pixmap = pixmap.scaled(*self.PREVIEW_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self._preview_cache[url] = pixmap
         if self._preview_wanted == url:  # the cursor may have moved on while this was fetched
-            self._place_preview(pixmap)
+            self._show_preview_cover(pixmap)
+            self._place_preview()
 
-    def _place_preview(self, pixmap):
-        self._preview_popup.setPixmap(pixmap)
-        self._preview_popup.resize(pixmap.size())
-        self._preview_popup.move(QCursor.pos() + QPoint(20, 20))
+    def _show_preview_cover(self, pixmap):
+        """Puts a cover on the card, or leaves it off until there is one.
+
+        Without one the card is the url and the hint alone, which is every choice a source
+        served no thumbnail for and every one whose cover is still on its way.
+        """
+        if pixmap:
+            self._preview_image.setPixmap(pixmap)
+        else:
+            self._preview_image.clear()
+        self._preview_image.setVisible(bool(pixmap))
+        self._preview_separator.setVisible(bool(pixmap))
+
+    def _place_preview(self):
+        """Shows the card beside the cursor, on whichever side of it fits on the screen."""
+        self._size_preview()
+        size = self._preview_popup.size()
+        cursor = QCursor.pos()
+        screen = QDesktopWidget().availableGeometry(cursor)
+
+        x = cursor.x() + self.CARD_OFFSET
+        if x + size.width() > screen.right():
+            x = cursor.x() - self.CARD_OFFSET - size.width()
+        y = cursor.y() + self.CARD_OFFSET
+        if y + size.height() > screen.bottom():
+            y = cursor.y() - self.CARD_OFFSET - size.height()
+        # Flipped to the other side it can still overhang a card taller than the screen.
+        x = max(screen.left(), min(x, screen.right() - size.width()))
+        y = max(screen.top(), min(y, screen.bottom() - size.height()))
+
+        self._preview_popup.move(x, y)
         self._preview_popup.show()
+
+    def _size_preview(self):
+        """Sizes the card to its contents, within CARD_MAX_WIDTH.
+
+        adjustSize is no use here: it takes the height from an unwrapped size hint, so a url or
+        a hint that has to wrap into the width gets its extra lines clipped off.
+        """
+        layout = self._preview_popup.layout()
+        hint = self._preview_popup.sizeHint()
+        width = min(hint.width(), self.CARD_MAX_WIDTH)
+        height = layout.heightForWidth(width) if layout.hasHeightForWidth() else hint.height()
+        self._preview_popup.resize(width, height)
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Leave and watched is self.list_w.viewport():

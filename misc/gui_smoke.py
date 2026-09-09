@@ -136,9 +136,10 @@ p = misc.SingleGalleryChoices(g, choices, 'Which gallery do you want to extract 
 assert p.list_w.count() == 2
 labels = [w.text() for w in p.findChildren(misc.QLabel)]
 assert any('Gallery 3 of 27 needing a choice.' in t for t in labels), labels
-assert p.list_w.item(0).toolTip().startswith(URL_A)
 assert jp in p.list_w.item(0).text()
-say('picker: position header, url tooltip and native title render')
+# A row with a tool tip of its own gets a second window over the card, on Qt's schedule.
+assert not any(p.list_w.item(i).toolTip() for i in range(p.list_w.count()))
+say('picker: position header and native title render, and no row carries a tool tip')
 
 p.open_in_browser(p.list_w.item(1))
 p.open_in_browser(QPoint(-5, -5))  # empty space
@@ -155,16 +156,19 @@ p.open_source_folder()
 assert opened_paths[-1] == (gallery_dir, archive), opened_paths
 say('picker: the local gallery opens its folder, an archive opens selected')
 
-# --- hover previews -------------------------------------------------------------------------
+# --- the hover card -------------------------------------------------------------------------
 p.show_preview(p.list_w.item(1))          # no thumbnail for this candidate
-assert p._preview_popup.isHidden()
+assert not p._preview_popup.isHidden(), 'the url and the hint are the card without a cover'
+assert p._preview_url.text() == URL_B
+assert p._preview_image.isHidden() and p._preview_separator.isHidden()
 assert requested == [], 'must not fetch a cover it was never given'
 
 p.show_preview(p.list_w.item(0))
 assert requested == [('https://ehgt.org/a.jpg', preview_session)], requested
 assert connected_before_queueing == [True], (
     'the cover handler must be connected before the item reaches the download queue')
-assert p._preview_popup.isHidden(), 'nothing to show until the download lands'
+assert p._preview_url.text() == URL_A
+assert p._preview_image.isHidden(), 'no cover until the download lands'
 p.show_preview(p.list_w.item(0))
 assert len(requested) == 1, 'a second hover must not re-request'
 
@@ -178,29 +182,39 @@ download.file = cover
 download.preview_for = URL_A
 p._preview_downloaded(download)
 assert not p._preview_popup.isHidden(), 'the cover should be on screen'
-assert p._preview_popup.pixmap().width() == 200, p._preview_popup.pixmap().width()
-say('picker: hovering fetches the cover once, with the logged in session, and shows it scaled')
+assert not p._preview_image.isHidden() and not p._preview_separator.isHidden()
+assert p._preview_image.pixmap().width() == 200, p._preview_image.pixmap().width()
+# One card, holding all three, is the whole point: no second window over the same spot.
+card_text = [w.text() for w in p._preview_popup.findChildren(misc.QLabel) if w.text()]
+assert URL_A in card_text and any('double click' in t for t in card_text), card_text
+say('picker: one card carries the cover, the url and the hint, and the cover is scaled')
 
 p.eventFilter(p.list_w.viewport(), QEvent(QEvent.Leave))
-assert p._preview_popup.isHidden(), 'the cover must go away when the cursor leaves the list'
+assert p._preview_popup.isHidden(), 'the card must go away when the cursor leaves the list'
 
 p.show_preview(p.list_w.item(0))           # served from cache now
-assert not p._preview_popup.isHidden()
+assert not p._preview_image.isHidden()
 assert len(requested) == 1
-say('picker: leaving the list hides the cover, re-hovering reuses the cached one')
+say('picker: leaving the list hides the card, re-hovering reuses the cached cover')
 
-# a cover that lands after the cursor moved on must not pop up over the wrong row
+# a cover that lands after the cursor moved on must not appear on another row's card
 p.show_preview(p.list_w.item(1))
 late = pewnet.DownloaderItem('https://ehgt.org/late.jpg')
 late.file = cover
 late.preview_for = URL_A
 p._preview_downloaded(late)
-assert p._preview_popup.isHidden(), 'a late cover must not appear over another row'
+assert p._preview_url.text() == URL_B, 'the card still describes the row under the cursor'
+assert p._preview_image.isHidden(), 'a late cover must not appear on another row'
 say('picker: a cover arriving after the cursor moved on is cached, not shown')
+
+screen = misc.QDesktopWidget().availableGeometry(misc.QCursor.pos())
+card = p._preview_popup.frameGeometry()
+assert screen.contains(card), (card, screen)
+say('picker: the card is placed inside the screen it is shown on')
 
 p.close()
 assert p._preview_popup.isHidden()
-say('picker: closing the dialog takes the cover popup with it')
+say('picker: closing the dialog takes the card with it')
 
 # --- a showcase whose receiver destroys it ---------------------------------------------------
 # The failed-galleries popup crashed here: mouseDoubleClickEvent touched the widget after
