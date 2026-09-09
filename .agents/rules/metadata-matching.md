@@ -54,6 +54,16 @@ does, rather than raising `MAX_SEARCH_ATTEMPTS`. The cap is deliberately 4 and a
 have since been measured producing matches, so treat a proposal to lower it as needing the same
 evidence as a proposal to raise it.
 
+**The confidence threshold is bimodal, which is why its default is high.** Scored across a whole
+library, the folder name against the source title actually applied to it: **85% of correct pairs
+score an exact 100**, and the rest tail off thinly — 96.6% clear 70, 91.5% clear 95. So the
+default of **95** gives up about five percent of correct matches to the chooser and in exchange
+abandons the whole 70–94 band, which is where a near-miss sibling gets applied silently. It is a
+user setting, so this is a default rather than a guarantee; do not reason about the pipeline as
+though 95 were fixed. And note what a threshold cannot do: `TORANOANA … TYPE-X` against `TYPE-A`
+scores 98 and `Erohon V` against `Erohon II` scores 97, so both clear any usable bar. The guards
+are what separate those, not the score.
+
 **A short title is the unsolved case.** `fuzz.ratio` against a title of a few characters clears
 70 for anything containing it: a real run searching `"Hong"` returned 75 hits and scored 35 of
 them confident, which is a chooser nobody can work through. The threshold cannot fix this on its
@@ -73,7 +83,18 @@ below some title length at all, and neither has been tried.
   `_select_match` auto-selects a lone perfect hit.
 - **Numbering is decisive, whatever the score.** `title_numbers()` compares the *set* of numbers
   on both sides; a mismatch rejects the candidate. Volume, chapter and sequel numbers are a tiny
-  edit distance apart and a large semantic one.
+  edit distance apart and a large semantic one. **Roman numerals count as the number they
+  denote**, in ASCII and in the Unicode block, so `Erohon V` and `Erohon II` are told apart
+  while `DepthSinker2` and `DepthSinker II` are one work — the source and a folder name
+  disagree about the notation constantly, and folding it one way only turns a working match
+  into a rejection. Upper case and word-bounded, two characters at least: `Ii` is Japanese for
+  "good", `DRII` is a name, a lone `I` is the pronoun, `V` abbreviates versus and `X` is the
+  crossover multiplier. **Japanese numerals are deliberately not read** — `ni`, `san` and `go`
+  are the particle, the honorific and an ordinary syllable so much more often than they are
+  numbers that a vocabulary for them broke 142 working matches and fixed none. Measured over a
+  whole library, the roman fold cost 8 already-matched galleries and recovered 5 while separating
+  114 confusable pairs; the 8 are tokenisation and parody-name artefacts (`DRII` for `DR:II`, a
+  `(Final Fantasy VII)` parody beside a `VI` title) that the numbering guard cannot fix.
 - **Compare halves too, on the candidate side only.** `match_forms()` offers each half of a
   `romaji | translated` pair, because a folder often kept one half while the source has both.
   Do **not** split the local title as well: `Kaizoku Kyonyuu` would then match

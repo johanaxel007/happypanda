@@ -53,6 +53,23 @@ GROUP_PREFIX_RE = re.compile(r'^\s*\[[^\[\]]*(?:\([^()]*\)[^\[\]]*)*\]\s*')
 DECORATION_RE = re.compile(r'\s*([=~*+])(?:(?!\1)\S)+\1\s*')
 # Any run of digits, used to tell a sequel or chapter apart from its siblings.
 NUMBER_RE = re.compile(r'\d+')
+# A roman numeral standing on its own, upper case only. Case is what separates the numeral from
+# the word: 'Ii kara Watashi ni Dakarenasai' opens with the Japanese word for 'good', and the
+# word boundaries keep the 'II' inside a name like 'DRII' out of it.
+ROMAN_RUN_RE = re.compile(r'\b[IVX]+\b')
+# Roman numerals folded to the integer each denotes, so 'II' and '2' compare equal. Two
+# characters at least: a lone 'I' is the English pronoun, 'V' abbreviates versus and 'X' is the
+# crossover multiplier, none of which is a volume number.
+ROMAN_NUMERALS = {'II': 2, 'III': 3, 'IV': 4, 'VI': 6, 'VII': 7, 'VIII': 8, 'IX': 9,
+                  'XI': 11, 'XII': 12}
+# The Unicode roman numeral block, which a filesystem name carries and nothing else folds:
+# 'Ⅱ' is a single character, and lowercasing it moves it to a different one again. Only the
+# forms of the numerals above, so the two notations are read exactly alike.
+_ROMAN_CHARS = ('I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII')
+ROMAN_BLOCK = str.maketrans({
+    **{chr(0x2160 + i): r for i, r in enumerate(_ROMAN_CHARS) if r in ROMAN_NUMERALS},
+    **{chr(0x2170 + i): r for i, r in enumerate(_ROMAN_CHARS) if r in ROMAN_NUMERALS},
+})
 # A trailing "-Subtitle-" or "~Subtitle~" segment, both delimiters the same. Requires four
 # characters of content and none of the delimiter inside, so an ordinary hyphenated ending is
 # left alone.
@@ -160,8 +177,17 @@ def title_numbers(title):
     actually is: 'Kaizoku Kyonyuu' and 'Kaizoku Kyonyuu 2' score 90 against each other. Compared
     as a set rather than a sequence, so a title that repeats the number in its translated half
     still matches one that does not.
+
+    A roman numeral counts as the number it denotes, in either notation, so that 'Erohon V' and
+    'Erohon II' are told apart and 'DepthSinker2' and 'DepthSinker II' are not. Japanese
+    numerals are deliberately not read: 'ni', 'san' and 'go' are the particle, the honorific
+    and an ordinary syllable far more often than they are numbers.
     """
-    return {int(n) for n in NUMBER_RE.findall(title)}
+    folded = title.translate(ROMAN_BLOCK)
+    numbers = {int(n) for n in NUMBER_RE.findall(folded)}
+    numbers.update(ROMAN_NUMERALS[run] for run in ROMAN_RUN_RE.findall(folded)
+                   if run in ROMAN_NUMERALS)
+    return numbers
 
 
 def canonical_title(title):

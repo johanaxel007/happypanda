@@ -124,7 +124,9 @@ Load bearing, each because a real run got it wrong:
 - **Never `token_set_ratio` or `partial_ratio`.** Both score `Schoolgirl Guide` against
   `Schoolgirl Guide 2` at 100, which auto-applies the wrong gallery.
 - **Numbering is decisive.** `title_numbers()` compares the set of numbers in the two titles; a
-  mismatch rejects the candidate whatever it scores.
+  mismatch rejects the candidate whatever it scores. Roman numerals count as the number they
+  denote, upper case and word-bounded, so `Erohon V` and `Erohon II` differ while `DepthSinker2`
+  and `DepthSinker II` agree. Japanese numerals are deliberately not read.
 - **A title may be half a title.** Sources carry the whole `romaji | translated` pair while a
   folder often kept one half. `match_forms()` offers each half for comparison.
 - **A separator may be missing.** Some folder names have the `｜` deleted rather than

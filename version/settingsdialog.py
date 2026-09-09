@@ -1267,7 +1267,10 @@ class SettingsDialog(QWidget):
         self.fuzz_confidence_threshold.setToolTip('How similar a search result title has to be to the local folder name to be considered a match.\n'
                                               'Lower values may result in more incorrect matches.\n'
                                               'Higher values may miss slightly different titles.\n'
-                                              'DEFAULT: 70%')
+                                              'Most correct matches score an exact 100, so a high value costs\n'
+                                              'few of them and sends the rest to the chooser instead of\n'
+                                              'applying a near miss over your metadata.\n'
+                                              'DEFAULT: 95%')
         web_metadata_m_l.addRow(fuzz_confidence_info)
         web_metadata_m_l.addRow('Confidence threshold:', self.fuzz_confidence_threshold)
 

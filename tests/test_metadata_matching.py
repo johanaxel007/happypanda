@@ -149,6 +149,23 @@ def test_a_sequel_never_reaches_a_perfect_score(local, site):
     ('Gensou Kyonyuu 2 | Big Breasted Fantasy', {2}),
     ('Kaizoku Kyonyuu | The Big Breasted Pirate', set()),
     ('Gessha 20-man ... 200 Thousand Yen per Month', {20, 200}),
+    # A roman numeral is the number it denotes, in either notation, so the two forms of one
+    # volume number agree instead of reading as two different works.
+    ('DepthSinker II', {2}),
+    ('DepthSinker2', {2}),
+    ('Nana no Itazura Ⅱ', {2}),                          # the unicode roman numeral block
+    ('Touhou Chitei Yousai VI', {6}),
+    # A lone I, V or X is not a volume number: the pronoun, 'versus', and the crossover
+    # multiplier respectively. The unicode forms of those three are left out to match.
+    ('Nana no Itazura I', set()),
+    ('Nana no Itazura Ⅰ', set()),
+    ('Kino no Tabi no Erohon V - the Erotic World', set()),
+    ('SuPE x FRO', set()),
+    ('Sword Art Online X Fate', set()),
+    # Case and word boundaries separate the numeral from the word: 'Ii' is Japanese for 'good',
+    # and 'DRII' is a name rather than a numbered volume.
+    ('Ii kara Watashi ni Dakarenasai!!', set()),
+    ('DRII ~Katatsumuri Shoukougun~', set()),
 ])
 def test_title_numbers(title, expected):
     assert fetch.title_numbers(title) == expected
@@ -214,8 +231,14 @@ def match_gallery(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(app_constants, 'SYSTEM_TRAY', _Tray(), raising=False)
+    # Pinned rather than ambient: the confidence threshold is a user setting read from an
+    # untracked settings.ini, so a checkout would otherwise run these cases against whatever
+    # configuration happens to be local - and against a changed default.
+    monkeypatch.setattr(app_constants, 'FUZZ_CONFIDENCE_THRESHOLD', 70)
 
-    def run(folder_name, results, artist='', language='English'):
+    def run(folder_name, results, artist='', language='English', threshold=None):
+        if threshold is not None:
+            monkeypatch.setattr(app_constants, 'FUZZ_CONFIDENCE_THRESHOLD', threshold)
         path = tmp_path / folder_name.replace('/', '_')[:120]
         path.mkdir(parents=True, exist_ok=True)
 
@@ -285,6 +308,50 @@ def test_wrong_chapter_number_is_rejected(match_gallery):
         'Showbiz Comes After Yuri Sex Ch. 3',
         [('[Chorimokki] Geinou Katsudou wa Yuri Ecchi no Ato de | '
           'Showbiz Comes After Yuri Sex Ch. 5 [English]', URL_A)]) is None
+
+
+def test_a_roman_numeral_sequel_is_rejected_rather_than_applied(match_gallery):
+    """The guard used to read arabic digits only, so neither side carried a number at all.
+
+    These two score 97 against each other and the sequel was the only hit, which is the path
+    that applies a match without it ever having to be perfect.
+    """
+    assert match_gallery(
+        'Kino no Tabi no Erohon V - the Erotic World',
+        [('[Circle] Kino no Tabi no Erohon II - the Erotic World [English]', URL_A)]) is None
+
+
+def test_the_same_volume_written_in_the_other_notation_is_no_longer_rejected(match_gallery):
+    """The other half of reading roman numerals: II and 2 must not read as different volumes.
+
+    What changed is the guard. The score is the limiting factor now: these two spellings only
+    reach 85 against each other, so at the shipped default threshold this pair goes to the
+    chooser rather than being applied.
+    """
+    folder = 'DepthSinker2'
+    site = '[ElAne WorkShop (Ipuu)] DepthSinker II (Kantai Collection -KanColle-)'
+    assert fetch.title_numbers(fetch.canonical_title(folder)) == \
+        fetch.title_numbers(fetch.canonical_title(site))
+    assert match_gallery(folder, [(site, URL_A)], threshold=70) == URL_A
+
+
+@pytest.mark.parametrize('folder, site, why', [
+    ('DRII ~Katatsumuri Shoukougun~', '[Behind Moon (Q)] DR:II ~Katatsumuri Shoukougun~',
+     'the folder dropped the colon, so DRII is one word and its II is not a numeral'),
+    # The translator credit after the parody is what keeps canonical_title from stripping the
+    # parody group, so its numeral survives into the comparison. Without the credit the group
+    # is trailing, is stripped, and this pair matches perfectly well.
+    ('Lucrecia VI', 'Lucrecia VI (Final Fantasy VII: Dirge of Cerberus) =SNP=',
+     'the parody name carries a numeral of its own, which the title does not'),
+])
+def test_the_accepted_cost_of_reading_roman_numerals(match_gallery, folder, site, why):
+    """Two shapes this rejects that it should ideally match. Asserted so they stay known.
+
+    The trade was measured against a whole library before it was taken, and it comes out ahead;
+    the figures are in the metadata-matching rule. Both shapes need something other than the
+    numbering guard to fix, and a rejection is the safe direction.
+    """
+    assert match_gallery(folder, [(site, URL_A)]) is None, why
 
 
 def test_unrelated_gallery_is_rejected(match_gallery):
