@@ -69,6 +69,7 @@ venv/Scripts/pip.exe install -r requirements-dev.txt               # pytest + py
 venv\Scripts\pyinstaller.exe --noconfirm --clean HappyPanda.spec   # build -> dist/HappyPanda/
 
 python misc/analyze_fetch_log.py path/to/happypanda.log --failures # diagnose a fetch run
+python misc/analyze_scan_log.py path/to/happypanda.log --rejections # diagnose a better-version scan
 venv/Scripts/python.exe misc/gui_smoke.py                          # exercise the gui headlessly
 ```
 
