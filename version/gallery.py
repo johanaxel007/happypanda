@@ -1477,8 +1477,8 @@ class CommonView:
             for index in index_list:
                 gallery = index.data(Qt.UserRole + 1)
                 gallery_list.append(gallery)
-                log_i('Attempt to remove: {} by {}'.format(gallery.title.encode(errors="ignore"),
-                                            gallery.artist.encode(errors="ignore")))
+                log_i('Attempt to remove: {} by {}'.format(gallery.title,
+                                            gallery.artist))
                 if gallery.id:
                     gallery_db_list.append(gallery)
             gallerydb.execute(gallerydb.GalleryDB.del_gallery, True, gallery_db_list, local=local, priority=0)

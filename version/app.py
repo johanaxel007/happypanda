@@ -975,7 +975,7 @@ class AppWindow(QMainWindow):
                                 for d in dir_content:
                                     paths.append(d.path)
                             else:
-                                log_e("Monitored path does not exist: {}".format(p.encode(errors='ignore')))
+                                log_e("Monitored path does not exist: {}".format(p))
 
                         self.fetch_inst.series_path = paths
                         self.fetch_inst.LOCAL_EMITTER.connect(lambda g:self.addition_view.add_gallery(g, app_constants.KEEP_ADDED_GALLERIES))
@@ -1040,7 +1040,7 @@ class AppWindow(QMainWindow):
         
         log_i('Acceptable dropped items: {}'.format(len(acceptable)))
         log_i('Unacceptable dropped items: {}'.format(len(unaccept)))
-        log_d('Dropped items: {}\n{}'.format(acceptable, unaccept).encode(errors='ignore'))
+        log_d('Dropped items: {}\n{}'.format(acceptable, unaccept))
 
         if acceptable:
             self.notification_bar.add_text('Adding dropped items...')
@@ -1183,7 +1183,7 @@ class AppWindow(QMainWindow):
                 duplicates = []
                 for n, g in enumerate(galleries, 1):
                     notifbar.add_text('Checking gallery {}'.format(n))
-                    log_d('Checking gallery {}'.format(g.title.encode(errors="ignore")))
+                    log_d('Checking gallery {}'.format(g.title))
                     for y in galleries:
                         title = g.title.strip().lower() == y.title.strip().lower()
                         path = os.path.normcase(g.path) == os.path.normcase(y.path)

@@ -343,7 +343,7 @@ class DBBase:
         "Same as cursor.execute"
         if not self._DB_CONN:
             raise db_constants.NoDatabaseConnection
-        log_d('DB Query: {}'.format(args).encode(errors='ignore'))
+        log_d('DB Query: {}'.format(args))
         if self._AUTO_COMMIT:
             try:
                 with self._DB_CONN:
@@ -358,7 +358,7 @@ class DBBase:
         "Same as cursor.executemany"
         if not self._DB_CONN:
             raise db_constants.NoDatabaseConnection
-        log_d('DB Query: {}'.format(args).encode(errors='ignore'))
+        log_d('DB Query: {}'.format(args))
         if self._AUTO_COMMIT:
             with self._DB_CONN:
                 return self._DB_CONN.executemany(*args)

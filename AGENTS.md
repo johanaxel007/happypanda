@@ -202,7 +202,9 @@ local ignore rules do not travel with a clone.
 - Prefer f-strings for new code; the codebase still has `.format()` and `%` in older paths and
   those do not need converting on sight.
 - Logging goes through the module-level `log_i` / `log_d` / `log_w` / `log_e` aliases, never
-  `print()`.
+  `print()`, and the value logged is passed as a `str`. Encoding it first puts a bytes repr
+  in the log with every non-ASCII character escaped, which is unreadable for a CJK title.
+  `tests/test_log_titles.py` is the gate.
 - Every text-mode `open()` names its `encoding`. A frozen build never enables Python's UTF-8
   mode however the environment is set, so an unmarked open reads and writes in whatever the
   machine's locale happens to be, and the exe and a source run then disagree. `utf-8` to write,

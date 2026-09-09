@@ -248,7 +248,7 @@ class GalleryDB(database.db.DBBase):
     def rebuild_thumb(gallery):
         "Rebuilds gallery thumbnail"
         try:
-            log_i('Recreating thumb {}'.format(gallery.title.encode(errors='ignore')))
+            log_i('Recreating thumb {}'.format(gallery.title))
             if gallery.profile:
                 GalleryDB.clear_thumb(gallery.profile)
             gallery.profile = executors.Executors.generate_thumbnail(gallery, blocking=True)
@@ -273,7 +273,7 @@ class GalleryDB(database.db.DBBase):
         except FileNotFoundError:
             pass
         except:
-            log.exception('Failed to delete thumb {}'.format(os.path.split(path)[1].encode(errors='ignore')))
+            log.exception('Failed to delete thumb {}'.format(os.path.split(path)[1]))
 
     @staticmethod
     def clear_thumb_dir():
@@ -286,7 +286,7 @@ class GalleryDB(database.db.DBBase):
     def rebuild_gallery(gallery, thumb=False):
         "Rebuilds the galleries in DB"
         try:
-            log_i('Rebuilding {}'.format(gallery.title.encode(errors='ignore')))
+            log_i('Rebuilding {}'.format(gallery.title))
             log_i("Rebuilding gallery {}".format(gallery.id))
             HashDB.del_gallery_hashes(gallery.id)
             GalleryDB.modify_gallery(gallery.id,
@@ -448,7 +448,7 @@ class GalleryDB(database.db.DBBase):
         "Receives an object of class gallery, and appends it to DB"
         "Adds gallery of <Gallery> class into database"
         assert isinstance(object, Gallery), "add_gallery method only accepts gallery items"
-        log_i('Recevied gallery: {}'.format(object.path.encode(errors='ignore')))
+        log_i('Recevied gallery: {}'.format(object.path))
 
         #TODO: implement mass gallery adding!  User execute_many method for
         #effeciency!
@@ -485,19 +485,19 @@ class GalleryDB(database.db.DBBase):
                     for path in paths:
                         s = utils.delete_path(path)
                         if not s:
-                            log_e('Failed to delete chapter {}:{}, {}'.format(path, gallery.id, gallery.title.encode('utf-8', 'ignore')))
+                            log_e('Failed to delete chapter {}:{}, {}'.format(path, gallery.id, gallery.title))
                             continue
                     s = utils.delete_path(gallery.path)
 
                 if not s:
                     log_e('Failed to delete gallery:{}, {}'.format(gallery.id,
-                                                      gallery.title.encode('utf-8', 'ignore')))
+                                                      gallery.title))
                     continue
 
             GalleryDB.clear_thumb(gallery.profile)
             cls.execute(cls, 'DELETE FROM series WHERE series_id=?', (gallery.id,))
             gallery.id = None
-            log_i('Successfully deleted: {}'.format(gallery.title.encode('utf-8', 'ignore')))
+            log_i('Successfully deleted: {}'.format(gallery.title))
             app_constants.NOTIF_BAR.add_text('Successfully deleted: {}'.format(gallery.title))
 
     @staticmethod
@@ -1201,7 +1201,7 @@ class HashDB(database.db.DBBase):
                     return None
 
             if gallery.dead_link:
-                log_e("Could not generate hash of dead gallery: {}".format(gallery.title.encode(errors='ignore')))
+                log_e("Could not generate hash of dead gallery: {}".format(gallery.title))
                 return {}
 
             try:
@@ -2075,7 +2075,7 @@ class AdminDB(QObject):
         galleries = []
         for g in db_galleries:
             if not os.path.exists(g.path):
-                log_i("Gallery doesn't exist anymore: {}".format(g.title.encode(errors="ignore")))
+                log_i("Gallery doesn't exist anymore: {}".format(g.title))
             else:
                 galleries.append(g)
 
@@ -2166,7 +2166,7 @@ class AdminDB(QObject):
         GalleryDB.clear_thumb_dir()
         for n, g in enumerate(galleries):
             if not os.path.exists(g.path):
-                log_i("Gallery doesn't exist anymore: {}".format(g.title.encode(errors="ignore")))
+                log_i("Gallery doesn't exist anymore: {}".format(g.title))
             else:
                 GalleryDB.add_gallery(g)
             self.PROGRESS.emit(n)

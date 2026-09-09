@@ -1295,7 +1295,7 @@ class GalleryMenu(QMenu):
 
     def change_cover(self):
         gallery = self.index.data(Qt.UserRole + 1)
-        log_i('Attempting to change cover of {}'.format(gallery.title.encode(errors='ignore')))
+        log_i('Attempting to change cover of {}'.format(gallery.title))
         if gallery.is_archive:
             try:
                 arc = utils.ArchiveFile(gallery.path)
@@ -1359,7 +1359,7 @@ class GalleryMenu(QMenu):
     def add_chapters(self):
         def add_chdb(chaps_container):
             gallery = self.index.data(Qt.UserRole + 1)
-            log_i('Adding new chapter for {}'.format(gallery.title.encode(errors='ignore')))
+            log_i('Adding new chapter for {}'.format(gallery.title))
             gallerydb.execute(gallerydb.ChapterDB.add_chapters_raw, False, gallery.id, chaps_container)
         ch_widget = ChapterAddWidget(self.index.data(Qt.UserRole + 1), self.parent_widget)
         ch_widget.CHAPTERS.connect(add_chdb)
