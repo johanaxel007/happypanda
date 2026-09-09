@@ -247,6 +247,11 @@ class SettingsDialog(QWidget):
         self.fallback_chaika.setChecked('chaikahen' in app_constants.HEN_LIST)
         self.fuzz_confidence_threshold.setValue(app_constants.FUZZ_CONFIDENCE_THRESHOLD)
         self.use_hash_search.setChecked(app_constants.USE_HASH_SEARCH)
+        # A stored language the combo does not offer still has to come back out of it, or the
+        # next Ok writes whichever entry happened to be first instead.
+        if self.better_version_language.findText(app_constants.BETTER_VERSION_LANGUAGE) < 0:
+            self.better_version_language.addItem(app_constants.BETTER_VERSION_LANGUAGE)
+        self.better_version_language.setCurrentText(app_constants.BETTER_VERSION_LANGUAGE)
 
 
         # Web / Download
@@ -522,6 +527,9 @@ class SettingsDialog(QWidget):
 
         app_constants.USE_HASH_SEARCH = self.use_hash_search.isChecked()
         set(app_constants.USE_HASH_SEARCH, 'Web', 'use image hash search')
+
+        app_constants.BETTER_VERSION_LANGUAGE = self.better_version_language.currentText()
+        set(app_constants.BETTER_VERSION_LANGUAGE, 'Web', 'better version language')
 
         # Visual / General
         app_constants.GALLERY_EDIT_WIDTH = self.galleryedit_width.value()
@@ -1286,6 +1294,23 @@ class SettingsDialog(QWidget):
         web_metadata_m_l.addRow(fallback_source_l)
         self.fallback_chaika = QCheckBox("panda.chaika.moe")
         fallback_source_l.addWidget(self.fallback_chaika)
+
+        better_version_info = QLabel('Which translation counts as a better version when scanning '
+                                     'for improved releases of galleries you already hold.')
+        better_version_info.setWordWrap(True)
+        self.better_version_language = QComboBox()
+        # Japanese and Other are left out: the source tags a language only when a gallery has
+        # been translated into it, so neither can ever appear on a candidate.
+        self.better_version_language.addItems(
+            [l for l in app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES
+             if l not in ('Japanese', 'Other')])
+        self.better_version_language.setToolTip(
+            'Gallery / Scan for better versions looks for a release of the same work translated\n'
+            'into this language, and for a decensored release of a gallery held censored.\n'
+            'Add more languages under General / gallery custom languages.\n'
+            'DEFAULT: English')
+        web_metadata_m_l.addRow(better_version_info)
+        web_metadata_m_l.addRow('Better version language:', self.better_version_language)
 
     def _make_visual_general(self, tab_widget: QTabWidget):
         # Visual / General

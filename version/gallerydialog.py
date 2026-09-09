@@ -599,17 +599,14 @@ class GalleryDialog(QWidget):
         else:
             # single GalleryDialog metadata fetch
             self._fetch_inst = fetch.Fetch()
-            # self._fetch_thread = QThread(self)
-            self._fetch_thread = QThread(self.parent())
-            self._fetch_thread.setObjectName("GalleryDialog metadata thread")
-            self._fetch_inst.moveToThread(self._fetch_thread)
-            self._fetch_thread.started.connect(self._fetch_inst.auto_web_metadata)
-
             self._fetch_inst.galleries = [dummy_gallery]
             self._disconnect(self._fetch_inst)
             self._fetch_inst.GALLERY_PICKER.connect(gallery_picker)
             self._fetch_inst.GALLERY_EMITTER.connect(self.set_web_metadata)
             self._fetch_inst.FINISHED.connect(status)
+            self._fetch_thread = misc.worker_thread(
+                self.parent(), self._fetch_inst, self._fetch_inst.auto_web_metadata,
+                self._fetch_inst.FINISHED, "GalleryDialog metadata thread")
             self._fetch_thread.start()
             log_i('fetch thread started')
             
@@ -873,11 +870,10 @@ class GalleryDialogGroup(QObject):
 
                 fetch_inst = fetch.Fetch()
                 self.fetch_insts.add(fetch_inst)
-                fetch_thread = QThread(self.parent())
-                fetch_thread.setObjectName("GalleryDialog metadata thread")
-                fetch_inst.moveToThread(fetch_thread)
                 fetch_inst.FINISHED.connect(lambda: self.remove_fetch(fetch_inst))
-                fetch_thread.started.connect(fetch_inst.auto_web_metadata)
+                fetch_thread = misc.worker_thread(
+                    self.parent(), fetch_inst, fetch_inst.auto_web_metadata,
+                    fetch_inst.FINISHED, "GalleryDialog metadata thread")
 
             log_d(f'adding url from GalleryDialog {i+1}/{len(self.gds)}')
             gallery = gd.web_metadata(fetch_inst=fetch_inst)

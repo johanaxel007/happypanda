@@ -1,12 +1,13 @@
 ---
 name: metadata-matching
-description: Rules for the online metadata pipeline — query building, candidate scoring, source fallback and request budget. A wrong match overwrites the user's stored metadata with no undo, and the sources ban by IP on request volume, so changes here are measured against real logs rather than reasoned about. Enforced when editing fetch.py, pewnet.py or title_formatter.py.
+description: Rules for the online metadata pipeline — query building, candidate scoring, source fallback and request budget. A wrong match overwrites the user's stored metadata with no undo, and the sources ban by IP on request volume, so changes here are measured against real logs rather than reasoned about. Enforced when editing fetch.py, pewnet.py, title_formatter.py or betterversions.py.
 trigger: glob
-glob: "{version/fetch.py,version/pewnet.py,version/formatters/title_formatter.py}"
+glob: "{version/fetch.py,version/pewnet.py,version/formatters/title_formatter.py,version/betterversions.py}"
 paths:
   - "version/fetch.py"
   - "version/pewnet.py"
   - "version/formatters/title_formatter.py"
+  - "version/betterversions.py"
 ---
 
 # Metadata matching
@@ -215,6 +216,74 @@ matching rather than a separate UI concern.
 - **Log the candidate list at info.** An ordering complaint cannot be diagnosed from a count,
   and the builds these runs come from do not have debug logging on. Bounded by
   `MAX_LOGGED_CANDIDATES`, because a short title clears the threshold dozens of times over.
+
+## The better version scan
+
+`betterversions.py` reuses the helpers above for a different question — "is this hit another
+release of the same work" rather than "is this the gallery" — and the invariants change shape
+because **both sides are the source's own title**, not a folder name against a site title.
+
+- **It may require near-identity, and it must.** `SAME_WORK_SCORE` is far above
+  `FUZZ_CONFIDENCE_THRESHOLD` because near-identical is actually reachable here. Measured over
+  the whole library: at 99 the distinct works it conflates are almost all one work titled two
+  ways, at 95 there are a hundred. Do not align it with the fetch's threshold.
+- **Compare case-folded.** The two titles were written by different uploaders and capitalisation
+  is the commonest thing they disagree on. Folding conflates no distinct works at all, which is
+  why it is the right fix for that variance rather than a lower score.
+- **The numbering guard still cannot see a Japanese volume marker.** `Sono Ni` / `Sono San`,
+  `Chuu` / `Jou` and `zenpen` / `kouhen` reach the scorer on title similarity alone — see the
+  numbering bullet above for why reading them is not worth it. Roman numerals *are* read now.
+  This is why the scan's bar cannot be lowered much further: those pairs have nothing else
+  separating them.
+- **Only the scan splits the held title, and only its romaji head.** A raw release carries just
+  that half, so a gallery stored with the full `romaji | translated` pair would never match its
+  own decensored edition — a quarter of the censored galleries in a real library. The translated
+  **tail** is never offered: distinct works share one (`Doubutsu no Oyome-san` and
+  `Kemono no Oyome-san` are both `Animal Bride`), while a shared romaji head is nearly always
+  one work someone translated twice. `fetch`'s one-sided rule still stands for `fetch`.
+- **Anchor that guard on the whole held title.** A romaji head carries none of the numbers its
+  translated half holds, so comparing form by form lets `Foo | Bar 2` and `Foo | Bar 3` agree on
+  an empty set and read as one work.
+- **One result page per query.** `search(max_pages=1)`, so a run costs exactly one request per
+  gallery and the total can be stated before the user agrees to it. Following the pagination
+  would make the real cost up to `MAX_SEARCH_PAGES` times the figure they saw.
+- **Classify from the api's tags, never the candidate's title.** A release marks itself
+  `[Decensored]` inconsistently; `uncensored` is the tag the site's own filters run on. The
+  lookup is batched at `MAX_GDATA_URLS`, and the raw `gmetadata` is read so none of it can
+  reach `apply_metadata`.
+- **A short title needs the parody tag to say which work it is, and the tag rather than the
+  title.** `canonical_title` strips the group naming the series, so a Phantasy Star Online 2
+  doujin called `Seishoku` and a Fate/Grand Order one of the same name reduce to the same eight
+  characters and score 100. `same_parody` compares the **`Parody:` namespace** by intersection,
+  which needs no threshold because the source normalises it: one `kantai collection` where
+  titles write both `Kantai Collection` and `Kantai Collection -KanColle-`. Comparing the titles'
+  own groups instead would reject that pair, which is one work. Measured on a real library: 80%
+  of galleries carry the tag and 595 of 595 whose title named a series also had it. Either side
+  naming none decides nothing — about a fifth are untagged, so absence is not a mismatch. It has
+  to run in `_classify` rather than `same_work`, because the candidate's tags do not exist until
+  the batched lookup has happened.
+- **A row must be a strict improvement, never a trade — and the condition is on the *other*
+  axis.** An uncensored release in a language the held gallery is not in gives the language away
+  to gain the censorship; a translation that is censored gives the censorship back to gain the
+  language. Both were reported to a user before `better_kinds` compared the axes together: a
+  gallery held in English and censored was offered a Spanish uncensored release. Decensored
+  therefore requires `held_langs ⊆ candidate_langs ⊆ held_langs ∪ {target}`, and translated
+  requires the candidate not be known-censored when the held copy is already uncensored.
+- **Log every candidate that improves on nothing, with the tags it turned out to hold.** This is
+  where a scan discards nearly everything — a real run threw away 146 of 148 same-work
+  candidates — and the rejections are correct only as long as someone can check them. `three
+  states per axis` matters in that log: a release that states no language and one that states no
+  censorship are not the same as either alternative. Bounded by `MAX_LOGGED_REJECTIONS`.
+- **The measured yield is low, and that is the honest answer rather than a bug.** Two rows from
+  59 galleries on a real library, because the other releases of those works are overwhelmingly
+  translations into languages the scan is not looking for — chinese, korean, spanish, russian,
+  portuguese and french across the candidates of one run. Check the funnel in the log before
+  concluding anything is broken: hits, then how many were the same work, then how many were
+  classified, then rows.
+- **A failed lookup is not a scanned gallery.** A batch whose request never completed leaves its
+  galleries unrecorded so a later run retries them; a candidate the api answers for with an
+  `error` entry is a removed gallery and must *not* hold its holder back, or that gallery is
+  re-searched on every run forever.
 
 ## Sources
 

@@ -23,6 +23,7 @@ import utils
 import pewnet
 import settings
 import fetch
+import betterversions
 from asm_manager import AsmManager
 
 log = logging.getLogger(__name__)
@@ -392,6 +393,245 @@ class GalleryDownloader(QWidget):
         if self.isVisible():
             self.activateWindow()
         else:
+            super().show()
+
+    def closeEvent(self, QCloseEvent):
+        self.hide()
+
+class BetterVersionsList(QTableWidget):
+    """The rows of the better version review list.
+
+    Every row is a pair - a gallery held locally, and a release of the same work on the source
+    that improves on it. That shape is why this is a table of its own rather than a library
+    tab: a tab's model holds Gallery objects and paints one per cell, and a candidate is not a
+    gallery and must never be mistaken for one.
+
+    Nothing a row offers writes anything. The decision it carries is "download this myself",
+    so the actions are the ones that let the user judge and then go and do that.
+    """
+    HELD, CANDIDATE, KINDS, SOURCE = range(4)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._galleries = {}
+        self.setColumnCount(4)
+        self.setIconSize(QSize(50, 70))
+        self.setAlternatingRowColors(True)
+        self.setEditTriggers(self.NoEditTriggers)
+        self.setSelectionBehavior(self.SelectRows)
+        self.setSelectionMode(self.SingleSelection)
+        self.setShowGrid(True)
+        self.setSortingEnabled(True)
+        self.setWordWrap(True)
+        v_header = self.verticalHeader()
+        v_header.setSectionResizeMode(v_header.Fixed)
+        v_header.setDefaultSectionSize(72)
+        v_header.hide()
+        self.setHorizontalHeaderLabels(['Held gallery', 'Better version available',
+                                        'What is better', 'Source URL'])
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(self.HELD, header.Stretch)
+        header.setSectionResizeMode(self.CANDIDATE, header.Stretch)
+        header.setSectionResizeMode(self.KINDS, header.ResizeToContents)
+        header.setSectionResizeMode(self.SOURCE, header.ResizeToContents)
+        self.doubleClicked.connect(lambda idx: self._open_source(self._row(idx)))
+
+    # --- filling ---
+
+    def load(self):
+        """Reloads every row from the store.
+
+        Deliberately drops nothing. GALLERY_DATA is filled batch by batch while the library
+        loads, so a window opened during that would see most of it as missing and a prune here
+        would delete those rows and their scan progress for good. Pruning is its own step, run
+        once the load has finished; a row whose gallery is genuinely gone renders from its
+        stored title until then.
+        """
+        self._gallery_index(refresh=True)
+        rows = betterversions.shared_store().rows()
+        self.setSortingEnabled(False)
+        self.setRowCount(0)
+        for row in rows:
+            self._append(row)
+        self.setSortingEnabled(True)
+        log_i(f'Loaded {len(rows)} better version row(s)')
+
+    def add_row(self, row):
+        "Adds one row as a scan turns it up, so a long run shows its findings as it goes."
+        self.setSortingEnabled(False)
+        self._append(row)
+        self.setSortingEnabled(True)
+
+    def _append(self, row):
+        gallery = self._gallery_for(row.series_id)
+        held = QTableWidgetItem(row.held_title or (gallery.title if gallery else ''))
+        held.setIcon(self._cover(gallery))
+        held.setData(Qt.UserRole + 1, row)
+        if gallery:
+            held.setToolTip(gallery.path)
+
+        candidate_text = row.title
+        # The native title is the half a romaji listing cannot show, and for a Japanese
+        # original it is the only form the owner can recognise by eye.
+        if row.native_title and row.native_title != row.title:
+            candidate_text = f'{row.title}\n{row.native_title}'
+        candidate = QTableWidgetItem(candidate_text)
+        candidate.setToolTip(row.url)
+
+        at = self.rowCount()
+        self.insertRow(at)
+        self.setItem(at, self.HELD, held)
+        self.setItem(at, self.CANDIDATE, candidate)
+        self.setItem(at, self.KINDS, QTableWidgetItem(row.kinds_label))
+        self.setItem(at, self.SOURCE, QTableWidgetItem(row.url))
+
+    @staticmethod
+    def _cover(gallery):
+        """The held gallery's own thumbnail, or the stock placeholder.
+
+        The candidate's cover is deliberately not fetched: the list can hold thousands of
+        rows and the source page, one double click away, shows it at full size anyway.
+        """
+        path = ''
+        if gallery and gallery.profile and os.path.isfile(gallery.profile):
+            path = gallery.profile
+        # From the path rather than a QPixmap: a QIcon built this way decodes when it is first
+        # painted, so a list holding a row per gallery costs the covers of the visible rows
+        # instead of decoding thousands of thumbnails before the window opens.
+        return QIcon(path or app_constants.NO_IMAGE_PATH)
+
+    def _gallery_index(self, refresh=False):
+        """The library keyed by gallery id, built once per load.
+
+        A scan of GALLERY_DATA per row is a library-sized search for every row in the list,
+        which at the scale this list reaches is the difference between opening instantly and
+        not opening at all.
+        """
+        if refresh or not self._galleries:
+            self._galleries = {g.id: g for g in
+                               app_constants.GALLERY_DATA + app_constants.GALLERY_ADDITION_DATA
+                               if g.id}
+        return self._galleries
+
+    def _gallery_for(self, series_id):
+        "The library gallery a row belongs to, or None once it has been removed."
+        return self._gallery_index().get(series_id)
+
+    # --- actions ---
+
+    def _row(self, idx):
+        item = self.item(idx.row(), self.HELD) if idx.isValid() else None
+        return item.data(Qt.UserRole + 1) if item else None
+
+    def _open_source(self, row):
+        if row:
+            utils.open_web_link(row.url)
+
+    def _open_folder(self, row):
+        """Opens the held gallery in the file manager, selecting it when it is an archive.
+
+        open_path reports a path that is no longer there through the notification bar, which
+        is the right answer for a gallery whose files have since moved.
+        """
+        gallery = self._gallery_for(row.series_id) if row else None
+        path = gallery.path if gallery else ''
+        if path and not os.path.isdir(path):
+            utils.open_path(os.path.split(path)[0], path)
+        else:
+            utils.open_path(path)
+
+    def _dismiss(self, idx, row):
+        if not row:
+            return
+        betterversions.shared_store().dismiss(row.series_id, row.url)
+        self.removeRow(idx.row())
+
+    def contextMenuEvent(self, event):
+        idx = self.indexAt(event.pos())
+        row = self._row(idx)
+        if not row:
+            event.ignore()
+            return
+        clipboard = qApp.clipboard()
+        menu = QMenu()
+        menu.addAction('Open the better version on the source',
+                       lambda: self._open_source(row))
+        menu.addAction('Open the held gallery in the file manager',
+                       lambda: self._open_folder(row))
+        menu.addAction('Copy the source URL', lambda: clipboard.setText(row.url))
+        menu.addSeparator()
+        menu.addAction('Not interested', lambda: self._dismiss(idx, row))
+        menu.exec_(event.globalPos())
+        event.accept()
+        del menu
+
+class BetterVersionsWindow(QWidget):
+    """A window listing the better versions of galleries already held.
+
+    A review list rather than a prompt: the rows persist in a database of their own, so a scan
+    made overnight is still there to work through days later, and nothing in here applies
+    anything to the library.
+    """
+
+    def __init__(self, parent):
+        super().__init__(None)
+        self.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.parent_widget = parent
+        main_layout = QVBoxLayout(self)
+
+        self.info_lbl = QLabel(self)
+        self.info_lbl.setWordWrap(True)
+        main_layout.addWidget(self.info_lbl)
+
+        # Not inside a QScrollArea like the download list is: a resizable one takes the table's
+        # whole height as its size hint, which defeats the row virtualisation this list needs.
+        self.better_versions_list = BetterVersionsList(self)
+        main_layout.addWidget(self.better_versions_list, 1)
+
+        buttons_layout = QHBoxLayout()
+        refresh_btn = QPushButton('Refresh')
+        refresh_btn.clicked.connect(self.reload)
+        forget_btn = QPushButton('Forget scan progress')
+        forget_btn.setToolTip('The next scan searches for every gallery again, rather than only\n'
+                              'the ones no scan has reached yet. The rows already found are kept.')
+        forget_btn.clicked.connect(self._forget_progress)
+        buttons_layout.addWidget(refresh_btn, 0, Qt.AlignLeft)
+        buttons_layout.addWidget(forget_btn, 0, Qt.AlignRight)
+        main_layout.addLayout(buttons_layout)
+
+        self.resize(900, 600)
+        self.setWindowTitle('Better versions')
+        self.setWindowIcon(QIcon(app_constants.APP_ICO_PATH))
+
+    def reload(self):
+        self.better_versions_list.load()
+        self._update_info()
+
+    def add_row(self, row):
+        self.better_versions_list.add_row(row)
+        self._update_info()
+
+    def _update_info(self):
+        count = self.better_versions_list.rowCount()
+        if count:
+            self.info_lbl.setText(
+                f'{count} gallery(s) have a better version on the source. Double click a row to '
+                'open it there; right click for the held gallery and the URL. Nothing here is '
+                'downloaded or applied for you.')
+        else:
+            self.info_lbl.setText(
+                'Nothing found yet. Run Gallery / Scan for better versions, or note a candidate '
+                'from the gallery chooser during a metadata fetch.')
+
+    def _forget_progress(self):
+        betterversions.shared_store().forget_scanned()
+        app_constants.NOTIF_BAR.add_text('The next scan for better versions will cover every gallery again.')
+
+    def show(self):
+        if self.isVisible():
+            self.activateWindow()
+        else:
+            self.reload()
             super().show()
 
     def closeEvent(self, QCloseEvent):

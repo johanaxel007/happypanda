@@ -56,6 +56,7 @@ import app_constants, gallerydb, fetch, pewnet
 | `version/gallerydb.py` | database access and the `Gallery` model |
 | `version/utils.py` | `title_parser` (folder name → title/artist/language), archive and image helpers |
 | `version/formatters/title_formatter.py` | title normalisation, `TranslationStyle` |
+| `version/betterversions.py` | the better version review list: its own SQLite store, the two-axis classification, and `BetterVersionScan` |
 | `version/settings.py` | ini-backed settings; `app_constants.py` reads defaults through it |
 | `version/settingsdialog.py` | every setting needs a widget here **and** a read in `restore_options` **and** a write in `accept` |
 
