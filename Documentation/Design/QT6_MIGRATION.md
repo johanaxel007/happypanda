@@ -1,6 +1,6 @@
 # Qt5 → Qt6 Migration Design
 
-**Version:** 1.1  
+**Version:** 1.2  
 **Date:** 2026-09-10  
 **Status:** In progress — Q0, Q1 and Q2 are complete: the tree is written in the Qt6 dialect and still runs on PyQt5. The binding switch (Q3+) needs the §8 re-verification first.  
 **Target:** PyQt6 6.11 / Qt 6.11 on Python 3.14 (current: PyQt5 5.15.11 / Qt 5.15.2)
@@ -356,11 +356,24 @@ Nothing here has been confirmed by running Happypanda under Qt6. Before Q3:
 5. **Do the destructive confirmations still read the right answer?** Per Core Constraint 1, check
    delete, move and bulk-removal prompts explicitly — a mis-scoped `StandardButton` comparison is
    silent data loss, not a cosmetic miss.
-6. **Are the instance-level enum sites exhausted?** ~15 is a lower bound (§4). Expect stragglers.
+6. **Are the instance-level enum sites exhausted?** All 81 were rewritten in Q2 and
+   `tests/test_qt_scoping.py` now checks that each names a real scope and member — but only a
+   `self` receiver is checked against its own class, so a scope that is real yet wrong for the
+   object it is read off still surfaces only when that widget is built.
 7. **Is Qt 5.15 actually EOL for this project's purposes?** The §3 Option C rationale is
    ⚠️ **Unverified** against Riverbank's current support statement. Worth confirming, since it is
    the motivation for the whole exercise.
-8. **Re-run the §4 back-test against whatever PyQt5 and PyQt6 versions are current then.** The
+8. **Do the int-typed parameters still accept an enum member?** PyQt5's enums are ints, so
+   `setFrameStyle(QFrame.Shape.StyledPanel)` is fine today; PyQt6's are Python enums, and an
+   `int` parameter is where that bites. The call sites are `misc.py:191,209,1500`,
+   `io_misc.py:660`, and the `QListWidgetItem.ItemType.Type` / `QTableWidgetItem.ItemType.Type`
+   default arguments at `misc.py:2615,2621`. Deliberately left alone: ⚠️ **Unverified** either
+   way without PyQt6 installed, and both candidate fixes carry their own risk —
+   `setFrameShape()` is **not** equivalent (✅ **Verified**: `setFrameStyle(StyledPanel)`
+   leaves `frameShadow()` 0, `setFrameShape(StyledPanel)` leaves it 16), and an `int()` wrapper
+   is noise if the enums turn out to be `IntEnum`. Failure here is a loud `TypeError` at the
+   call, not a silent one.
+9. **Re-run the §4 back-test against whatever PyQt5 and PyQt6 versions are current then.** The
    517/0 result is pinned to PyQt5 5.15.11 and PyQt6 6.11.0.
 
 ### Reproducing the analysis
@@ -402,6 +415,9 @@ every edit after the first odd line out lands on the wrong line.
 ## Document History
 
 * **v1.0** - Initial draft
+* **v1.2** - Review follow-ups: a project class deriving from Qt hid an unscoped site from the
+  checker (`misc_db.py:379`, an import-time failure under Qt6); the scoping gate extended to the
+  receiver-keyed sites; §8 gained the int-typed-parameter question.
 * **v1.1** - Q0-Q2 implemented. Counts re-derived from the AST: 503 class-keyed sites (not 517)
   and 81 instance-level ones (not ~15). `QPalette.Background` added to §5 as a tenth removed-API
   family. §8's reproduction recipe corrected - it only ever worked on PyQt6.
