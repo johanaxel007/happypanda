@@ -23,7 +23,7 @@ from PyQt5.QtCore import (QModelIndex, Qt, QPoint, QEvent, pyqtSignal, QTimer, Q
 from PyQt5.QtGui import (QTextCursor, QIcon, QMouseEvent, QFont, QPalette, QPainter, QBrush, QColor, QPen, QPixmap,
                          QPaintEvent, QFontMetrics, QPolygonF, QCursor, QTextOption, QTextLayout, QPalette)
 from PyQt5.QtWidgets import (QWidget, QProgressBar, QLabel, QVBoxLayout, QHBoxLayout, QDialog, QLineEdit, QFormLayout,
-                             QPushButton, QTextEdit, QDesktopWidget, QMessageBox, QFileDialog, QCompleter, QListWidgetItem,
+                             QPushButton, QTextEdit, QApplication, QMessageBox, QFileDialog, QCompleter, QListWidgetItem,
                              QListWidget, QSizePolicy, QCheckBox, QFrame, QListView, QAbstractItemView, QTreeView, QSpinBox,
                              QAction, QStackedLayout, QScrollArea, QLayout, QFileIconProvider, QScrollArea, QSystemTrayIcon,
                              QMenu, QActionGroup, QCommonStyle, QTableWidget, QTableWidgetItem, QTableView, QStyleOption)
@@ -96,11 +96,22 @@ def text_layout(text, width, font, font_metrics, alignment=Qt.AlignCenter):
     layout.endLayout()
     return layout
 
+def available_geometry(point=None):
+    """The usable area of the screen holding `point`, or of the primary screen.
+
+    Qt6 removed QDesktopWidget. screenAt() answers None for a point on no screen at all - a
+    cursor between two monitors, or on one that has just been unplugged - so the primary screen
+    stands in for it.
+    """
+    screen = QApplication.screenAt(point) if point is not None else None
+    return (screen or QApplication.primaryScreen()).availableGeometry()
+
+
 def centerWidget(widget, parent_widget=None):
     if parent_widget:
         r = parent_widget.rect()
     else:
-        r = QDesktopWidget().availableGeometry()
+        r = available_geometry()
 
     widget.setGeometry(QCommonStyle.alignedRect(Qt.LeftToRight,
             Qt.AlignCenter,
@@ -2035,7 +2046,7 @@ class SingleGalleryChoices(BasePopup):
         self._size_preview()
         size = self._preview_popup.size()
         cursor = QCursor.pos()
-        screen = QDesktopWidget().availableGeometry(cursor)
+        screen = available_geometry(cursor)
 
         x = cursor.x() + self.CARD_OFFSET
         if x + size.width() > screen.right():
@@ -2532,7 +2543,7 @@ class ChapterAddWidget(QWidget):
             self.move(parent.window().frameGeometry().topLeft() + parent.window().rect().center() - self.rect().center())
         else:
             frect = self.frameGeometry()
-            frect.moveCenter(QDesktopWidget().availableGeometry().center())
+            frect.moveCenter(available_geometry().center())
             self.move(frect.topLeft())
         self.setWindowTitle('Add Chapters')
 
@@ -2670,7 +2681,7 @@ class GalleryListView(QWidget):
 
         self.resize(500,550)
         frect = self.frameGeometry()
-        frect.moveCenter(QDesktopWidget().availableGeometry().center())
+        frect.moveCenter(available_geometry().center())
         self.move(frect.topLeft())
         self.setWindowTitle('Gallery List')
         self.count = 0

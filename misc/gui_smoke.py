@@ -288,7 +288,7 @@ assert p._preview_url.text() == URL_B, 'the card still describes the row under t
 assert p._preview_image.isHidden(), 'a late cover must not appear on another row'
 say('picker: a cover arriving after the cursor moved on is cached, not shown')
 
-screen = misc.QDesktopWidget().availableGeometry(misc.QCursor.pos())
+screen = misc.available_geometry(misc.QCursor.pos())
 card = p._preview_popup.frameGeometry()
 assert screen.contains(card), (card, screen)
 say('picker: the card is placed inside the screen it is shown on')

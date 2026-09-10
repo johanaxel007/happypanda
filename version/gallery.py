@@ -19,7 +19,7 @@ import random
 import pickle
 import enum
 
-from PyQt5.QtCore import (Qt, QModelIndex, QVariant, QSize, QRect, pyqtSignal,
+from PyQt5.QtCore import (Qt, QModelIndex, QSize, QRect, pyqtSignal,
                           QTimer, QPointF, QSortFilterProxyModel,
                           QAbstractTableModel, QPoint, QRectF, QDateTime, QObject,
                           QMimeData, QByteArray, QTime)
@@ -457,10 +457,10 @@ class GalleryModel(QAbstractTableModel):
 
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
-            return QVariant()
+            return None
         if index.row() >= len(self._data) or \
             index.row() < 0:
-            return QVariant()
+            return None
 
         current_row = index.row() 
         current_gallery = self._data[current_row]
@@ -603,7 +603,7 @@ class GalleryModel(QAbstractTableModel):
         elif role == self.PAGE_COUNT:
             return current_gallery.chapters.pages()
 
-        return QVariant()
+        return None
 
     def rowCount(self, index=QModelIndex()):
         if index.isValid():
@@ -933,7 +933,7 @@ class GridDelegate(QStyledItemDelegate):
                         self.external_icon = self.file_icons.get_default_file_icon()
             
 
-                type_w = painter.fontMetrics().width(gallery.file_type)
+                type_w = painter.fontMetrics().horizontalAdvance(gallery.file_type)
                 type_h = painter.fontMetrics().height()
                 type_p = QPoint(x + 4, y + app_constants.THUMB_H_SIZE - type_h - 5)
                 type_rect = QRect(type_p.x() - 2, type_p.y() - 1, type_w + 4, type_h + 1)
@@ -1071,7 +1071,7 @@ class GridDelegate(QStyledItemDelegate):
                 painter.save()
                 painter.setPen(QPen(Qt.white))
                 id_txt = "ID: {}".format(gallery.id)
-                type_w = painter.fontMetrics().width(id_txt)
+                type_w = painter.fontMetrics().horizontalAdvance(id_txt)
                 type_h = painter.fontMetrics().height()
                 type_p = QPoint(x + 4, y + 50 - type_h - 5)
                 type_rect = QRect(type_p.x() - 2, type_p.y() - 1, type_w + 4, type_h + 1)

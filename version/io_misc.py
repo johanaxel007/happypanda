@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout,
                              QLabel, QPushButton, QMessageBox,
                              QFileDialog, QScrollArea, QLineEdit,
                              QTableWidget, QTableWidgetItem, QPlainTextEdit,
-                             QMenu, QCheckBox, qApp)
+                             QMenu, QCheckBox, QApplication)
 
 import app_constants
 import misc
@@ -195,7 +195,7 @@ class GalleryDownloaderList(QTableWidget):
         idx = self.indexAt(event.pos())
         if idx.isValid():
             hitem = self._get_hitem(idx)
-            clipboard = qApp.clipboard()
+            clipboard = QApplication.instance().clipboard()
             menu = QMenu()
             if hitem.current_state == hitem.DOWNLOADING:
                 menu.addAction("Cancel", hitem.cancel)
@@ -601,7 +601,7 @@ class BetterVersionsList(QTableWidget):
         if not row:
             event.ignore()
             return
-        clipboard = qApp.clipboard()
+        clipboard = QApplication.instance().clipboard()
         menu = QMenu()
         menu.addAction('Open the better version on the source',
                        lambda: self._open_source(row))
