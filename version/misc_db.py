@@ -196,8 +196,8 @@ class TagsTreeView(QTreeWidget):
     NEW_LIST = pyqtSignal(str, gallerydb.GalleryList)
     def __init__(self, parent):
         super().__init__(parent)
-        self.setSelectionBehavior(self.SelectItems)
-        self.setSelectionMode(self.ExtendedSelection)
+        self.setSelectionBehavior(self.SelectionBehavior.SelectItems)
+        self.setSelectionMode(self.SelectionMode.ExtendedSelection)
         self.clipboard = QApplication.clipboard()
         self.itemDoubleClicked.connect(lambda i: self.search_tags([i]) if i.parent() else None)
 
@@ -390,7 +390,7 @@ class GalleryLists(QListWidget):
         self.itemDoubleClicked.connect(self._item_double_clicked)
         self.setItemDelegate(ListDelegate(self))
         self.itemDelegate().closeEditor.connect(self._add_new_list)
-        self.setEditTriggers(self.NoEditTriggers)
+        self.setEditTriggers(self.EditTrigger.NoEditTriggers)
         self.viewport().setAcceptDrops(True)
         self._in_proccess_item = None
         self.current_selected = None
@@ -585,10 +585,10 @@ class SideBarWidget(QFrame):
 
     def _slide_hide(self, state):
         size = self.sizeHint()
-        if state == self.slide_animation.Stopped:
+        if state == self.slide_animation.State.Stopped:
             if self.arrow_handle.current_arrow == self.arrow_handle.OUT:
                 self._d_widget.hide()
-        elif self.slide_animation.Running:
+        elif self.slide_animation.State.Running:
             if self.arrow_handle.current_arrow == self.arrow_handle.IN:
                 if not self.parent_widget.current_manga_view.allow_sidebarwidget:
                     self.arrow_handle.current_arrow = self.arrow_handle.OUT
@@ -600,10 +600,10 @@ class SideBarWidget(QFrame):
     def slide(self, state):
         self.slide_animation.setEndValue(QSize(self.arrow_handle.width() * 2, self.height()))
         if state:
-            self.slide_animation.setDirection(self.slide_animation.Forward)
+            self.slide_animation.setDirection(self.slide_animation.Direction.Forward)
             self.slide_animation.start()
         else:
-            self.slide_animation.setDirection(self.slide_animation.Backward)
+            self.slide_animation.setDirection(self.slide_animation.Direction.Backward)
             self.slide_animation.start()
 
     def showEvent(self, event):
