@@ -588,7 +588,7 @@ class SideBarWidget(QFrame):
         if state == self.slide_animation.State.Stopped:
             if self.arrow_handle.current_arrow == self.arrow_handle.OUT:
                 self._d_widget.hide()
-        elif self.slide_animation.State.Running:
+        elif state == self.slide_animation.State.Running:
             if self.arrow_handle.current_arrow == self.arrow_handle.IN:
                 if not self.parent_widget.current_manga_view.allow_sidebarwidget:
                     self.arrow_handle.current_arrow = self.arrow_handle.OUT

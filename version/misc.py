@@ -482,15 +482,16 @@ class GalleryMetaWindow(ArrowWindow):
         self.g_rect_global : QRect = QRect(0, 0, 0, 0)
 
     def show(self):
-        if not self.hide_animation.State.Running:
-            self.setWindowOpacity(0)
-            super().show()
-            self.show_animation.start()
-        else:
+        # Interrupting a fade-out resumes from the opacity it had reached; both branches set the
+        # start value, because whichever ran last leaves it on the shared animation.
+        if self.hide_animation.state() == self.hide_animation.State.Running:
             self.hide_animation.stop()
-            super().show()
             self.show_animation.setStartValue(self.windowOpacity())
-            self.show_animation.start()
+        else:
+            self.setWindowOpacity(0)
+            self.show_animation.setStartValue(0.0)
+        super().show()
+        self.show_animation.start()
 
     def focusOutEvent(self, event):
         self.delayed_hide()
