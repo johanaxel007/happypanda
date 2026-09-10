@@ -135,7 +135,8 @@ def start(test=False):
         log_i("Enabling high DPI display support")
         QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
 
-    effects = [Qt.UI_AnimateCombo, Qt.UI_FadeMenu, Qt.UI_AnimateMenu, Qt.UI_AnimateTooltip, Qt.UI_FadeTooltip]
+    effects = [Qt.UIEffect.UI_AnimateCombo, Qt.UIEffect.UI_FadeMenu, Qt.UIEffect.UI_AnimateMenu,
+               Qt.UIEffect.UI_AnimateTooltip, Qt.UIEffect.UI_FadeTooltip]
     for effect in effects:
         QApplication.setEffectEnabled(effect)
 
@@ -170,10 +171,10 @@ def start(test=False):
         msg_box.setWindowIcon(QIcon(app_constants.APP_ICO_PATH))
         msg_box.setText('Invalid database')
         msg_box.setInformativeText("Do you want to create a new database?")
-        msg_box.setIcon(QMessageBox.Critical)
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg_box.setDefaultButton(QMessageBox.Yes)
-        if msg_box.exec() == QMessageBox.Yes:
+        msg_box.setIcon(QMessageBox.Icon.Critical)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+        if msg_box.exec() == QMessageBox.StandardButton.Yes:
             pass
         else:
             application.exit()
@@ -232,7 +233,7 @@ def start(test=False):
             style_file = QFile(d_style)
             log_i('Select defaultstyle: OK')
 
-        style_file.open(QFile.ReadOnly)
+        style_file.open(QFile.OpenModeFlag.ReadOnly)
         style = str(style_file.readAll(), 'utf-8')
         application.setStyleSheet(style)
         try:
@@ -262,10 +263,10 @@ def start(test=False):
         msg_box.setWindowIcon(QIcon(app_constants.APP_ICO_PATH))
         msg_box.setText('Incompatible database!')
         msg_box.setInformativeText("Do you want to upgrade to newest version? It shouldn't take more than a second. Don't start a new instance!")
-        msg_box.setIcon(QMessageBox.Critical)
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg_box.setDefaultButton(QMessageBox.Yes)
-        if msg_box.exec() == QMessageBox.Yes:
+        msg_box.setIcon(QMessageBox.Icon.Critical)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+        if msg_box.exec() == QMessageBox.StandardButton.Yes:
             utils.backup_database()
             db_p = database.db_constants.DB_PATH
             database.db.add_db_revisions(db_p)
