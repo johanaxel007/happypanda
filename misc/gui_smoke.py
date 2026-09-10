@@ -270,7 +270,7 @@ card_text = [w.text() for w in p._preview_popup.findChildren(misc.QLabel) if w.t
 assert URL_A in card_text and any('double click' in t for t in card_text), card_text
 say('picker: one card carries the cover, the url and the hint, and the cover is scaled')
 
-p.eventFilter(p.list_w.viewport(), QEvent(QEvent.Leave))
+p.eventFilter(p.list_w.viewport(), QEvent(QEvent.Type.Leave))
 assert p._preview_popup.isHidden(), 'the card must go away when the cursor leaves the list'
 
 p.show_preview(p.list_w.item(0))           # served from cache now
@@ -370,16 +370,17 @@ say('picker: closing the dialog takes the card with it')
 # --- a showcase whose receiver destroys it ---------------------------------------------------
 # The failed-galleries popup crashed here: mouseDoubleClickEvent touched the widget after
 # emitting, and the widget carries WA_DeleteOnClose, so by then it could already be gone.
-import sip  # noqa: E402
-from PyQt5.QtCore import QEvent as _QEvent  # noqa: E402
+from PyQt5 import sip  # noqa: E402  (a bare `import sip` works only because PyQt5 aliases it)
+from PyQt5.QtCore import QEvent as _QEvent, QPointF  # noqa: E402
 from PyQt5.QtGui import QMouseEvent  # noqa: E402
 
 showcase = misc.GalleryShowcaseWidget()
 showcase.set_gallery(g, (100, 100))
 showcase.double_clicked.connect(lambda _gal: sip.delete(showcase))
 
-click = QMouseEvent(_QEvent.MouseButtonDblClick, QPoint(5, 5), Qt.LeftButton, Qt.LeftButton,
-                    Qt.NoModifier)
+# QPointF, not QPoint: Qt6 dropped the QPoint overload of this constructor.
+click = QMouseEvent(_QEvent.Type.MouseButtonDblClick, QPointF(5, 5), Qt.MouseButton.LeftButton,
+                    Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
 showcase.mouseDoubleClickEvent(click)   # must not raise RuntimeError
 assert sip.isdeleted(showcase), 'the receiver was supposed to delete it'
 say('showcase: a double click whose receiver destroys the widget no longer crashes')
@@ -407,7 +408,7 @@ shown = []
 
 def record_exec(self):
     shown.append(self.text())
-    return QMessageBox.No
+    return QMessageBox.StandardButton.No
 
 
 QMessageBox.exec = record_exec
@@ -474,14 +475,14 @@ say('review list: %d row(s) loaded from the store' % window.better_versions_list
 listed = window.better_versions_list
 
 # The row a dismissal takes off the table is found by identity, not by the index the menu was
-# opened at. `exec_` runs a nested event loop, so a scan turning up a row while the menu is
+# opened at. `exec` runs a nested event loop, so a scan turning up a row while the menu is
 # open calls add_row, which re-sorts the whole table and moves everything under that index.
 # Sorted on the url, which is the column the two rows differ in - both are releases of one
 # gallery, so the held title leaves them where they are. Ascending first so the row picked
 # below is known to be the one the descending sort then moves.
-listed.sortItems(listed.SOURCE, Qt.AscendingOrder)
-target = listed.item(1, listed.HELD).data(Qt.UserRole + 1)
-listed.sortItems(listed.SOURCE, Qt.DescendingOrder)
+listed.sortItems(listed.SOURCE, Qt.SortOrder.AscendingOrder)
+target = listed.item(1, listed.HELD).data(Qt.ItemDataRole.UserRole + 1)
+listed.sortItems(listed.SOURCE, Qt.SortOrder.DescendingOrder)
 assert listed._row_at(target) == 0, 'the table did not actually move under the captured index'
 listed._dismiss(target)
 assert listed.rowCount() == 1, 'dismissing a row left it on screen'
@@ -510,7 +511,7 @@ assert listed.rowCount() == 1, listed.rowCount()
 say('review list: dismissing a row while dismissals are shown leaves it on screen')
 
 opened_links.clear()
-remaining = listed.item(0, listed.HELD).data(Qt.UserRole + 1)
+remaining = listed.item(0, listed.HELD).data(Qt.ItemDataRole.UserRole + 1)
 listed._open_source(remaining)
 assert opened_links == [remaining.url], opened_links
 opened_paths.clear()
@@ -1211,19 +1212,22 @@ from PyQt5.QtCore import QAbstractTableModel, QItemSelectionModel  # noqa: E402
 class _Cols(QAbstractTableModel):
     def rowCount(self, p=None): return 3
     def columnCount(self, p=None): return 8
-    def data(self, i, role=Qt.DisplayRole): return 'x' if role == Qt.DisplayRole else None
+    def data(self, i, role=Qt.ItemDataRole.DisplayRole):
+        return 'x' if role == Qt.ItemDataRole.DisplayRole else None
 
 
-for _view_name, _cls, _behaviour in (('grid', QListView, QAbstractItemView.SelectItems),
-                                     ('table', QTableView, QAbstractItemView.SelectRows)):
+_Behaviour = QAbstractItemView.SelectionBehavior
+for _view_name, _cls, _behaviour in (('grid', QListView, _Behaviour.SelectItems),
+                                     ('table', QTableView, _Behaviour.SelectRows)):
     _v = _cls()
     _v.setModel(_Cols())
-    _v.setSelectionMode(QAbstractItemView.ExtendedSelection)
+    _v.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
     _v.setSelectionBehavior(_behaviour)
     for _r in (0, 2):
-        _v.selectionModel().select(_v.model().index(_r, 0), QItemSelectionModel.Select)
+        _v.selectionModel().select(_v.model().index(_r, 0),
+                                   QItemSelectionModel.SelectionFlag.Select)
     assert len({i.row() for i in _v.selectedIndexes()}) == 2, _view_name
-    if _behaviour == QAbstractItemView.SelectItems:
+    if _behaviour == _Behaviour.SelectItems:
         assert not _v.selectionModel().selectedRows(), (
             'selectedRows() is empty under SelectItems, which is what the grid view uses')
 say('selection: counted through selectedIndexes, which is the only form both views agree on')
