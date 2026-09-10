@@ -193,10 +193,11 @@ places (Q4, Core Constraint 4), and the shakedown has not begun.
 
 **A blocker is open before any of that is worth finishing: startup is roughly four times slower
 under PyQt6** — about 26s against about 126s across the three startup phases on a
-19,974-gallery library. It is attributed to the binding by controlled measurement, and the cost
-lands in Qt-free Python on worker threads rather than in any Qt call. Ten candidate causes are
-already excluded, each with the measurement that excluded it, and a minimal reproduction fails to
-exhibit it. See
+19,974-gallery library. It is attributed to the binding by controlled measurement, and bisecting
+the running app localises the whole cost to the **model and view**: take
+`gallery_model.insertRows` out of the load loop and PyQt6 drops to PyQt5's floor. What inside that
+path is slow is still open — it is not the volume of Python callbacks, which PyQt6 makes fewer of.
+Fourteen candidate causes are excluded, each with the measurement that excluded it. See
 [`Documentation/Design/QT6_STARTUP_REGRESSION.md`](Documentation/Design/QT6_STARTUP_REGRESSION.md)
 — read it before re-testing anything, and note the `feat/qt6-migration-prep` branch remains a
 clean PyQt5 fallback that is unaffected.

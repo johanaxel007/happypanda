@@ -1,6 +1,6 @@
 # PyQt6 Startup Performance Regression
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Date:** 2026-09-10  
 **Status:** Proposed design — not implemented.  
 **Target:** PyQt6 6.11.0 / Qt 6.11.2 on Python 3.14.7 (baseline: PyQt5 5.15.11 / Qt 5.15.2)
@@ -12,11 +12,15 @@
 > under both bindings. This is an open blocker on `feat/qt6-migration`.
 >
 > Ten candidate causes were ruled out, each by measurement (§4), and a minimal reproduction built
-> up from a bare `QApplication` to a running event loop with the same workload on a worker thread
-> **fails to reproduce it** (§5). The next step is to bisect downward from the running application
-> instead (§7).
+> up from a bare `QApplication` through a QThread carrying the workload **fails to reproduce it**
+> (§5). Bisecting the running application instead (§7) localised the whole cost to **the model and
+> view**: taking `gallery_model.insertRows` out of the load loop drops PyQt6 from about 39s to
+> about 5.6s, against a PyQt5 floor of about 6.1s for the same configuration. What is *inside*
+> that path is still open — it is not the volume of Python callbacks, which PyQt6 makes **fewer**
+> of.
 
 **Audited:** 2026-09-10, at commit `7ba4813` (branch `feat/qt6-migration`).
+**Amended:** 2026-09-10 — phases S0–S3 executed; §5 and §7 rewritten around the result.
 Findings come from instrumenting `version/gallerydb.py` (`fetch_galleries`, split into four
 timers) and `version/gallery.py` (`GridDelegate.paint`, call counter), applying the identical
 patch to both `feat/qt6-migration` and `feat/qt6-migration-prep`, and running the real application
@@ -205,15 +209,46 @@ Sampling `sys._current_frames()` every 20 ms during a PyQt6 startup. ✅ **Verif
 Two Python threads being hot at once on a connection they share is consistent with contention, but
 the harnesses above contend identically and do not slow down. ⚠️ **Unverified** as an explanation.
 
-### Remaining suspects, in the order worth testing
+### The harness was later extended to the app's actual threading shape
 
-⚠️ **Unverified**, all of them — these are what §7 exists to bisect:
+`DatabaseStartup` does not run on a plain thread: `app.py:71-75` creates a `QThread`, moves the
+object onto it and invokes `startup` through a queued signal. The harness was extended to match — a
+`QObject` moved to a `QThread`, started via `thread.started`. ✅ **Verified**: PyQt5 4.37s, PyQt6
+4.27s. The QThread shape is not the trigger either.
 
-1. The **watchdog monitor** thread (`read_directory_changes` on the library root).
-2. The **download manager**, which starts four worker threads at launch.
-3. **Cross-thread Qt signal traffic** — `DatabaseStartup.PROGRESS` fires per batch, and the model
-   emits its own signals to a view living on another thread's affinity.
-4. `app_constants.GENERAL_THREAD` and whatever is `moveToThread`'d onto it.
+### What the bisection found
+
+Subtracting subsystems from the running application (§7) localised it in three runs.
+
+| Configuration | `fetchall` | `gen_galleries` | Verdict |
+|---------------|-----------:|----------------:|---------|
+| PyQt6 baseline | 13.30s | 25.64s | — |
+| PyQt6, watchdog monitor disabled | 16.96s | 30.96s | monitor excluded |
+| PyQt6, download manager given 0 workers | 12.46s | 30.51s | download manager excluded |
+| **PyQt6, view loop skipped** | **0.14s** | **5.25s** | **the cost is here** |
+| PyQt5, view loop skipped | 0.12s | 5.74s | identical floor |
+
+✅ **Verified**, all five. Removing `view.gallery_model.insertRows(...)` from the batch loop takes
+PyQt6 from about 39s to about 5.6s, and PyQt5's floor for the same configuration is about 6.1s —
+**the two bindings are indistinguishable once the view is out of the loop.** So the model/view
+insert path costs roughly 6s under PyQt5 and roughly 34s under PyQt6.
+
+The trap in reading this: `insertRows` itself measures 0.01s in every run. The expense is not the
+call, it is what the call schedules — the proxy-model and view work that follows on the GUI
+thread, which then starves the loader and database threads.
+
+### Excluded *inside* the view path
+
+| Hypothesis | Measurement | Result |
+|------------|-------------|--------|
+| PyQt6 runs the Python filter callback more often | Counted `SortFilterModel.filterAcceptsRow` calls | PyQt5 **55,684**, PyQt6 **16,791** — fewer, still slower |
+| PyQt6 paints delegate items more often | Counted `GridDelegate.paint` calls | PyQt5 **240**, PyQt6 **80**, and **0** on one run |
+| `setDynamicSortFilter(True)` re-filters on every insert | Froze it for the load, re-enabled and `invalidate()`d after | **43.9s** — no improvement |
+
+⚠️ **Unverified** as an explanation, but the shape is consistent across all three: PyQt6 makes
+*fewer* transitions into Python than PyQt5 and is still several times slower, so the additional
+time is being spent inside Qt6's own model-view machinery rather than in this project's callbacks.
+Narrowing further needs native profiling, not black-box measurement.
 
 ---
 
@@ -235,10 +270,11 @@ subtraction: start the real application with subsystems disabled until the ratio
 
 | Phase | Scope | Effort | Depends on | Status |
 |-------|-------|:------:|------------|--------|
-| **S0 — Re-establish the harness** | Re-apply the four-timer instrumentation to `fetch_galleries` on both branches and confirm the 4× still reproduces, so later phases measure against a live baseline rather than these figures. | 🟢 | — | — |
-| **S1 — Disable the monitor** | Start with the watchdog monitor off and re-measure. It is the one subsystem holding an OS handle and waking on its own. | 🟢 | S0 | — |
-| **S2 — Disable the download manager** | Four worker threads created at launch; re-measure with them not started. | 🟢 | S0 | — |
-| **S3 — Strip to the loader** | If neither collapses the ratio, remove the view and model from the loop — load galleries with no `manga_views` — to separate signal traffic from thread scheduling. | 🟡 | S1, S2 | — |
+| **S0 — Re-establish the harness** | Four-timer instrumentation on `fetch_galleries`, applied identically to both branches. | 🟢 | — | ✅ 2026-09-10 |
+| **S1 — Disable the monitor** | `enable monitor = False` in `settings.ini`; no code change needed. Excluded it. | 🟢 | S0 | ✅ 2026-09-10 |
+| **S2 — Disable the download manager** | `start_manager(0)` in place of 4 workers. Excluded it. | 🟢 | S0 | ✅ 2026-09-10 |
+| **S3 — Strip to the loader** | Skip the `manga_views` loop. **Found it** — see §5. | 🟡 | S1, S2 | ✅ 2026-09-10 |
+| **S4 — Narrow within the model/view** | Three sub-hypotheses already excluded (§5). What is left needs a native profiler on the Qt6 build, or bisecting PyQt6 across 6.0–6.11 to find the release where it appears. | 🔴 | S3 | — |
 
 Effort: 🟢 low (hours, localized) · 🟡 medium (days, several files) · 🔴 high (cross-cutting, or
 dominated by manual verification).
@@ -247,7 +283,8 @@ Status: `—` not started · `In progress` · `✅ YYYY-MM-DD` complete · `⏸�
 not implemented · `⛔ Superseded YYYY-MM-DD — <by what>`.
 
 **Every phase's gate is the same:** the `TIMING galleries` line in `happypanda.log`, compared
-against the S0 baseline on both bindings. `pytest` and `misc/gui_smoke.py` cannot observe any of
+against the S0 baseline. S1–S3 needed PyQt6 runs only, since the question was whether the number
+collapses toward the known PyQt5 figure rather than what PyQt5 does. `pytest` and `misc/gui_smoke.py` cannot observe any of
 this — neither loads a library — so they serve only to confirm the instrumentation broke nothing.
 
 Each phase is disposable: the instrumentation is reverted at the end and nothing ships. The
@@ -264,8 +301,10 @@ deliverable is a named subsystem, which then justifies its own design work.
 
 ## 8. Open questions
 
-1. **What does the application do that the §5 harness does not?** Resolved by S1–S3; the answer
-   lands in this doc's §5 as a new row and in the phase table's Status column.
+1. **What inside the model/view path is slow?** S3 named the subsystem; the mechanism within it
+   is open. Not the Python callback volume, and not dynamic sort/filter (§5). Two directions are
+   left: a native profile of the Qt6 build, and bisecting PyQt6 6.0–6.11 to find the release where
+   it appears — the latter is cheap and would narrow the search enormously.
 2. **Does the ratio scale with library size?** Every measurement here is against one 19,974-gallery
    database. A smaller library might show it proportionally or not at all, which would itself be a
    clue. ⚠️ **Unverified** — untested in either direction.
@@ -301,6 +340,10 @@ Both were scratch scripts. To recreate:
 | **Raising `sys.setswitchinterval`** | Tried as both diagnosis and candidate workaround at 0.1s; run took 40.94s, unchanged. | 2026-09-10 |
 | **Windows timer resolution as the mechanism** | `NtQueryTimerResolution` returns 0.997 ms with and without a `QApplication`, under both bindings. | 2026-09-10 |
 | **Building the reproduction upward** | Reached a running event loop with the workload on a worker thread and still measured 3.67s vs 3.69s. Subtraction from the application (§7) replaces it. | 2026-09-10 |
+| **The watchdog monitor as the cause** | Disabled via `enable monitor = False`; 16.96s / 30.96s, no better than baseline. | 2026-09-10 |
+| **The download manager's four worker threads** | Started with 0 workers; 12.46s / 30.51s, no better. | 2026-09-10 |
+| **The QThread shape of the loader** | Harness extended to a `QObject` moved onto a `QThread` and invoked by signal, matching `app.py:71-75`: PyQt5 4.37s, PyQt6 4.27s. | 2026-09-10 |
+| **`setDynamicSortFilter` re-filtering on every insert** | Frozen for the whole load and invalidated once afterwards: 43.9s, unchanged. | 2026-09-10 |
 | **Keeping both bindings installed for A/B convenience** | `misc/check_qt_enums.py` and `tests/test_qt_scoping.py` resolve PyQt5 first, so a venv holding both silently gates the Qt6 branch against Qt5. Install the second binding only for the duration of a comparison. | 2026-09-10 |
 
 ---
@@ -308,8 +351,11 @@ Both were scratch scripts. To recreate:
 ## Document History
 
 * **v1.0** - Initial report
+* **v1.1** - Phases S0-S3 executed. The regression is localised to the model/view insert path:
+  removing it drops PyQt6 to the PyQt5 floor. Monitor, download manager, QThread shape, Python
+  callback volume and dynamic sort/filter all excluded. Phase S4 opened.
 
 ---
 
 **Last Updated:** 2026-09-10  
-**Next Review:** when S1 starts, or if the migration is reconsidered on other grounds
+**Next Review:** when S4 starts, or if the migration is reconsidered on other grounds
