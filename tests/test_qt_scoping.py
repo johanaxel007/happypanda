@@ -21,6 +21,9 @@ BINDING = check_qt_enums.BINDING
 CLASSES = check_qt_enums.qt_classes()
 SITES = check_qt_enums.scoped_sites()
 
+INSTANCE_SCOPED = check_qt_enums.instance_scoped_sites()
+SCOPE_OWNERS = check_qt_enums.scope_owners(CLASSES)
+
 UNSCOPED_SITES, INSTANCE_SITES, PARSE_FAILURES = check_qt_enums.scan()
 USED_CLASSES = ({site[2] for site in SITES}
                 | {site.qt_class for site in UNSCOPED_SITES})
@@ -30,6 +33,47 @@ def test_the_scan_finds_sites_to_check():
     """A scanner that quietly returned nothing would make every test below vacuous."""
     assert not PARSE_FAILURES, f'the scan could not parse: {PARSE_FAILURES}'
     assert len(SITES) > 400, f'only {len(SITES)} scoped enum sites found - has the scan broken?'
+    assert len(INSTANCE_SCOPED) > 50, (
+        f'only {len(INSTANCE_SCOPED)} receiver-keyed sites found - has the scan broken?')
+    assert any(s.self_class for s in INSTANCE_SCOPED), 'no `self` receiver could be resolved'
+
+
+def test_every_receiver_keyed_scope_exists():
+    """`v_header.ResizeMode.Fixed` - the scope and member are real, on some Qt class.
+
+    The receiver's type is not in the source, so this cannot say the scope is the right one for
+    *that* object. It does catch a misspelled scope or member, which is the way a mechanical
+    rewrite goes wrong.
+    """
+    unknown = []
+    for site in INSTANCE_SCOPED:
+        owners = SCOPE_OWNERS.get(site.scope, [])
+        if not any(hasattr(getattr(CLASSES[owner], site.scope), site.member) for owner in owners):
+            unknown.append(f'{site.path}:{site.line}  '
+                           f'{site.receiver}.{site.scope}.{site.member}')
+    assert not unknown, (f'{len(unknown)} receiver-keyed site(s) name a scope or member that '
+                         f'exists nowhere under {BINDING}:\n  ' + '\n  '.join(unknown))
+
+
+def test_a_self_receiver_carries_the_scope_it_reads():
+    """Where the receiver is `self`, the enclosing class pins the type - so check it properly.
+
+    A third of the receiver-keyed sites are `self.<Scope>.<MEMBER>` inside a widget subclass
+    whose Qt base can be resolved from its bases. For those the scope has to exist on that base,
+    not merely somewhere in Qt.
+    """
+    wrong = []
+    for site in INSTANCE_SCOPED:
+        if not site.self_class:
+            continue
+        cls = CLASSES[site.self_class]
+        try:
+            getattr(getattr(cls, site.scope), site.member)
+        except AttributeError:
+            wrong.append(f'{site.path}:{site.line}  self.{site.scope}.{site.member} - '
+                         f'{site.self_class} carries no such scope or member')
+    assert not wrong, (f'{len(wrong)} `self` site(s) read a scope their own class does not '
+                       'have:\n  ' + '\n  '.join(wrong))
 
 
 def test_no_unscoped_enum_site_is_left():

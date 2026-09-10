@@ -39,6 +39,8 @@ from collections import namedtuple
 
 # `old`/`new` carry the receiver as written, `qt_class` the Qt class the member resolves through.
 Site = namedtuple('Site', 'path line old new ambiguous qt_class')
+# An already-scoped read off a receiver rather than a class name: `v_header.ResizeMode.Fixed`.
+InstanceSite = namedtuple('InstanceSite', 'path line receiver scope member self_class')
 
 try:
     from PyQt5 import QtCore, QtGui, QtWidgets
@@ -264,6 +266,73 @@ def scoped_sites():
             cls_name = root.id if root.id in classes else aliases.get(root.id)
             if cls_name:
                 out.append((rel, node.lineno, cls_name, middle.attr, node.attr))
+    return out
+
+
+def scope_owners(classes):
+    """Scope name -> the Qt classes declaring it, for a scope read off an unknown receiver."""
+    out = collections.defaultdict(list)
+    for cls_name, cls in classes.items():
+        for scope_name, _ in enum_scopes(cls):
+            out[scope_name].append(cls_name)
+    return out
+
+
+def enclosing_class(tree):
+    """Line number -> the innermost class declared around it, for the whole module."""
+    out = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for line in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+            prev = out.get(line)
+            if prev is None or node.lineno > prev.lineno:
+                out[line] = node
+    return out
+
+
+def instance_scoped_sites():
+    """Every `<receiver>.<Scope>.<MEMBER>` whose receiver is not a written-down Qt class.
+
+    The other half of the rescoping. The receiver picks the scope at runtime, so its class is
+    not in the source and no check can prove the scope is right *for it*. `self_class` names the
+    Qt class the enclosing widget derives from, where the receiver is a bare `self` and that is
+    knowable - which is the one shape where it can be proved.
+    """
+    classes = qt_classes()
+    scopes = scope_owners(classes)
+    parsed = {}
+    for path in source_files():
+        rel = os.path.relpath(path, REPO).replace(os.sep, '/')
+        try:
+            parsed[rel] = read_tree(path)
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+    bases = project_bases(parsed.values())
+
+    out = []
+    for rel, tree in parsed.items():
+        aliases = qt_aliases(tree, classes)
+        owners = enclosing_class(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute) or not isinstance(node.value, ast.Attribute):
+                continue
+            middle = node.value
+            if middle.attr not in scopes:
+                continue
+            root = middle.value
+            if isinstance(root, ast.Name) and qt_base_of(aliases.get(root.id, root.id),
+                                                         bases, classes):
+                continue                          # a Qt class by name - scoped_sites() has it
+            if isinstance(root, ast.Attribute) and qt_base_of(root.attr, bases, classes):
+                continue
+            self_class = None
+            if isinstance(root, ast.Name) and root.id == 'self':
+                owner = owners.get(node.lineno)
+                if owner is not None:
+                    self_class = qt_base_of(owner.name, bases, classes)
+            out.append(InstanceSite(rel, node.lineno, ast.unparse(root),
+                                    middle.attr, node.attr, self_class))
     return out
 
 

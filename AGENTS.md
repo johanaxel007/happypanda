@@ -283,10 +283,14 @@ the first time a second consumer appears.
 
 ## Testing
 
-`pytest tests/ -q`. `tests/test_qt_scoping.py` resolves every Qt enum site against whichever
-binding is installed and fails if an unscoped Qt5 spelling comes back — it is the only thing
-standing between a mistyped enum scope and an `AttributeError` at paint time, and it has to stay
-green through the PyQt6 switch. `misc/check_qt_enums.py` is the same scan as a report.
+`pytest tests/ -q`. `tests/test_qt_scoping.py` is what stands between a mistyped Qt enum scope
+and an `AttributeError` at paint time, and it has to stay green through the PyQt6 switch. It
+checks three things against whichever binding is installed: no unscoped Qt5 spelling is left;
+every `QClass.Scope.MEMBER` resolves; and for a scope read off a receiver rather than a class
+— `v_header.ResizeMode.Fixed` — that the scope and member exist at all, tightened to the
+enclosing class where the receiver is a bare `self`. What it cannot check is whether such a
+scope is the right one for the object it was read off; that needs the receiver's type, which
+is not in the source. `misc/check_qt_enums.py` is the same scan as a report.
 
 `tests/test_metadata_matching.py` is the meaningful suite for the application itself — regression
 cases for the online metadata pipeline, drawn from real failures. The four `test_init_db` failures are
