@@ -240,6 +240,9 @@ def scan():
         aliases = qt_aliases(tree, classes)
         local_classes = declared_classes(tree)
         scoped_by_alias = scope_aliases(tree, classes, scope_names)
+        # `msgbox.Icon` in `msgbox.Icon.Question` names the scope, not a member of it - even
+        # though the same word is a member name on some other class.
+        receivers = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
         for node in ast.walk(tree):
             if not isinstance(node, ast.Attribute):
                 continue
@@ -258,6 +261,8 @@ def scan():
             candidates = members.get(node.attr)
             if not candidates:
                 continue
+            if node.attr in scope_names and id(node) in receivers:
+                continue                          # a scope being named, not a member being read
             if isinstance(receiver, ast.Name) and receiver.id in scoped_by_alias:
                 continue                          # read off a local alias of an enum scope
             if isinstance(receiver, ast.Attribute) and (receiver.attr in scope_names
