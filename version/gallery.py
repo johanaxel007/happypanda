@@ -1370,7 +1370,7 @@ class MangaTableView(QTableView):
         h_header = self.horizontalHeader()
         h_header.setSortIndicatorShown(True)
         v_header = self.verticalHeader()
-        v_header.sectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        v_header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         v_header.setDefaultSectionSize(24)
         v_header.hide()
         palette = self.palette()
