@@ -195,7 +195,7 @@ class GalleryDownloaderList(QTableWidget):
         idx = self.indexAt(event.pos())
         if idx.isValid():
             hitem = self._get_hitem(idx)
-            clipboard = QApplication.instance().clipboard()
+            clipboard = QApplication.clipboard()
             menu = QMenu()
             if hitem.current_state == hitem.DOWNLOADING:
                 menu.addAction("Cancel", hitem.cancel)
@@ -601,7 +601,7 @@ class BetterVersionsList(QTableWidget):
         if not row:
             event.ignore()
             return
-        clipboard = QApplication.instance().clipboard()
+        clipboard = QApplication.clipboard()
         menu = QMenu()
         menu.addAction('Open the better version on the source',
                        lambda: self._open_source(row))
