@@ -38,17 +38,17 @@ class GalleryDownloaderUrlExtracter(QWidget):
     url_emit = pyqtSignal(str)
 
     def __init__(self, parent=None):
-        super().__init__(parent, flags=Qt.Window|Qt.WindowStaysOnTopHint)
+        super().__init__(parent, flags=Qt.WindowType.Window|Qt.WindowType.WindowStaysOnTopHint)
         self.main_layout = QVBoxLayout(self)
         self.text_area = QPlainTextEdit(self)
         self.text_area.setPlaceholderText("URLs are seperated by a newline")
         self.main_layout.addWidget(self.text_area)
-        self.text_area.setWordWrapMode(QTextOption.NoWrap)
+        self.text_area.setWordWrapMode(QTextOption.WrapMode.NoWrap)
         add_to_queue = QPushButton('Add to queue')
         add_to_queue.adjustSize()
         add_to_queue.setFixedWidth(add_to_queue.width())
         add_to_queue.clicked.connect(self.add_to_queue)
-        self.main_layout.addWidget(add_to_queue, 0, Qt.AlignRight)
+        self.main_layout.addWidget(add_to_queue, 0, Qt.AlignmentFlag.AlignRight)
         self.setWindowIcon(QIcon(app_constants.APP_ICO_PATH))
         self.show()
 
@@ -73,7 +73,7 @@ class GalleryDownloaderItem(QObject):
         url = self.item.gallery_url
 
         self.profile_item = QTableWidgetItem(self.item.name)
-        self.profile_item.setData(Qt.UserRole+1, hitem)
+        self.profile_item.setData(Qt.ItemDataRole.UserRole+1, hitem)
         self.profile_item.setToolTip(url)
         def set_profile(item):
             self.profile_item.setIcon(QIcon(item.thumb))
@@ -134,7 +134,7 @@ class GalleryDownloaderList(QTableWidget):
         self.setIconSize(QSize(50, 100))
         self.setAlternatingRowColors(True)
         self.setEditTriggers(self.NoEditTriggers)
-        self.setFocusPolicy(Qt.NoFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         v_header = self.verticalHeader()
         v_header.setSectionResizeMode(v_header.Fixed)
         v_header.setDefaultSectionSize(100)
@@ -189,7 +189,7 @@ class GalleryDownloaderList(QTableWidget):
 
     def _get_hitem(self, idx):
         r = idx.row()
-        return self.item(r, 0).data(Qt.UserRole+1)
+        return self.item(r, 0).data(Qt.ItemDataRole.UserRole+1)
 
     def contextMenuEvent(self, event):
         idx = self.indexAt(event.pos())
@@ -269,7 +269,7 @@ class GalleryDownloader(QWidget):
     def __init__(self, parent):
         super().__init__(None,
                    )#Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowMinMaxButtonsHint)
-        self.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         main_layout = QVBoxLayout(self)
         self.parent_widget = parent
         self.url_inserter = QLineEdit()
@@ -279,7 +279,7 @@ class GalleryDownloader(QWidget):
         self.url_inserter.returnPressed.connect(self.add_download_entry)
         main_layout.addWidget(self.url_inserter)
         self.info_lbl = QLabel(self)
-        self.info_lbl.setAlignment(Qt.AlignCenter)
+        self.info_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(self.info_lbl)
         self.info_lbl.hide()
         buttons_layout = QHBoxLayout()
@@ -295,8 +295,8 @@ class GalleryDownloader(QWidget):
         clear_all_btn = QPushButton('Clear List')
         clear_all_btn.adjustSize()
         clear_all_btn.setFixedWidth(clear_all_btn.width())
-        buttons_layout.addWidget(url_window_btn, 0, Qt.AlignLeft)
-        buttons_layout.addWidget(clear_all_btn, 0, Qt.AlignRight)
+        buttons_layout.addWidget(url_window_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        buttons_layout.addWidget(clear_all_btn, 0, Qt.AlignmentFlag.AlignRight)
         main_layout.addLayout(buttons_layout)
         self.download_list = GalleryDownloaderList(parent, self)
         clear_all_btn.clicked.connect(self.download_list.clear_list)
@@ -474,7 +474,7 @@ class BetterVersionsList(QTableWidget):
         gallery = self._gallery_for(row.series_id)
         held = QTableWidgetItem(row.held_title or (gallery.title if gallery else ''))
         held.setIcon(self._cover(gallery))
-        held.setData(Qt.UserRole + 1, row)
+        held.setData(Qt.ItemDataRole.UserRole + 1, row)
         if gallery:
             held.setToolTip(gallery.path)
 
@@ -534,7 +534,7 @@ class BetterVersionsList(QTableWidget):
 
     def _row(self, idx):
         item = self.item(idx.row(), self.HELD) if idx.isValid() else None
-        return item.data(Qt.UserRole + 1) if item else None
+        return item.data(Qt.ItemDataRole.UserRole + 1) if item else None
 
     def _open_source(self, row):
         if row:
@@ -629,7 +629,7 @@ class BetterVersionsWindow(QWidget):
 
     def __init__(self, parent):
         super().__init__(None)
-        self.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         self.parent_widget = parent
         main_layout = QVBoxLayout(self)
 
@@ -661,11 +661,11 @@ class BetterVersionsWindow(QWidget):
         forget_btn.setToolTip('The next scan searches for every gallery again, rather than only\n'
                               'the ones no scan has reached yet. The rows already found are kept.')
         forget_btn.clicked.connect(self._forget_progress)
-        buttons_layout.addWidget(refresh_btn, 0, Qt.AlignLeft)
-        buttons_layout.addWidget(self.recheck_btn, 0, Qt.AlignLeft)
-        buttons_layout.addWidget(self.dismissed_box, 0, Qt.AlignLeft)
+        buttons_layout.addWidget(refresh_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        buttons_layout.addWidget(self.recheck_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        buttons_layout.addWidget(self.dismissed_box, 0, Qt.AlignmentFlag.AlignLeft)
         buttons_layout.addStretch(1)
-        buttons_layout.addWidget(forget_btn, 0, Qt.AlignRight)
+        buttons_layout.addWidget(forget_btn, 0, Qt.AlignmentFlag.AlignRight)
         main_layout.addLayout(buttons_layout)
 
         self.resize(900, 600)
@@ -775,7 +775,7 @@ class GalleryPopup(misc.BasePopup):
             self.gallery_layout.addWidget(gall_w)
 
         text_lbl =  QLabel(text)
-        text_lbl.setAlignment(Qt.AlignCenter)
+        text_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(text_lbl)
         main_layout.addLayout(self.buttons_layout)
         self.main_widget.setLayout(main_layout)
@@ -842,7 +842,7 @@ class MovedPopup(misc.BasePopup):
         inner_layout = QHBoxLayout()
         title = QLabel(gallery.title)
         title.setWordWrap(True)
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.adjustSize()
         cover = QLabel()
         img = QPixmap(gallery.profile)
@@ -851,7 +851,7 @@ class MovedPopup(misc.BasePopup):
                 "\n{}\n".format(os.path.basename(gallery.path))+u'\u2192'+"\n{}".format(os.path.basename(new_path)))
         
         text.setWordWrap(True)
-        text.setAlignment(Qt.AlignCenter)
+        text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         button_layout = QHBoxLayout()
         update_btn = QPushButton('Update')
         update_btn.clicked.connect(commit)
@@ -877,11 +877,11 @@ class DeletedPopup(misc.BasePopup):
         gallery.dead_link = True
         def commit():
             msgbox = QMessageBox(self)
-            msgbox.setIcon(QMessageBox.Question)
+            msgbox.setIcon(QMessageBox.Icon.Question)
             msgbox.setWindowTitle('Type of gallery source')
             msgbox.setInformativeText('What type of gallery source is it?')
-            dir = msgbox.addButton('Directory', QMessageBox.YesRole)
-            archive = msgbox.addButton('Archive', QMessageBox.NoRole)
+            dir = msgbox.addButton('Directory', QMessageBox.ButtonRole.YesRole)
+            archive = msgbox.addButton('Archive', QMessageBox.ButtonRole.NoRole)
             msgbox.exec()
             new_path = ''
             if msgbox.clickedButton() == dir:
@@ -905,13 +905,13 @@ class DeletedPopup(misc.BasePopup):
         img = QPixmap(gallery.profile)
         cover.setPixmap(img)
         title_lbl = QLabel(gallery.title)
-        title_lbl.setAlignment(Qt.AlignCenter)
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         info_lbl = QLabel("The path to this gallery has been removed\n"+
                     "What do you want to do?")
         #info_lbl.setWordWrap(True)
         path_lbl = QLabel(path)
         path_lbl.setWordWrap(True)
-        info_lbl.setAlignment(Qt.AlignCenter)
+        info_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         inner_layout.addWidget(cover)
         inner_layout.addWidget(info_lbl)
         main_layout.addLayout(inner_layout)
