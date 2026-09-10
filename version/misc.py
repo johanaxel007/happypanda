@@ -188,12 +188,12 @@ class Line(QFrame):
     "'v' for vertical line or 'h' for horizontail line, color is hex string"
     def __init__(self, orentiation, parent=None):
         super().__init__(parent)
-        self.setFrameStyle(self.StyledPanel)
+        self.setFrameStyle(self.Shape.StyledPanel)
         if orentiation == 'v':
-            self.setFrameShape(self.VLine)
+            self.setFrameShape(self.Shape.VLine)
         else:
-            self.setFrameShape(self.HLine)
-        self.setFrameShadow(self.Sunken)
+            self.setFrameShape(self.Shape.HLine)
+        self.setFrameShadow(self.Shadow.Sunken)
 
 
 class CompleterPopupView(QListView):
@@ -206,7 +206,7 @@ class CompleterPopupView(QListView):
         self.fade_animation.setStartValue(0.0)
         self.fade_animation.setEndValue(1.0)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setFrameStyle(self.StyledPanel)
+        self.setFrameStyle(self.Shape.StyledPanel)
 
     def showEvent(self, event):
         self.setWindowOpacity(0)
@@ -404,7 +404,7 @@ class ArrowWindow(TransparentWidget):
         opt.initFrom(self)
 
         painter = QPainter(self)
-        painter.setRenderHint(painter.Antialiasing)
+        painter.setRenderHint(painter.RenderHint.Antialiasing)
 
         size = self.size()
         if self.direction in (self.LEFT, self.RIGHT):
@@ -482,7 +482,7 @@ class GalleryMetaWindow(ArrowWindow):
         self.g_rect_global : QRect = QRect(0, 0, 0, 0)
 
     def show(self):
-        if not self.hide_animation.Running:
+        if not self.hide_animation.State.Running:
             self.setWindowOpacity(0)
             super().show()
             self.show_animation.start()
@@ -665,21 +665,21 @@ class GalleryMetaWindow(ArrowWindow):
             def __init__(self, parent):
                 super().__init__(parent)
                 self.setColumnCount(3)
-                self.setEditTriggers(self.NoEditTriggers)
+                self.setEditTriggers(self.EditTrigger.NoEditTriggers)
                 self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-                self.verticalHeader().setSectionResizeMode(self.verticalHeader().ResizeToContents)
-                self.horizontalHeader().setSectionResizeMode(0, self.horizontalHeader().ResizeToContents)
-                self.horizontalHeader().setSectionResizeMode(1, self.horizontalHeader().Stretch)
-                self.horizontalHeader().setSectionResizeMode(2, self.horizontalHeader().ResizeToContents)
+                self.verticalHeader().setSectionResizeMode(self.verticalHeader().ResizeMode.ResizeToContents)
+                self.horizontalHeader().setSectionResizeMode(0, self.horizontalHeader().ResizeMode.ResizeToContents)
+                self.horizontalHeader().setSectionResizeMode(1, self.horizontalHeader().ResizeMode.Stretch)
+                self.horizontalHeader().setSectionResizeMode(2, self.horizontalHeader().ResizeMode.ResizeToContents)
                 self.horizontalHeader().hide()
                 self.verticalHeader().hide()
-                self.setSelectionMode(self.SingleSelection)
-                self.setSelectionBehavior(self.SelectRows)
+                self.setSelectionMode(self.SelectionMode.SingleSelection)
+                self.setSelectionBehavior(self.SelectionBehavior.SelectRows)
                 self.setShowGrid(False)
-                self.viewport().setBackgroundRole(self.palette().Dark)
+                self.viewport().setBackgroundRole(self.palette().ColorRole.Dark)
                 palette = self.viewport().palette()
-                palette.setColor(palette.Highlight, QColor(88, 88, 88, 70))
-                palette.setColor(palette.HighlightedText, QColor('black'))
+                palette.setColor(palette.ColorRole.Highlight, QColor(88, 88, 88, 70))
+                palette.setColor(palette.ColorRole.HighlightedText, QColor('black'))
                 self.viewport().setPalette(palette)
                 self.setWordWrap(False)
                 self.setTextElideMode(Qt.TextElideMode.ElideRight)
@@ -819,7 +819,7 @@ class GalleryMetaWindow(ArrowWindow):
             self.tags_widget = QWidget(self.tags_scroll)
             self.tags_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self.tags_layout = QFormLayout(self.tags_widget)
-            self.tags_layout.setSizeConstraint(self.tags_layout.SetMaximumSize)
+            self.tags_layout.setSizeConstraint(self.tags_layout.SizeConstraint.SetMaximumSize)
             self.tags_scroll.setWidget(self.tags_widget)
             self.tags_scroll.setWidgetResizable(True)
             self.tags_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -2193,7 +2193,7 @@ class LoadingOverlay(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         palette = QPalette(self.palette())
-        palette.setColor(palette.Background, Qt.GlobalColor.transparent)
+        palette.setColor(palette.ColorRole.Window, Qt.GlobalColor.transparent)
         self.setPalette(palette)
 
     def paintEngine(self, event):
@@ -2540,7 +2540,7 @@ class ChapterAddWidget(QWidget):
         layout.addRow(new_l)
 
         frame = QFrame()
-        frame.setFrameShape(frame.StyledPanel)
+        frame.setFrameShape(frame.Shape.StyledPanel)
         layout.addRow(frame)
 
         self.chapter_l = QVBoxLayout()
@@ -2641,7 +2641,7 @@ class GalleryListView(QWidget):
 
         if modal:
             frame = QFrame()
-            frame.setFrameShape(frame.StyledPanel)
+            frame.setFrameShape(frame.Shape.StyledPanel)
             modal_layout = QHBoxLayout()
             frame.setLayout(modal_layout)
             layout.addWidget(frame)
@@ -2671,7 +2671,7 @@ class GalleryListView(QWidget):
         self.view_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.view_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.view_list.setAlternatingRowColors(True)
-        self.view_list.setEditTriggers(self.view_list.NoEditTriggers)
+        self.view_list.setEditTriggers(self.view_list.EditTrigger.NoEditTriggers)
         layout.addWidget(self.view_list)
         
         add_btn = QPushButton('Add checked')
@@ -2771,9 +2771,9 @@ class GalleryListView(QWidget):
     def close_window(self):
         msgbox = QMessageBox()
         msgbox.setText('Are you sure you want to cancel?')
-        msgbox.setStandardButtons(msgbox.Yes | msgbox.No)
-        msgbox.setDefaultButton(msgbox.No)
-        msgbox.setIcon(msgbox.Question)
+        msgbox.setStandardButtons(msgbox.StandardButton.Yes | msgbox.StandardButton.No)
+        msgbox.setDefaultButton(msgbox.StandardButton.No)
+        msgbox.setIcon(msgbox.Icon.Question)
         if msgbox.exec() == QMessageBox.StandardButton.Yes:
             self.close()
 
