@@ -73,6 +73,7 @@ python misc/analyze_fetch_log.py path/to/happypanda.log --failures # diagnose a 
 python misc/analyze_scan_log.py path/to/happypanda.log --rejections # diagnose a better-version scan
 venv/Scripts/python.exe misc/gui_smoke.py                          # exercise the gui headlessly
 venv/Scripts/python.exe misc/app_smoke.py                          # drive the real AppWindow headlessly
+venv/Scripts/python.exe misc/check_qt_enums.py --instance          # Qt enum sites left in the Qt5 spelling
 ```
 
 The build reads its version string from `VS.txt`.
@@ -282,8 +283,13 @@ the first time a second consumer appears.
 
 ## Testing
 
-`pytest tests/ -q`. `tests/test_metadata_matching.py` is the meaningful suite — regression cases
-for the online metadata pipeline, drawn from real failures. The four `test_init_db` failures are
+`pytest tests/ -q`. `tests/test_qt_scoping.py` resolves every Qt enum site against whichever
+binding is installed and fails if an unscoped Qt5 spelling comes back — it is the only thing
+standing between a mistyped enum scope and an `AttributeError` at paint time, and it has to stay
+green through the PyQt6 switch. `misc/check_qt_enums.py` is the same scan as a report.
+
+`tests/test_metadata_matching.py` is the meaningful suite for the application itself — regression
+cases for the online metadata pipeline, drawn from real failures. The four `test_init_db` failures are
 pre-existing and unrelated.
 
 `misc/gui_smoke.py` covers the settings dialog, the gallery chooser, the better version list
