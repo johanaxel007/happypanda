@@ -32,9 +32,9 @@ class GalleryDialog(QWidget):
     or pass a path to preset path
     """
     def __init__(self, parent: 'app.AppWindow', arg: str | gallerydb.Gallery | list[gallerydb.Gallery] = None, is_new_gallery=False):
-        super().__init__(parent, Qt.Dialog)
+        super().__init__(parent, Qt.WindowType.Dialog)
 
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setAutoFillBackground(True)
         m_l = QVBoxLayout()
 
@@ -45,7 +45,7 @@ class GalleryDialog(QWidget):
         m_l.addWidget(self.frame, 3)
 
         final_buttons = QHBoxLayout()
-        final_buttons.setAlignment(Qt.AlignRight)
+        final_buttons.setAlignment(Qt.AlignmentFlag.AlignRight)
         m_l.addLayout(final_buttons)
         self.done = QPushButton("Done")
         self.done.setDefault(True)
@@ -132,10 +132,10 @@ class GalleryDialog(QWidget):
             self.url_prog.setTextVisible(False)
             self.url_prog.setMinimum(0)
             self.url_prog.setMaximum(0)
-            self.web_layout.addWidget(url_lbl, 0, Qt.AlignLeft)
+            self.web_layout.addWidget(url_lbl, 0, Qt.AlignmentFlag.AlignLeft)
             self.web_layout.addWidget(self.url_edit, 0)
-            self.web_layout.addWidget(self.url_btn, 0, Qt.AlignRight)
-            self.web_layout.addWidget(self.url_prog, 0, Qt.AlignRight)
+            self.web_layout.addWidget(self.url_btn, 0, Qt.AlignmentFlag.AlignRight)
+            self.web_layout.addWidget(self.url_prog, 0, Qt.AlignmentFlag.AlignRight)
             self.url_edit.setPlaceholderText("Insert supported gallery URLs or just press the button!")
             self.url_prog.hide()
 
@@ -174,7 +174,7 @@ class GalleryDialog(QWidget):
 
         self.author_edit = add_check(QLineEdit())
         author_completer = misc.GCompleter(self, False, True, False)
-        author_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        author_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.author_edit.setCompleter(author_completer)
         self.author_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -282,7 +282,7 @@ class GalleryDialog(QWidget):
         else:
             lang_l = QHBoxLayout()
             lang_l.addLayout(lang_)
-            lang_l.addWidget(QLabel("Rating:"), 0, Qt.AlignRight)
+            lang_l.addWidget(QLabel("Rating:"), 0, Qt.AlignmentFlag.AlignRight)
             lang_l.addLayout(rating_)
 
         # gallery_layout.addRow("Title:", checkbox_layout(self.title_edit))
@@ -342,14 +342,14 @@ class GalleryDialog(QWidget):
         QWidget.setTabOrder(self.rating_box, self.tags_edit)
         QWidget.setTabOrder(self.tags_edit, self.type_box)
         QWidget.setTabOrder(self.type_box, self.status_box)
-        if not self._multiple_galleries: self.url_btn.setFocusPolicy(Qt.ClickFocus)
-        self.link_edit.setFocusPolicy(Qt.ClickFocus)
-        self.link_btn.setFocusPolicy(Qt.ClickFocus)
-        self.link_btn2.setFocusPolicy(Qt.ClickFocus)
-        self.done.setFocusPolicy(Qt.ClickFocus)
-        self.cancel.setFocusPolicy(Qt.ClickFocus)
-        self.pub_edit.setFocusPolicy(Qt.ClickFocus)
-        self.path_lbl.setFocusPolicy(Qt.ClickFocus)
+        if not self._multiple_galleries: self.url_btn.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.link_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.link_btn.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.link_btn2.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.done.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.cancel.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.pub_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.path_lbl.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
     def url_btn_clicked(self):
         if self.get_metadata_type == 'single':
@@ -365,7 +365,7 @@ class GalleryDialog(QWidget):
         # return super().resizeEvent(event)
 
     def _find_combobox_match(self, combobox, key, default):
-        f_index = combobox.findText(key, Qt.MatchFixedString)
+        f_index = combobox.findText(key, Qt.MatchFlag.MatchFixedString)
         if f_index != -1:
             combobox.setCurrentIndex(f_index)
             return True
@@ -550,9 +550,9 @@ class GalleryDialog(QWidget):
             msgbox = QMessageBox()
             msgbox.setText("<font color='red'><b>Noo oniichan! You were about to add a new gallery.</b></font>")
             msgbox.setInformativeText("Do you really want to discard?")
-            msgbox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            msgbox.setDefaultButton(QMessageBox.No)
-            if msgbox.exec() == QMessageBox.Yes:
+            msgbox.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msgbox.setDefaultButton(QMessageBox.StandardButton.No)
+            if msgbox.exec() == QMessageBox.StandardButton.Yes:
                 self.parent().gallery_dialog_group.unregister(self)
                 self.delayed_close()
         else:
@@ -762,20 +762,20 @@ class GalleryDialog(QWidget):
         #   else when anything but descr_edit or tags_edit is in focus: accept_edit
         # Escape:
         #   reject_edit
-        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+        if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
             if not self._multiple_galleries and self.url_edit.hasFocus():
                 self.url_btn_clicked()
             elif not self.descr_edit.hasFocus() and not self.tags_edit.hasFocus():
                 self.done.click()
-        elif event.key() == Qt.Key_Escape:
+        elif event.key() == Qt.Key.Key_Escape:
             self.cancel.click()
-        elif not self._multiple_galleries and event.key() == Qt.Key_Control:
+        elif not self._multiple_galleries and event.key() == Qt.Key.Key_Control:
             self.url_btn.setText("Get all metadata")
             self.get_metadata_type = 'all'
         return super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
-        if not self._multiple_galleries and event.key() == Qt.Key_Control:
+        if not self._multiple_galleries and event.key() == Qt.Key.Key_Control:
             self.url_btn.setText("Get metadata")
             self.get_metadata_type = 'single'
         return super().keyReleaseEvent(event)
