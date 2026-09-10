@@ -251,7 +251,7 @@ def scoped_sites():
         rel = os.path.relpath(path, REPO).replace(os.sep, '/')
         try:
             tree = read_tree(path)
-        except (OSError, SyntaxError):
+        except (OSError, SyntaxError, UnicodeDecodeError):
             continue
         aliases = qt_aliases(tree, classes)
         for node in ast.walk(tree):
