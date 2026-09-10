@@ -50,7 +50,7 @@ def new_tab(name: str, parent: QWidget, scroll: bool = False) -> tuple[QWidget, 
     new_l = QFormLayout(new_t)
     if scroll:
         scr = QScrollArea(parent)
-        scr.setBackgroundRole(QPalette.Base)
+        scr.setBackgroundRole(QPalette.ColorRole.Base)
         scr.setWidget(new_t)
         scr.setWidgetResizable(True)
         parent.addTab(scr, name)
@@ -67,12 +67,12 @@ class SettingsDialog(QWidget):
     init_gallery_eximport = pyqtSignal(object)
 
     def __init__(self, parent=None):
-        super().__init__(parent, flags=Qt.Window)
+        super().__init__(parent, flags=Qt.WindowType.Window)
 
         self.init_gallery_rebuild.connect(self.accept)
 
         self.parent_widget = parent
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(800, 650)
         self.restore_values()
         self.initUI()
@@ -86,7 +86,7 @@ class SettingsDialog(QWidget):
         left_panel = QListWidget()
         left_panel.setViewMode(left_panel.ListMode)
         #left_panel.setIconSize(QSize(40,40))
-        left_panel.setTextElideMode(Qt.ElideRight)
+        left_panel.setTextElideMode(Qt.TextElideMode.ElideRight)
         left_panel.setMaximumWidth(200)
         left_panel.itemClicked.connect(self.change)
         #web.setText('Web')
@@ -121,15 +121,15 @@ class SettingsDialog(QWidget):
         cancel_btn.clicked.connect(self.close)
         info_lbl = QLabel()
         info_lbl.setText('<a href="https://github.com/mycropen/happypanda">Visit GitHub Repo</a> | Options marked with * requires application restart.')
-        info_lbl.setTextFormat(Qt.RichText)
-        info_lbl.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        info_lbl.setTextFormat(Qt.TextFormat.RichText)
+        info_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         info_lbl.setOpenExternalLinks(True)
         self.spacer = QWidget()
-        self.spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        bottom_layout.addWidget(info_lbl, 0, Qt.AlignLeft)
+        self.spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        bottom_layout.addWidget(info_lbl, 0, Qt.AlignmentFlag.AlignLeft)
         bottom_layout.addWidget(self.spacer)
-        bottom_layout.addWidget(ok_btn, 0, Qt.AlignRight)
-        bottom_layout.addWidget(cancel_btn, 0, Qt.AlignRight)
+        bottom_layout.addWidget(ok_btn, 0, Qt.AlignmentFlag.AlignRight)
+        bottom_layout.addWidget(cancel_btn, 0, Qt.AlignmentFlag.AlignRight)
 
         sub_layout.addWidget(left_panel)
         sub_layout.addLayout(self.right_panel)
@@ -778,7 +778,7 @@ class SettingsDialog(QWidget):
         self.close()
 
     def _find_combobox_match(self, combobox, key, default):
-        f_index = combobox.findText(key, Qt.MatchFixedString)
+        f_index = combobox.findText(key, Qt.MatchFlag.MatchFixedString)
         if f_index != -1:
             combobox.setCurrentIndex(f_index)
         else:
@@ -836,7 +836,7 @@ class SettingsDialog(QWidget):
                               ' Leave empty to use default viewer')
         self.external_viewer_path.setToolTip('Right/Left-click to open folder explorer.'+
                               ' Leave empty to use default viewer')
-        self.external_viewer_path.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.external_viewer_path.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         app_external_viewer_l.addRow('Path:', self.external_viewer_path)
 
 
@@ -862,7 +862,7 @@ class SettingsDialog(QWidget):
         g_def_values, g_def_values_l = groupbox("Default values", QFormLayout, app_gallery_page)
         app_gallery_l.addRow(g_def_values)
         self.g_languages = QComboBox(self)
-        self.g_languages.setInsertPolicy(QComboBox.InsertAlphabetically)
+        self.g_languages.setInsertPolicy(QComboBox.InsertPolicy.InsertAlphabetically)
         self.g_languages.setEditable(True)
         g_def_values_l.addRow("Default Language", self.g_languages)
         self.g_type = QComboBox(self)
@@ -941,7 +941,7 @@ class SettingsDialog(QWidget):
         tab_widget.addTab(app_monitor_page, 'Monitoring')
 
         app_monitor = QWidget()
-        app_monitor_page.setBackgroundRole(QPalette.Base)
+        app_monitor_page.setBackgroundRole(QPalette.ColorRole.Base)
         app_monitor_page.setWidgetResizable(True)
         app_monitor_page.setWidget(app_monitor)
         app_monitor_m_l = QVBoxLayout(app_monitor)
@@ -971,7 +971,7 @@ class SettingsDialog(QWidget):
         app_monitor_folders_add.clicked.connect(self.add_folder_monitor)
         app_monitor_folders_add.setMaximumWidth(20)
         app_monitor_folders_add.setMaximumHeight(20)
-        app_monitor_folders_m_l.addWidget(app_monitor_folders_add, 0, Qt.AlignRight)
+        app_monitor_folders_m_l.addWidget(app_monitor_folders_add, 0, Qt.AlignmentFlag.AlignRight)
         self.folders_layout = QFormLayout()
         app_monitor_folders_m_l.addLayout(self.folders_layout)
 
@@ -1005,8 +1005,8 @@ class SettingsDialog(QWidget):
         app_ignore_add_a.clicked.connect(lambda: self.add_ignore_path(dir=False))
         app_ignore_add_f = QPushButton('Add directory')
         app_ignore_add_f.clicked.connect(self.add_ignore_path)
-        add_buttons_l.addWidget(app_ignore_add_a, 0, Qt.AlignRight)
-        add_buttons_l.addWidget(app_ignore_add_f, 1, Qt.AlignRight)
+        add_buttons_l.addWidget(app_ignore_add_a, 0, Qt.AlignmentFlag.AlignRight)
+        add_buttons_l.addWidget(app_ignore_add_f, 1, Qt.AlignmentFlag.AlignRight)
         app_ignore_list_l.addLayout(add_buttons_l)
         self.ignore_path_l = QFormLayout()
         app_ignore_list_l.addLayout(self.ignore_path_l)
@@ -1096,7 +1096,7 @@ class SettingsDialog(QWidget):
             layout.addRow(usertxt, user)
             passw = QLineEdit(logins_page)
             layout.addRow(passtxt, passw)
-            passw.setEchoMode(QLineEdit.Password)
+            passw.setEchoMode(QLineEdit.EchoMode.Password)
             log_btn = QPushButton("Login")
             b_l = QHBoxLayout()
             b_l.addWidget(Spacer('h'))
@@ -1156,7 +1156,7 @@ class SettingsDialog(QWidget):
     def _make_web_metadata(self, tab_widget: QTabWidget):
         # Web / Metadata
         web_metadata_page = QScrollArea()
-        web_metadata_page.setBackgroundRole(QPalette.Base)
+        web_metadata_page.setBackgroundRole(QPalette.ColorRole.Base)
         web_metadata_page.setWidgetResizable(True)
         tab_widget.addTab(web_metadata_page, 'Metadata')
         web_metadata_dummy = QWidget()
@@ -1385,7 +1385,7 @@ class SettingsDialog(QWidget):
         grid_gallery_group = QGroupBox('Gallery', grid_view_general_page)
         grid_view_layout.addRow(grid_gallery_group)
         grid_gallery_main_l = QFormLayout()
-        grid_gallery_main_l.setFormAlignment(Qt.AlignLeft)
+        grid_gallery_main_l.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
         grid_gallery_group.setLayout(grid_gallery_main_l)
         grid_gallery_display = FlowLayout()
         grid_gallery_main_l.addRow('Display on gallery:', grid_gallery_display)
@@ -1402,9 +1402,9 @@ class SettingsDialog(QWidget):
         gallery_text_mode.setLayout(gallery_text_mode_l)
         self.gallery_text_elide = QRadioButton('Elide text', gallery_text_mode)
         self.gallery_text_fit = QRadioButton('Fit text', gallery_text_mode)
-        gallery_text_mode_l.addWidget(self.gallery_text_elide, 0, Qt.AlignLeft)
-        gallery_text_mode_l.addWidget(self.gallery_text_fit, 0, Qt.AlignLeft)
-        gallery_text_mode_l.addWidget(Spacer('h'), 1, Qt.AlignLeft)
+        gallery_text_mode_l.addWidget(self.gallery_text_elide, 0, Qt.AlignmentFlag.AlignLeft)
+        gallery_text_mode_l.addWidget(self.gallery_text_fit, 0, Qt.AlignmentFlag.AlignLeft)
+        gallery_text_mode_l.addWidget(Spacer('h'), 1, Qt.AlignmentFlag.AlignLeft)
         gallery_font = QHBoxLayout()
         grid_gallery_main_l.addRow('Font:*', gallery_font)
         self.font_lbl = QLabel()
@@ -1414,13 +1414,13 @@ class SettingsDialog(QWidget):
         self.font_size_lbl.setToolTip('Font size in pixels')
         choose_font = QPushButton('Choose font')
         choose_font.clicked.connect(self.choose_font)
-        gallery_font.addWidget(self.font_lbl, 0, Qt.AlignLeft)
-        gallery_font.addWidget(self.font_size_lbl, 0, Qt.AlignLeft)
-        gallery_font.addWidget(choose_font, 0, Qt.AlignLeft)
-        gallery_font.addWidget(Spacer('h'), 1, Qt.AlignLeft)
+        gallery_font.addWidget(self.font_lbl, 0, Qt.AlignmentFlag.AlignLeft)
+        gallery_font.addWidget(self.font_size_lbl, 0, Qt.AlignmentFlag.AlignLeft)
+        gallery_font.addWidget(choose_font, 0, Qt.AlignmentFlag.AlignLeft)
+        gallery_font.addWidget(Spacer('h'), 1, Qt.AlignmentFlag.AlignLeft)
 
         gallery_size_lbl = QLabel(self)
-        self.gallery_size = QSlider(Qt.Horizontal, self)
+        self.gallery_size = QSlider(Qt.Orientation.Horizontal, self)
         self.gallery_size.wheelEvent = lambda event: event.ignore()
         self.gallery_size.valueChanged.connect(lambda x: gallery_size_lbl.setText(str(x+2)))
         self.gallery_size.setMinimum(-2)
@@ -1428,7 +1428,7 @@ class SettingsDialog(QWidget):
         self.gallery_size.setSingleStep(1)
         self.gallery_size.setPageStep(3)
         self.gallery_size.setTickInterval(1)
-        self.gallery_size.setTickPosition(QSlider.TicksBothSides)
+        self.gallery_size.setTickPosition(QSlider.TickPosition.TicksBothSides)
         self.gallery_size.setToolTip("Changes size of grid in gridview. Remember to re-generate thumbnails! DEFAULT=3")
         gallery_size_l = QHBoxLayout()
         gallery_size_l.addWidget(gallery_size_lbl)
@@ -1499,7 +1499,7 @@ class SettingsDialog(QWidget):
     def _make_advanced_misc(self, tab_widget: QTabWidget):
         # Advanced / Misc
         advanced_misc_scroll = QScrollArea(self)
-        advanced_misc_scroll.setBackgroundRole(QPalette.Base)
+        advanced_misc_scroll.setBackgroundRole(QPalette.ColorRole.Base)
         advanced_misc_scroll.setWidgetResizable(True)
         advanced_misc = QWidget()
         advanced_misc_scroll.setWidget(advanced_misc)
@@ -1558,14 +1558,16 @@ class SettingsDialog(QWidget):
         # Advanced / Gallery
         advanced_gallery, advanced_gallery_m_l = new_tab('Gallery', tab_widget)
         def rebuild_thumbs():
-            confirm_msg = QMessageBox(QMessageBox.Question, '', 'Are you sure you want to regenerate your thumbnails.',
-                             QMessageBox.Yes | QMessageBox.No, self)
-            if confirm_msg.exec() == QMessageBox.Yes:
-                clear_cache_confirm = QMessageBox(QMessageBox.Question, '',
-                                      'Do you want to delete all old thumbnails before regenerating?', QMessageBox.Yes | QMessageBox.No,
+            confirm_msg = QMessageBox(QMessageBox.Icon.Question, '',
+                             'Are you sure you want to regenerate your thumbnails.',
+                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
+            if confirm_msg.exec() == QMessageBox.StandardButton.Yes:
+                clear_cache_confirm = QMessageBox(QMessageBox.Icon.Question, '',
+                                      'Do you want to delete all old thumbnails before regenerating?',
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                       self)
                 clear_cache = False
-                if clear_cache_confirm.exec() == QMessageBox.Yes:
+                if clear_cache_confirm.exec() == QMessageBox.StandardButton.Yes:
                     clear_cache = True
                 app_spinner = misc.Spinner(self.parent_widget)
                 app_spinner.set_size(60)
@@ -1614,8 +1616,10 @@ class SettingsDialog(QWidget):
 
         # Advanced / Database / Import/Export
         def init_export():
-            confirm_msg = QMessageBox(QMessageBox.Question, '', 'Are you sure you want to export your database?', QMessageBox.Yes | QMessageBox.No, self)
-            if confirm_msg.exec() == QMessageBox.Yes:
+            confirm_msg = QMessageBox(QMessageBox.Icon.Question, '',
+                             'Are you sure you want to export your database?',
+                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
+            if confirm_msg.exec() == QMessageBox.StandardButton.Yes:
                 app_popup = AppDialog(self.parent_widget)
                 app_popup.info_lbl.setText("Exporting database...")
                 app_popup.export_instance = io_misc.ImportExport()
@@ -1713,10 +1717,10 @@ class SettingsDialog(QWidget):
         troubleshoot_layout = QVBoxLayout()
         about_troubleshoot_page.setLayout(troubleshoot_layout)
         guide_lbl = QLabel(app_constants.TROUBLE_GUIDE)
-        guide_lbl.setTextFormat(Qt.RichText)
+        guide_lbl.setTextFormat(Qt.TextFormat.RichText)
         guide_lbl.setOpenExternalLinks(True)
         guide_lbl.setWordWrap(True)
-        troubleshoot_layout.addWidget(guide_lbl, 0, Qt.AlignTop)
+        troubleshoot_layout.addWidget(guide_lbl, 0, Qt.AlignmentFlag.AlignTop)
         troubleshoot_layout.addWidget(Spacer('v'))
 
     def _make_about_searchguide(self, tab_widget: QTabWidget):
