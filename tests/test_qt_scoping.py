@@ -23,7 +23,7 @@ SITES = check_qt_enums.scoped_sites()
 
 UNSCOPED_SITES, INSTANCE_SITES, PARSE_FAILURES = check_qt_enums.scan()
 USED_CLASSES = ({site[2] for site in SITES}
-                | {site[2].split('.')[0] for site in UNSCOPED_SITES})
+                | {site.qt_class for site in UNSCOPED_SITES})
 
 
 def test_the_scan_finds_sites_to_check():
@@ -38,7 +38,7 @@ def test_no_unscoped_enum_site_is_left():
     The instance-level half of the scan is a heuristic and is reported rather than asserted -
     `misc/check_qt_enums.py --instance` prints it - but the class-keyed half is exact.
     """
-    shown = [f'{p}:{n}  {old}' for p, n, old, _new, _amb in UNSCOPED_SITES[:20]]
+    shown = [f'{s.path}:{s.line}  {s.old}' for s in UNSCOPED_SITES[:20]]
     assert not UNSCOPED_SITES, (
         f'{len(UNSCOPED_SITES)} site(s) still use the unscoped Qt5 enum spelling:\n  '
         + '\n  '.join(shown))

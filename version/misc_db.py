@@ -376,7 +376,7 @@ class GalleryListContextMenu(QMenu):
         self.sidebar_widget.GALLERY_LIST_CLICKED.emit(self.gallery_list)
 
 class GalleryLists(QListWidget):
-    CREATE_LIST_TYPE = misc.CustomListItem.UserType + 1
+    CREATE_LIST_TYPE = misc.CustomListItem.ItemType.UserType + 1
     GALLERY_LIST_CLICKED = pyqtSignal(gallerydb.GalleryList)
     GALLERY_LIST_REMOVED = pyqtSignal()
     def __init__(self, parent):

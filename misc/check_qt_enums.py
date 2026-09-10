@@ -35,6 +35,10 @@ import ast
 import collections
 import os
 import sys
+from collections import namedtuple
+
+# `old`/`new` carry the receiver as written, `qt_class` the Qt class the member resolves through.
+Site = namedtuple('Site', 'path line old new ambiguous qt_class')
 
 try:
     from PyQt5 import QtCore, QtGui, QtWidgets
@@ -168,6 +172,47 @@ def declared_classes(tree):
     return {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
 
 
+def project_bases(trees):
+    """Class name -> the names it derives from, across every module scanned.
+
+    A base is reduced to its last segment, so `misc.BasePopup` and `BasePopup` are one entry.
+    Where two modules declare the same class name the first wins; nothing in this tree does.
+    """
+    out = {}
+    for tree in trees:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or node.name in out:
+                continue
+            names = []
+            for base in node.bases:
+                if isinstance(base, ast.Name):
+                    names.append(base.id)
+                elif isinstance(base, ast.Attribute):
+                    names.append(base.attr)
+            out[node.name] = names
+    return out
+
+
+def qt_base_of(name, bases, classes, _seen=None):
+    """The Qt class a project class derives from, or None.
+
+    `CustomListItem(QListWidgetItem)` reads its enum members off QListWidgetItem, so a site like
+    `misc.CustomListItem.UserType` is as unscoped as `QListWidgetItem.UserType` is - and the two
+    are only told apart from this project's own `enum.Enum` classes by walking the bases.
+    """
+    if name in classes:
+        return name
+    _seen = _seen or set()
+    if name in _seen or name not in bases:
+        return None
+    _seen.add(name)
+    for base in bases[name]:
+        found = qt_base_of(base, bases, classes, _seen)
+        if found:
+            return found
+    return None
+
+
 def scope_aliases(tree, classes, scope_names):
     """Local names bound to a Qt enum scope, as in `Behaviour = QAbstractItemView.Behaviour`.
 
@@ -226,17 +271,20 @@ def scan():
     classes = qt_classes()
     unscoped, members, scope_names = build_index(classes)
 
-    class_keyed = []            # (path, line, "QClass.NAME", "QClass.Scope.NAME", ambiguous)
+    class_keyed = []            # Site(path, line, old, new, ambiguous, qt_class)
     instance_level = []         # (path, line, source text, candidate scopes)
     failures = []
 
+    parsed = {}
     for path in source_files():
         rel = os.path.relpath(path, REPO).replace(os.sep, '/')
         try:
-            tree = read_tree(path)
-        except (OSError, SyntaxError) as e:
+            parsed[rel] = read_tree(path)
+        except (OSError, SyntaxError, UnicodeDecodeError) as e:
             failures.append((rel, str(e)))
-            continue
+    bases = project_bases(parsed.values())
+
+    for rel, tree in parsed.items():
         aliases = qt_aliases(tree, classes)
         local_classes = declared_classes(tree)
         scoped_by_alias = scope_aliases(tree, classes, scope_names)
@@ -247,16 +295,20 @@ def scan():
             if not isinstance(node, ast.Attribute):
                 continue
             receiver = node.value
-            cls_name = None
+            named = None
             if isinstance(receiver, ast.Name):
-                cls_name = receiver.id if receiver.id in classes else aliases.get(receiver.id)
-            elif isinstance(receiver, ast.Attribute) and receiver.attr in classes:
-                cls_name = receiver.attr          # a module- or package-qualified class
+                named = aliases.get(receiver.id, receiver.id)
+            elif isinstance(receiver, ast.Attribute):
+                named = receiver.attr             # a module- or package-qualified class
+            # A Qt class directly, or one of this project's own classes that derives from one.
+            cls_name = qt_base_of(named, bases, classes) if named else None
             if cls_name:
                 hits = unscoped.get((cls_name, node.attr))
                 if hits:
-                    class_keyed.append((rel, node.lineno, f'{cls_name}.{node.attr}',
-                                        f'{cls_name}.{hits[0]}.{node.attr}', len(hits) > 1))
+                    shown = ast.unparse(receiver)  # keep the alias or module prefix as written
+                    class_keyed.append(Site(rel, node.lineno, f'{shown}.{node.attr}',
+                                            f'{shown}.{hits[0]}.{node.attr}',
+                                            len(hits) > 1, cls_name))
                 continue
             candidates = members.get(node.attr)
             if not candidates:
@@ -282,20 +334,21 @@ def scan():
 
 def report_class_keyed(sites, show_sites, show_mapping):
     mapping = {}
-    for _, _, old, new, _ in sites:
-        mapping.setdefault(old, new)
-    ambiguous = [s for s in sites if s[4]]
+    for site in sites:
+        mapping.setdefault(site.old, site.new)
+    ambiguous = [s for s in sites if s.ambiguous]
 
     if show_sites:
-        for rel, line, old, new, amb in sites:
-            print(f'  {rel}:{line}  {old} -> {new}' + ('   AMBIGUOUS' if amb else ''))
+        for site in sites:
+            print(f'  {site.path}:{site.line}  {site.old} -> {site.new}'
+                  + ('   AMBIGUOUS' if site.ambiguous else ''))
         print()
     if show_mapping:
         for old, new in sorted(mapping.items()):
             print(f'  {old} -> {new}')
         print()
 
-    per_file = collections.Counter(s[0] for s in sites)
+    per_file = collections.Counter(s.path for s in sites)
     print('unscoped enum sites, class-keyed (exact)')
     for rel, count in sorted(per_file.items(), key=lambda kv: (-kv[1], kv[0])):
         print(f'  {count:5}  {rel}')
@@ -303,8 +356,8 @@ def report_class_keyed(sites, show_sites, show_mapping):
     if ambiguous:
         print(f'\n  {len(ambiguous)} site(s) whose member sits in more than one scope '
               'at the same value - pick by hand:')
-        for rel, line, old, _, _ in ambiguous:
-            print(f'    {rel}:{line}  {old}')
+        for site in ambiguous:
+            print(f'    {site.path}:{site.line}  {site.old}')
 
 
 def report_instance_level(sites):
