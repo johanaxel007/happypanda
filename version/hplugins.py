@@ -4,7 +4,7 @@ import uuid
 import threading
 import sys
 
-from PyQt5.QtCore import pyqtWrapperType
+from PyQt5.QtCore import QObject
 
 log = logging.getLogger(__name__)
 log_i = lambda a: None
@@ -65,7 +65,7 @@ class Plugins:
 
 registered = Plugins()
 
-class HPluginMeta(pyqtWrapperType):
+class HPluginMeta(type(QObject)):  # Qt6 dropped the pyqtWrapperType alias for this metaclass
 
     def __init__(cls, name, bases, dct):
         if not name.endswith("HPlugin"):

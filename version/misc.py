@@ -343,7 +343,7 @@ class ToolbarButton(QPushButton):
         if self._enable_contextmenu:
             m = QMenu(self)
             m.addAction("Close Tab").triggered.connect(lambda: self.close_tab.emit(self))
-            m.exec_(event.globalPos())
+            m.exec(event.globalPos())
             event.accept()
         else:
             event.ignore()
@@ -717,7 +717,7 @@ class GalleryMetaWindow(ArrowWindow):
                         utils.open_path(path)
                     t = "Open archive" if chap.in_archive else "Open folder"
                     action_open_path = menu.addAction(t, open_source)
-                    menu.exec_(event.globalPos())
+                    menu.exec(event.globalPos())
                     event.accept()
                     del menu
                 else:
@@ -1833,7 +1833,7 @@ class GalleryShowcaseWidget(QWidget):
 
     def contextMenuEvent(self, event):
         if self._menu:
-            self._menu.exec_(event.globalPos())
+            self._menu.exec(event.globalPos())
             event.accept()
         else:
             event.ignore()
@@ -2723,7 +2723,9 @@ class GalleryListView(QWidget):
 
     def from_folder(self):
         file_dialog = QFileDialog()
-        file_dialog.setFileMode(QFileDialog.DirectoryOnly)
+        # Qt6 dropped DirectoryOnly; Directory plus ShowDirsOnly is what it stood for.
+        file_dialog.setFileMode(QFileDialog.FileMode.Directory)
+        file_dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
         file_dialog.setOption(QFileDialog.DontUseNativeDialog, True)
         file_view = file_dialog.findChild(QListView, 'listView')
         if file_view:

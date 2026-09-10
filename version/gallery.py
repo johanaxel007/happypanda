@@ -1640,7 +1640,7 @@ class CommonView:
             handled = True
 
         if handled:
-            menu.exec_(event.globalPos())
+            menu.exec(event.globalPos())
             if grid_view:
                 view_cls.manga_delegate.CONTEXT_ON = False
             event.accept()

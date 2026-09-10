@@ -1465,7 +1465,7 @@ class AppWindow(QMainWindow):
         w.setText('A critical error has ben encountered. Stability from this point onward cannot be guaranteed.')
         w.setStandardButtons(QMessageBox.Ok)
         w.setDefaultButton(QMessageBox.Ok)
-        w.exec_()
+        w.exec()
 
     def closeEvent(self, event):
         r_code = self.cleanup_exit()

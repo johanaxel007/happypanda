@@ -275,7 +275,7 @@ class TagsTreeView(QTreeWidget):
             handled = True
 
         if handled:
-            menu.exec_(event.globalPos())
+            menu.exec(event.globalPos())
             event.accept()
             del menu
         else:
@@ -474,7 +474,7 @@ class GalleryLists(QListWidget):
         item = self.itemAt(event.pos())
         if item and item.type() != self.CREATE_LIST_TYPE:
             menu = GalleryListContextMenu(item, self)
-            menu.exec_(event.globalPos())
+            menu.exec(event.globalPos())
             event.accept()
             return
         event.ignore()

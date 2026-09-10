@@ -251,7 +251,7 @@ def start(test=False):
         if test:
             return application, WINDOW
 
-        return application.exec_()
+        return application.exec()
 
     def db_upgrade():
         log_d('Database connection failed')

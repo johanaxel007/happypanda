@@ -207,7 +207,7 @@ class GalleryDownloaderList(QTableWidget):
             menu.addAction("Copy download URL", lambda: clipboard.setText(hitem.download_url))
             if not hitem.current_state == hitem.DOWNLOADING:
                 menu.addAction("Remove", lambda: self.removeRow(idx.row()))
-            menu.exec_(event.globalPos())
+            menu.exec(event.globalPos())
             event.accept()
             del menu
         else:
@@ -615,7 +615,7 @@ class BetterVersionsList(QTableWidget):
             menu.addAction('Put back on the list', lambda: self._restore(row))
         else:
             menu.addAction('Not interested', lambda: self._dismiss(row))
-        menu.exec_(event.globalPos())
+        menu.exec(event.globalPos())
         event.accept()
         del menu
 
