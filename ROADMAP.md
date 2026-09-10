@@ -184,11 +184,22 @@ module at a time. `misc/check_qt_enums.py` reports what is left — currently no
 `tests/test_qt_scoping.py` resolves every rescoped site against whichever binding is installed
 and fails if an unscoped spelling comes back.
 
-**What is left is Q3 onwards: the switch itself.** Roughly 11 edits that cannot run on both
-bindings at once — the `QAction`/`QActionGroup`/`QShortcut` import move, `QDropEvent.pos()`, the
-two high-DPI attributes, and the `sip` module name — plus `requirements.txt` and
-`HappyPanda.spec`. Then `FORCE_HIGH_DPI_SUPPORT` comes out through all four settings places
-(Core Constraint 4), and the shakedown begins.
+**Q3, the binding switch itself, has shipped on `feat/qt6-migration`.** The app runs on PyQt6
+6.11.0 / Qt 6.11.2: the four families that cannot run on both bindings, plus two the inventory
+missed — `Qt.Orientations`, a QFlags companion type Qt6 folded into its enum, and a property name
+`QPropertyAnimation` now wants as bytes. `pytest`, `misc/gui_smoke.py` and the scoping gate are
+all green under it. `FORCE_HIGH_DPI_SUPPORT` still needs removing through all four settings
+places (Q4, Core Constraint 4), and the shakedown has not begun.
+
+**A blocker is open before any of that is worth finishing: startup is roughly four times slower
+under PyQt6** — about 26s against about 126s across the three startup phases on a
+19,974-gallery library. It is attributed to the binding by controlled measurement, and the cost
+lands in Qt-free Python on worker threads rather than in any Qt call. Ten candidate causes are
+already excluded, each with the measurement that excluded it, and a minimal reproduction fails to
+exhibit it. See
+[`Documentation/Design/QT6_STARTUP_REGRESSION.md`](Documentation/Design/QT6_STARTUP_REGRESSION.md)
+— read it before re-testing anything, and note the `feat/qt6-migration-prep` branch remains a
+clean PyQt5 fallback that is unaffected.
 
 **The hard part is still that nothing can test the result.** The scoping gate catches a
 misspelled scope, and it cannot catch a scope that resolves and means something else, or a
