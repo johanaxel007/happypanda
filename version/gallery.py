@@ -1126,30 +1126,30 @@ class MangaView(QListView):
         super().__init__(parent)
         self.parent_widget = parent
         self.view_type = v_type
-        self.setViewMode(self.IconMode)
-        self.setResizeMode(self.Adjust)
+        self.setViewMode(self.ViewMode.IconMode)
+        self.setResizeMode(self.ResizeMode.Adjust)
         self.setWrapping(True)
         # all items have the same size (perfomance)
         self.setUniformItemSizes(True)
         # improve scrolling
         self.setAutoScroll(True)
-        self.setVerticalScrollMode(self.ScrollPerPixel)
+        self.setVerticalScrollMode(self.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setLayoutMode(self.Batched)
+        self.setLayoutMode(self.LayoutMode.Batched)
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
         self.viewport().setAcceptDrops(True)
         self.setDropIndicatorShown(True)
-        self.setDragDropMode(self.NoDragDrop)
+        self.setDragDropMode(self.DragDropMode.NoDragDrop)
         self.sort_model = filter_model if filter_model else SortFilterModel(self)
         self.manga_delegate = GridDelegate(parent, self)
         self.setItemDelegate(self.manga_delegate)
         self.setSpacing(app_constants.GRID_SPACING)
         self.setFlow(QListView.Flow.LeftToRight)
         self.setIconSize(QSize(self.manga_delegate.W, self.manga_delegate.H))
-        self.setSelectionBehavior(self.SelectItems)
-        self.setSelectionMode(self.ExtendedSelection)
+        self.setSelectionBehavior(self.SelectionBehavior.SelectItems)
+        self.setSelectionMode(self.SelectionMode.ExtendedSelection)
         self.gallery_model = model
         self.sort_model.change_model(self.gallery_model)
         self.sort_model.sort(0)
@@ -1297,11 +1297,11 @@ class MangaView(QListView):
         else:
             msgbox = QMessageBox(self)
             msgbox.setText('Are you sure you want to delete:')
-            msgbox.setIcon(msgbox.Question)
+            msgbox.setIcon(msgbox.Icon.Question)
             msgbox.setInformativeText('Chapter {} of {}'.format(chap_numb + 1,
                                                           gallery.title))
-            msgbox.setStandardButtons(msgbox.Yes | msgbox.No)
-            if msgbox.exec() == msgbox.Yes:
+            msgbox.setStandardButtons(msgbox.StandardButton.Yes | msgbox.StandardButton.No)
+            if msgbox.exec() == msgbox.StandardButton.Yes:
                 gallery.chapters.pop(chap_numb, None)
                 self.gallery_model.replaceRows([gallery], index.row())
                 gallerydb.execute(gallerydb.ChapterDB.del_chapter, True, gallery.id, chap_numb)
@@ -1361,10 +1361,10 @@ class MangaTableView(QTableView):
         self.setDragEnabled(True)
         self.viewport().setAcceptDrops(True)
         self.setDropIndicatorShown(True)
-        self.setDragDropMode(self.NoDragDrop)
+        self.setDragDropMode(self.DragDropMode.NoDragDrop)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.setSelectionBehavior(self.SelectRows)
-        self.setSelectionMode(self.ExtendedSelection)
+        self.setSelectionBehavior(self.SelectionBehavior.SelectRows)
+        self.setSelectionMode(self.SelectionMode.ExtendedSelection)
         self.setShowGrid(True)
         self.setSortingEnabled(True)
         h_header = self.horizontalHeader()
@@ -1374,8 +1374,8 @@ class MangaTableView(QTableView):
         v_header.setDefaultSectionSize(24)
         v_header.hide()
         palette = self.palette()
-        palette.setColor(palette.Highlight, QColor(88, 88, 88, 70))
-        palette.setColor(palette.HighlightedText, QColor('black'))
+        palette.setColor(palette.ColorRole.Highlight, QColor(88, 88, 88, 70))
+        palette.setColor(palette.ColorRole.HighlightedText, QColor('black'))
         self.setPalette(palette)
         self.setIconSize(QSize(0,0))
         self.doubleClicked.connect(lambda idx: idx.data(Qt.ItemDataRole.UserRole + 1).chapters[0].open())
@@ -1446,8 +1446,8 @@ class CommonView:
     def remove_gallery(view_cls, index_list: list[QModelIndex], local=False):
         #view_cls.sort_model.setDynamicSortFilter(False)
         msgbox = QMessageBox(view_cls)
-        msgbox.setIcon(msgbox.Question)
-        msgbox.setStandardButtons(msgbox.Yes | msgbox.No)
+        msgbox.setIcon(msgbox.Icon.Question)
+        msgbox.setStandardButtons(msgbox.StandardButton.Yes | msgbox.StandardButton.No)
 
         msg = ''
         if len(index_list) > 1:
@@ -1471,7 +1471,7 @@ class CommonView:
         msgbox.setText(msg)
         msgbox.setDetailedText('\n'.join(gallery_lines))
 
-        if msgbox.exec() == msgbox.Yes:
+        if msgbox.exec() == msgbox.StandardButton.Yes:
             #view_cls.setUpdatesEnabled(False)
             CommonView.remove_galleries(view_cls, [i.data(Qt.ItemDataRole.UserRole + 1) for i in index_list], local)
             #view_cls.STATUS_BAR_MSG.emit('Gallery removed!')
