@@ -22,8 +22,8 @@ import traceback
 import datetime
 import faulthandler
 
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QCoreApplication, QFile, Qt
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QCoreApplication, QFile, Qt
 
 import database
 import app
@@ -131,10 +131,6 @@ def start(test=False):
         fault_log = open(fault_log_file, 'a', encoding='utf-8')
         faulthandler.enable(fault_log, all_threads=True)
 
-    if app_constants.FORCE_HIGH_DPI_SUPPORT:
-        log_i("Enabling high DPI display support")
-        QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
-
     effects = [Qt.UIEffect.UI_AnimateCombo, Qt.UIEffect.UI_FadeMenu, Qt.UIEffect.UI_AnimateMenu,
                Qt.UIEffect.UI_AnimateTooltip, Qt.UIEffect.UI_FadeTooltip]
     for effect in effects:
@@ -146,7 +142,6 @@ def start(test=False):
     application.setApplicationName('Happypanda')
     application.setApplicationDisplayName('Happypanda')
     application.setApplicationVersion('v{}'.format(app_constants.vs))
-    application.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
     application.font().setStyleStrategy(application.font().StyleStrategy.PreferAntialias)
 
     log_i('Starting Happypanda...'.format(app_constants.vs))
@@ -165,8 +160,8 @@ def start(test=False):
     except:
         log_c('Invalid database')
         log.exception('Database connection failed!')
-        from PyQt5.QtGui import QIcon
-        from PyQt5.QtWidgets import QMessageBox
+        from PyQt6.QtGui import QIcon
+        from PyQt6.QtWidgets import QMessageBox
         msg_box = QMessageBox()
         msg_box.setWindowIcon(QIcon(app_constants.APP_ICO_PATH))
         msg_box.setText('Invalid database')
@@ -256,8 +251,8 @@ def start(test=False):
 
     def db_upgrade():
         log_d('Database connection failed')
-        from PyQt5.QtGui import QIcon
-        from PyQt5.QtWidgets import QMessageBox
+        from PyQt6.QtGui import QIcon
+        from PyQt6.QtWidgets import QMessageBox
 
         msg_box = QMessageBox()
         msg_box.setWindowIcon(QIcon(app_constants.APP_ICO_PATH))

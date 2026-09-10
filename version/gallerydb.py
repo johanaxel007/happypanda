@@ -26,7 +26,7 @@ from dateutil import parser as dateparser
 from dataclasses import dataclass, field
 from collections import defaultdict
 
-from PyQt5.QtCore import QObject, pyqtSignal, QTime
+from PyQt6.QtCore import QObject, pyqtSignal, QTime
 
 import app_constants
 import database

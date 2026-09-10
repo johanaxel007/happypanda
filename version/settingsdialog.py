@@ -2,14 +2,14 @@ import json
 import logging, os, sys
 from typing import Optional, TypeVar
 
-from PyQt5.QtWidgets import (QLayout, QTextEdit, QVBoxLayout, QHBoxLayout, QListWidget, QWidget,
+from PyQt6.QtWidgets import (QLayout, QTextEdit, QVBoxLayout, QHBoxLayout, QListWidget, QWidget,
                              QListWidgetItem, QStackedLayout, QPushButton,
                              QLabel, QTabWidget, QLineEdit, QGroupBox, QFormLayout,
                              QCheckBox, QRadioButton, QSpinBox, QSizePolicy,
                              QScrollArea, QFontDialog, QMessageBox, QComboBox,
                              QFileDialog, QSlider)
-from PyQt5.QtCore import pyqtSignal, Qt
-from PyQt5.QtGui import QPalette, QPixmapCache
+from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtGui import QPalette, QPixmapCache
 
 from color_line_edit import ColorLineEdit
 from misc import FlowLayout, Spacer, PathLineEdit, AppDialog, DictStrStrEdit

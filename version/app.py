@@ -19,12 +19,12 @@ import requests
 import traceback
 import time
 
-from PyQt5.QtCore import Qt, QSize, pyqtSignal, QThread, QTimer, QObject
-from PyQt5.QtGui import QIcon, QKeySequence
-from PyQt5.QtWidgets import (QMainWindow, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
-                             QToolBar, QSizePolicy, QMenu, QAction, QLineEdit,
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QThread, QTimer, QObject
+from PyQt6.QtGui import QIcon, QKeySequence, QAction, QShortcut
+from PyQt6.QtWidgets import (QMainWindow, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
+                             QToolBar, QSizePolicy, QMenu, QLineEdit,
                              QMessageBox, QFileDialog, QCompleter, QToolButton,
-                             QSystemTrayIcon, QShortcut, QGraphicsBlurEffect,
+                             QSystemTrayIcon, QGraphicsBlurEffect,
                              QTableWidget, QTableWidgetItem)
 
 import app_constants

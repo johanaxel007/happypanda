@@ -19,14 +19,14 @@ import random
 import pickle
 import enum
 
-from PyQt5.QtCore import (Qt, QModelIndex, QSize, QRect, pyqtSignal,
+from PyQt6.QtCore import (Qt, QModelIndex, QSize, QRect, pyqtSignal,
                           QTimer, QPointF, QSortFilterProxyModel,
                           QAbstractTableModel, QPoint, QRectF, QDateTime, QObject,
                           QMimeData, QByteArray, QTime)
-from PyQt5.QtGui import (QPixmap, QBrush, QColor, QPainter, QPen, QTextDocument,
+from PyQt6.QtGui import (QPixmap, QBrush, QColor, QPainter, QPen, QTextDocument,
                          QPixmapCache, QFont, QTextOption, QFontMetrics,
                          QPainterPath, QPolygonF, QLinearGradient)
-from PyQt5.QtWidgets import (QListView, QStyledItemDelegate, QStyle, QWidget,
+from PyQt6.QtWidgets import (QListView, QStyledItemDelegate, QStyle, QWidget,
                              QHeaderView, QTableView, QMessageBox, QScroller,
                              QStackedLayout)
 

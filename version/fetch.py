@@ -19,7 +19,7 @@ import queue
 import re
 import random
 
-from PyQt5.QtCore import QObject, pyqtSignal # need this for interaction with main thread
+from PyQt6.QtCore import QObject, pyqtSignal # need this for interaction with main thread
 from thefuzz import fuzz
 
 import gallerydb

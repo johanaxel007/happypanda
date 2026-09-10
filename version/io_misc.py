@@ -8,9 +8,9 @@ import queue
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from PyQt5.QtCore import (Qt, QObject, pyqtSignal, QTimer, QSize)
-from PyQt5.QtGui import (QPixmap, QIcon, QColor, QTextOption)
-from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout,
+from PyQt6.QtCore import (Qt, QObject, pyqtSignal, QTimer, QSize)
+from PyQt6.QtGui import (QPixmap, QIcon, QColor, QTextOption)
+from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout,
                              QLabel, QPushButton, QMessageBox,
                              QFileDialog, QScrollArea, QLineEdit,
                              QTableWidget, QTableWidgetItem, QPlainTextEdit,

@@ -18,15 +18,16 @@ import logging
 import math
 import functools
 
-from PyQt5.QtCore import (QModelIndex, Qt, QPoint, QEvent, pyqtSignal, QTimer, QSize, QRect, QFileInfo, QPropertyAnimation, QThread,
-                          QRectF, QPropertyAnimation, QByteArray, QPointF, QSizeF, qRound)
-from PyQt5.QtGui import (QTextCursor, QIcon, QMouseEvent, QFont, QPalette, QPainter, QBrush, QColor, QPen, QPixmap,
-                         QPaintEvent, QFontMetrics, QPolygonF, QCursor, QTextOption, QTextLayout, QPalette)
-from PyQt5.QtWidgets import (QWidget, QProgressBar, QLabel, QVBoxLayout, QHBoxLayout, QDialog, QLineEdit, QFormLayout,
+from PyQt6.QtCore import (QModelIndex, Qt, QPoint, QEvent, pyqtSignal, QTimer, QSize, QRect, QFileInfo, QPropertyAnimation, QThread,
+                          QRectF, QPropertyAnimation, QPointF, QSizeF, qRound)
+from PyQt6.QtGui import (QTextCursor, QIcon, QMouseEvent, QFont, QPalette, QPainter, QBrush, QColor, QPen, QPixmap,
+                         QPaintEvent, QFontMetrics, QPolygonF, QCursor, QTextOption, QTextLayout, QPalette,
+                         QAction, QActionGroup)
+from PyQt6.QtWidgets import (QWidget, QProgressBar, QLabel, QVBoxLayout, QHBoxLayout, QDialog, QLineEdit, QFormLayout,
                              QPushButton, QTextEdit, QApplication, QMessageBox, QFileDialog, QCompleter, QListWidgetItem,
                              QListWidget, QSizePolicy, QCheckBox, QFrame, QListView, QAbstractItemView, QTreeView, QSpinBox,
-                             QAction, QStackedLayout, QScrollArea, QLayout, QFileIconProvider, QScrollArea, QSystemTrayIcon,
-                             QMenu, QActionGroup, QCommonStyle, QTableWidget, QTableWidgetItem, QTableView, QStyleOption)
+                             QStackedLayout, QScrollArea, QLayout, QFileIconProvider, QScrollArea, QSystemTrayIcon,
+                             QMenu, QCommonStyle, QTableWidget, QTableWidgetItem, QTableView, QStyleOption)
 
 import executors
 import pewnet
@@ -128,8 +129,8 @@ def clearLayout(layout):
                 clearLayout(child.layout())
 
 def create_animation(parent, prop):
-    p_array = QByteArray().append(prop)
-    return QPropertyAnimation(parent, p_array)
+    # Qt6 takes the property name as bytes; QByteArray.append no longer accepts a str.
+    return QPropertyAnimation(parent, prop.encode())
 
 
 class ArrowHandle(QWidget):
@@ -2395,7 +2396,8 @@ class FlowLayout(QLayout):
         return None
 
     def expandingDirections(self):
-        return Qt.Orientations(Qt.Orientation(0))
+        # Qt6 folded the QFlags companion types into the enums, so the enum is its own flag type.
+        return Qt.Orientation(0)
 
     def hasHeightForWidth(self):
         return True

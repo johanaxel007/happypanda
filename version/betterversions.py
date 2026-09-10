@@ -26,7 +26,7 @@ import sqlite3
 import threading
 from dataclasses import dataclass
 
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal
 from thefuzz import fuzz
 
 import app_constants

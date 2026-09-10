@@ -28,9 +28,9 @@ def say(msg):
     print(msg, flush=True)
 
 
-from PyQt5.QtWidgets import QApplication  # noqa: E402
-from PyQt5.QtCore import QPoint, QEvent, Qt  # noqa: E402
-from PyQt5.QtGui import QPixmap, QColor  # noqa: E402
+from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PyQt6.QtCore import QPoint, QEvent, Qt  # noqa: E402
+from PyQt6.QtGui import QPixmap, QColor  # noqa: E402
 
 qapp = QApplication(sys.argv)
 
@@ -370,9 +370,9 @@ say('picker: closing the dialog takes the card with it')
 # --- a showcase whose receiver destroys it ---------------------------------------------------
 # The failed-galleries popup crashed here: mouseDoubleClickEvent touched the widget after
 # emitting, and the widget carries WA_DeleteOnClose, so by then it could already be gone.
-from PyQt5 import sip  # noqa: E402  (a bare `import sip` works only because PyQt5 aliases it)
-from PyQt5.QtCore import QEvent as _QEvent, QPointF  # noqa: E402
-from PyQt5.QtGui import QMouseEvent  # noqa: E402
+from PyQt6 import sip  # noqa: E402  (a bare `import sip` works only because PyQt6 aliases it)
+from PyQt6.QtCore import QEvent as _QEvent, QPointF  # noqa: E402
+from PyQt6.QtGui import QMouseEvent  # noqa: E402
 
 showcase = misc.GalleryShowcaseWidget()
 showcase.set_gallery(g, (100, 100))
@@ -401,7 +401,7 @@ say('views: the table view still has no hover window, which is what the tab swit
 # refuse are the whole safety of the feature, and a normal run reaches neither. Nothing here
 # answers Yes: the deletion itself would need the database thread.
 import string  # noqa: E402
-from PyQt5.QtWidgets import QMessageBox  # noqa: E402
+from PyQt6.QtWidgets import QMessageBox  # noqa: E402
 
 shown = []
 
@@ -1205,8 +1205,8 @@ say('context menu: "Scan selected for better versions" passes the selection and 
 # much is highlighted - so counting through it would silence the note exactly where it is
 # needed. The grid view itself cannot be built here (its delegate reads the database), so the
 # semantics are pinned on the widgets they come from.
-from PyQt5.QtWidgets import QAbstractItemView, QListView, QTableView  # noqa: E402
-from PyQt5.QtCore import QAbstractTableModel, QItemSelectionModel  # noqa: E402
+from PyQt6.QtWidgets import QAbstractItemView, QListView, QTableView  # noqa: E402
+from PyQt6.QtCore import QAbstractTableModel, QItemSelectionModel  # noqa: E402
 
 
 class _Cols(QAbstractTableModel):
@@ -1245,7 +1245,7 @@ say('context menu: the single-gallery entry scans just the gallery under the cur
 # Every repeatable background action used to leave its thread running for the life of the
 # process: a QThread's event loop exits only on quit(), and the finished -> deleteLater every
 # call site connects is caused by quit(), so neither ever happened.
-from PyQt5.QtCore import QObject, QThread, pyqtSignal  # noqa: E402
+from PyQt6.QtCore import QObject, QThread, pyqtSignal  # noqa: E402
 
 
 class _Worker(QObject):

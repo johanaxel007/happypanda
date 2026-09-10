@@ -4,7 +4,7 @@ import uuid
 import threading
 import sys
 
-from PyQt5.QtCore import QObject
+from PyQt6.QtCore import QObject
 
 log = logging.getLogger(__name__)
 log_i = lambda a: None

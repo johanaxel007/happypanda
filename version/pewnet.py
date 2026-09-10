@@ -38,7 +38,7 @@ werkzeug.cached_property = werkzeug.utils.cached_property
 from robobrowser import RoboBrowser
 from robobrowser.exceptions import RoboError
 
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal
 
 import app_constants
 import utils
