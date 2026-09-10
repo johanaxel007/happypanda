@@ -84,7 +84,7 @@ class SettingsDialog(QWidget):
         sub_layout = QHBoxLayout()
         # Left Panel
         left_panel = QListWidget()
-        left_panel.setViewMode(left_panel.ListMode)
+        left_panel.setViewMode(left_panel.ViewMode.ListMode)
         #left_panel.setIconSize(QSize(40,40))
         left_panel.setTextElideMode(Qt.TextElideMode.ElideRight)
         left_panel.setMaximumWidth(200)

@@ -22,7 +22,7 @@ def _rounded_qimage(qimg, radius):
     pen = QPen(Qt.GlobalColor.darkGray)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     p.begin(r_image)
-    p.setRenderHint(p.Antialiasing)
+    p.setRenderHint(p.RenderHint.Antialiasing)
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(QBrush(qimg))
     p.drawRoundedRect(0, 0, r_image.width(), r_image.height(), radius, radius)
