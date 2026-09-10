@@ -168,6 +168,25 @@ def declared_classes(tree):
     return {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
 
 
+def scope_aliases(tree, classes, scope_names):
+    """Local names bound to a Qt enum scope, as in `Behaviour = QAbstractItemView.Behaviour`.
+
+    A long rescoped line is often shortened this way, and reading a member off such a name is
+    already scoped - not the unscoped access the member name alone makes it look like.
+    """
+    out = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Attribute):
+            continue
+        owner = node.value.value
+        if not isinstance(owner, ast.Name) or owner.id not in classes:
+            continue
+        if node.value.attr not in scope_names:
+            continue
+        out.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return out
+
+
 def receiver_root(node):
     """The leftmost name of an attribute chain, or None if it does not start with one."""
     while isinstance(node, (ast.Attribute, ast.Call, ast.Subscript)):
@@ -220,6 +239,7 @@ def scan():
             continue
         aliases = qt_aliases(tree, classes)
         local_classes = declared_classes(tree)
+        scoped_by_alias = scope_aliases(tree, classes, scope_names)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Attribute):
                 continue
@@ -238,6 +258,8 @@ def scan():
             candidates = members.get(node.attr)
             if not candidates:
                 continue
+            if isinstance(receiver, ast.Name) and receiver.id in scoped_by_alias:
+                continue                          # read off a local alias of an enum scope
             if isinstance(receiver, ast.Attribute) and (receiver.attr in scope_names
                                                         or receiver.attr in local_classes):
                 continue                          # already scoped, or one of this project's enums
