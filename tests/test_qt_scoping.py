@@ -21,16 +21,27 @@ BINDING = check_qt_enums.BINDING
 CLASSES = check_qt_enums.qt_classes()
 SITES = check_qt_enums.scoped_sites()
 
-# Every Qt class the tree names, whichever spelling it still uses. Once the rewrite is
-# finished the unscoped half is empty and this is just the scoped half.
-UNSCOPED_SITES = check_qt_enums.scan()[0]
+UNSCOPED_SITES, INSTANCE_SITES, PARSE_FAILURES = check_qt_enums.scan()
 USED_CLASSES = ({site[2] for site in SITES}
                 | {site[2].split('.')[0] for site in UNSCOPED_SITES})
 
 
 def test_the_scan_finds_sites_to_check():
-    """A scanner that quietly returned nothing would make both tests below vacuous."""
-    assert len(SITES) > 50, f'only {len(SITES)} scoped enum sites found - has the scan broken?'
+    """A scanner that quietly returned nothing would make every test below vacuous."""
+    assert not PARSE_FAILURES, f'the scan could not parse: {PARSE_FAILURES}'
+    assert len(SITES) > 400, f'only {len(SITES)} scoped enum sites found - has the scan broken?'
+
+
+def test_no_unscoped_enum_site_is_left():
+    """Qt6 removed these spellings outright, so each one is an import-time failure after the switch.
+
+    The instance-level half of the scan is a heuristic and is reported rather than asserted -
+    `misc/check_qt_enums.py --instance` prints it - but the class-keyed half is exact.
+    """
+    shown = [f'{p}:{n}  {old}' for p, n, old, _new, _amb in UNSCOPED_SITES[:20]]
+    assert not UNSCOPED_SITES, (
+        f'{len(UNSCOPED_SITES)} site(s) still use the unscoped Qt5 enum spelling:\n  '
+        + '\n  '.join(shown))
 
 
 def test_every_scoped_site_resolves():

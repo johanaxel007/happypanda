@@ -1,13 +1,13 @@
 # Qt5 → Qt6 Migration Design
 
-**Version:** 1.0  
-**Date:** 2026-09-09  
-**Status:** Draft — not scheduled. Phase Q0 is ready to build against; the binding switch (Q3+) needs the §8 re-verification first.  
+**Version:** 1.1  
+**Date:** 2026-09-10  
+**Status:** In progress — Q0, Q1 and Q2 are complete: the tree is written in the Qt6 dialect and still runs on PyQt5. The binding switch (Q3+) needs the §8 re-verification first.  
 **Target:** PyQt6 6.11 / Qt 6.11 on Python 3.14 (current: PyQt5 5.15.11 / Qt 5.15.2)
 
-> Happypanda's Qt surface is ~572 individual edits across 16 modules, and the single most
+> Happypanda's Qt surface is ~610 individual edits across 16 modules, and the single most
 > important finding is that **~98% of them are forward-compatible: PyQt5 5.15.11 already accepts
-> the Qt6 scoped-enum spelling for all 517 enum call sites, with identical values.** The
+> the Qt6 scoped-enum spelling for all 584 enum call sites, with identical values.** The
 > migration therefore does not have to be a big-bang binding switch — the mechanical bulk can
 > land incrementally against the running Qt5 app, leaving roughly 11 edits plus the PyInstaller
 > spec for switch day. **The recommended binding is PyQt6, not PySide6.**
@@ -17,7 +17,15 @@
 > analysis is static review plus API-level probing, which settles what breaks at the API
 > boundary and settles nothing about rendering, layout, or the frozen build.
 
+> **v1.1, after implementing Q0–Q2.** The measured figures below were re-derived from the AST
+> rather than by regex, and three of them moved. The class-keyed surface was **503 sites across
+> 150 symbols**, not 517/154 — the original count included commented-out lines. The
+> instance-level surface was **81 sites, not "~15 as a lower bound"**, and those are the ones no
+> class-name codemod can catch. `QPalette.Background` is a **tenth removed-API family** that §5
+> missed. All of it has now landed; §7 carries the phase statuses.
+
 **Audited:** 2026-09-09, at commit `69b1ae0` (branch `feat/better-versions-scan`).
+**Re-audited:** 2026-09-10 during Q0–Q2, on branch `feat/qt6-migration-prep`.
 Findings come from static review of all 19 modules in `version/` plus `misc/gui_smoke.py`, and
 from executing probes against three real interpreter environments built for this analysis:
 PyQt6 6.11.0, PySide6 6.11.2, and the project's own PyQt5 5.15.11 venv, all on Python 3.14.7.
@@ -83,33 +91,38 @@ Every claim below is tagged ✅ **Verified** or ⚠️ **Unverified** — see th
 
 ### Enum call sites, by file
 
-517 enum references across 154 distinct symbols. ✅ **Verified** — produced by a resolver that
-looked each symbol up in real PyQt6; all 154 resolved to exactly one new scope, none ambiguous.
+**503 class-keyed enum references across 150 distinct symbols, plus 81 instance-level ones.**
+✅ **Verified** — `misc/check_qt_enums.py` walks the AST of every module and resolves each
+symbol against the installed binding; all 150 resolved to exactly one scope, none ambiguous.
 
-| File | Sites |
-|------|------:|
-| `version/misc.py` | 189 |
-| `version/gallery.py` | 113 |
-| `version/app.py` | 55 |
-| `version/settingsdialog.py` | 46 |
-| `version/io_misc.py` | 30 |
-| `version/gallerydialog.py` | 26 |
-| `version/main.py` | 16 |
-| `version/misc_db.py` | 14 |
-| `misc/gui_smoke.py` | 14 |
-| `version/executors.py` | 9 |
-| `version/utils.py` | 5 |
-| **Total** | **517** |
+The v1.0 figure of 517/154 came from a regex over the source, which also counted names inside
+comments — `misc.py:517–518` and `misc.py:2780` are commented-out `QDesktopWidget` lines, and
+`gallery.py:312` a commented-out `msg.exec()`.
 
-The tree is already partway there: 35 `Qt.*` sites and 42 `QSizePolicy.Policy` sites use the
-scoped Qt6 spelling today. This migration finishes a pass someone already began.
+| File | Class-keyed | Instance-level |
+|------|------:|------:|
+| `version/misc.py` | 184 | 26 |
+| `version/gallery.py` | 110 | 20 |
+| `version/app.py` | 53 | 3 |
+| `version/settingsdialog.py` | 46 | 1 |
+| `version/gallerydialog.py` | 26 | — |
+| `version/io_misc.py` | 24 | 22 |
+| `version/main.py` | 16 | 1 |
+| `version/misc_db.py` | 14 | 7 |
+| `misc/gui_smoke.py` | 15 | — |
+| `version/executors.py` | 9 | 1 |
+| `version/utils.py` | 5 | — |
+| **Total** | **503** | **81** |
+
+The tree was already partway there: 74 sites used the scoped Qt6 spelling before this work
+began, most of them `QSizePolicy.Policy` in `gallerydialog.py`.
 
 ### Existing gates
 
 | Gate | Covers | Verdict for this migration |
 |------|--------|----------------------------|
-| `pytest tests/ -q` | 274 pass, 4 pre-existing failures in `test_db.py::test_init_db`. ✅ **Verified** by running it at `69b1ae0`. | **Weak.** No test references Qt directly; they only import modules that transitively load it. ✅ **Verified** by importing each test module and checking `sys.modules`. Catches import-level breakage only. |
-| `misc/gui_smoke.py` | Settings dialog, gallery chooser, two crash regressions. | **The only GUI gate, and it is itself PyQt5.** Must be ported before it can gate anything — see Q1. |
+| `pytest tests/ -q` | 283 pass, 4 pre-existing failures in `test_db.py::test_init_db`. ✅ **Verified** by running it at the start of Q0. | **Was weak; no longer.** No test referenced Qt at all before Q0. `tests/test_qt_scoping.py` now resolves every scoped site against the installed binding and asserts no unscoped one is left, which is what turns a lazy paint-time AttributeError into a red suite. |
+| `misc/gui_smoke.py` | Settings dialog, gallery chooser, better-version review list, two crash regressions. | **The only GUI gate.** Ported in Q1, so it now exercises the Qt6 dialect; it still imports PyQt5 by name, which is a Q3 edit. |
 | Launching the app | Everything else. | The real gate. Manual, and per CLAUDE.md expects a multi-minute library scan. |
 
 ---
@@ -187,7 +200,7 @@ All ✅ **Verified** by executing the same probe under both PyQt5 5.15.11 and Py
 | `fontMetrics().width()` → `horizontalAdvance()` | 2 | ✅ | ✅ |
 | `pyqtWrapperType` → `type(QObject)` | 1 | ✅ | ✅ |
 | `QFileDialog.DirectoryOnly` → `FileMode.Directory` + `Option.ShowDirsOnly` | 1 | ✅ | ✅ |
-| `return QVariant()` → `return None` | 4 | ✅ | ✅ |
+| `return QVariant()` → `return None` | 3 | ✅ | ✅ |
 | `QMouseEvent` built with `QPointF` | 1 | ✅ | ✅ |
 
 **≈561 of ≈572 edits — about 98% — are forward-compatible.**
@@ -196,11 +209,19 @@ The `QVariant` row was checked with a real `QAbstractTableModel` rather than tru
 PyQt5 normalises both `None` and `QVariant()` to `None` on read-back through the index, so the
 swap is behaviour-identical, not merely tolerated. ✅ **Verified**.
 
-The instance-level count is **⚠️ Unverified as a total** — two different heuristic sweeps found 15
-and 12 sites. These are enum accesses keyed off a variable (`painter.Antialiasing`,
-`header.Stretch`, `application.font().PreferAntialias`) rather than a class name, so no class-name
-codemod will catch them and no regex proves the list complete. Treat ~15 as a lower bound and
-expect a few to surface only at runtime.
+The instance-level count was **badly underestimated at ~15**: an AST sweep that filters out the
+project's own enums, stdlib receivers and already-scoped chains found **81**. These are enum
+accesses keyed off a variable (`painter.Antialiasing`, `header.Stretch`,
+`application.font().PreferAntialias`) rather than a class name, so no class-name codemod catches
+them and no static check proves the list complete. All 81 were rewritten in Q2.
+
+**They were rewritten in the instance form, not by naming a class** — `v_header.Fixed` became
+`v_header.ResizeMode.Fixed`, not `QHeaderView.ResizeMode.Fixed`. That matters because `Fixed` is
+2 under `QHeaderView.ResizeMode` and 0 under both `QListView.ResizeMode` and
+`QSizePolicy.Policy`: writing the class out means deciding the receiver's type by hand, and a
+wrong-but-valid choice compiles, resolves, passes every test and silently means something else.
+The instance form lets the receiver pick its own scope, which is the only spelling that cannot
+be wrong. ✅ **Verified** to work on both bindings.
 
 ### What cannot move early
 
@@ -249,15 +270,16 @@ against PyQt6 6.11.0.
 
 | Symbol | Sites | Replacement |
 |--------|------:|-------------|
-| `QDesktopWidget` | 6 | `QApplication.primaryScreen().availableGeometry()` / `screenAt()` |
-| `pyqtWrapperType` (`hplugins.py:7`) | 1 | `type(QObject)` — **breaks the plugin metaclass at import**, so it is the first thing that fails |
+| `QDesktopWidget` | 4 live | `QApplication.primaryScreen().availableGeometry()` / `screenAt()`. Three of the six v1.0 counted are commented out. `misc.available_geometry()` now wraps both, because `screenAt()` answers `None` for a point on no screen |
+| `pyqtWrapperType` (`hplugins.py:7`) | 1 | `type(QObject)`. **Not the first thing that fails** — `hplugins` is imported by no module in the tree, so the breakage was dormant |
 | `qApp` (`io_misc.py:17,198,555`) | 3 | `QApplication.instance()` |
 | `QFontMetrics.width()` | 2 | `horizontalAdvance()` |
 | `QDropEvent.pos()` | 2 | `position().toPoint()` |
 | `QFileDialog.DirectoryOnly` | 1 | `FileMode.Directory` + `Option.ShowDirsOnly` |
+| `QPalette.Background` (`misc.py:2189`) | 1 | `ColorRole.Window`, same value (10). **Missed by v1.0** — it survives the rescoping as `ColorRole.Background`, which resolves on PyQt5 and does not exist on Qt6 |
 | `AA_EnableHighDpiScaling` / `AA_UseHighDpiPixmaps` | 2 | Gone — Qt6 always scales |
-| `exec_()` | 11 | `exec()` |
-| `QAction` / `QActionGroup` / `QShortcut` | 4 imports | Moved `QtWidgets` → `QtGui` |
+| `exec_()` | 11 | `exec()`. None of them is a `QMessageBox` — every message box already called `.exec()`, so the rename could not disturb what `gui_smoke.py` monkeypatches |
+| `QAction` / `QActionGroup` / `QShortcut` | 4 names, 2 import statements | Moved `QtWidgets` → `QtGui` |
 
 ### Build and tooling
 
@@ -288,9 +310,9 @@ Checked against the four Core Constraints in `CLAUDE.md`.
 
 | Phase | Scope | Effort | Depends on | Status |
 |-------|-------|:------:|------------|--------|
-| **Q0 — Tooling** | Commit the enum resolver as `misc/check_qt_enums.py` (algorithm in §8) and add a pytest gate asserting zero unscoped references. Gate first, so later phases are self-checking. | 🟢 | — | — |
-| **Q1 — Port the gate** | `misc/gui_smoke.py`: 14 enum sites, `QMouseEvent`→`QPointF`, and the three `sip` calls behind a binding-agnostic import. Must precede Q2 or Q2 has no gate. | 🟢 | Q0 | — |
-| **Q2 — Forward-compatible codemod** | The ~561 edits from §4, still on PyQt5. Land **per module**, not as one diff — `misc.py` (189) and `gallery.py` (113) each warrant their own review. Run `pytest`, `gui_smoke.py`, and launch the app after each. | 🟡 | Q1 | — |
+| **Q0 — Tooling** | `misc/check_qt_enums.py` and `tests/test_qt_scoping.py`. The gate landed in two halves: the resolve-and-invariant tests were green from the first commit, and the zero-unscoped assertion was added once Q2 finished, so the suite is never red. | 🟢 | — | ✅ 2026-09-10 |
+| **Q1 — Port the gate** | `misc/gui_smoke.py`: 15 enum sites, `QMouseEvent`→`QPointF`, and `from PyQt5 import sip` — a bare `import sip` only ever worked because PyQt5 aliases it into `sys.modules`. | 🟢 | Q0 | ✅ 2026-09-10 |
+| **Q2 — Forward-compatible codemod** | 610 edits, still on PyQt5: 503 class-keyed and 81 instance-level enum sites plus the 26 removed-API swaps. Landed as one commit per module, renames separated from behavioural swaps. | 🟡 | Q1 | ✅ 2026-09-10 |
 | **Q3 — Switch the binding** | The ~11 edits from §4, `requirements.txt`, and `HappyPanda.spec`. First point at which the app has never run before. | 🟡 | Q2 | — |
 | **Q4 — Retire `FORCE_HIGH_DPI_SUPPORT`** | Four-place settings removal per Core Constraint 4, plus CHANGELOG. Separate commit — it is a user-visible behaviour change, not part of the port. | 🟢 | Q3 | — |
 | **Q5 — Shakedown** | Drive all 62 widget subclasses by hand against a **copy** of the database. This phase dominates the schedule. | 🔴 | Q3 | — |
@@ -301,7 +323,8 @@ undated completed phase reads as present tense.
 
 **Q0–Q2 deliver standalone value even if the migration is never finished**: the tree ends up in the
 Qt6 dialect, still on Qt5, with a gate preventing regression. That is a strictly better resting
-position than today, and it is abandonable at any point.
+position than today, and it is abandonable at any point. As of 2026-09-10 that is where the tree
+sits — Q0–Q2 are done and Q3 has not started.
 
 **Effort is ⚠️ Unverified judgement, not measurement.** Rough shape: Q0–Q2 a few days spread over
 several commits; Q3–Q4 small; Q5 realistically 1–2 weeks of real use. The mechanical phases are
@@ -342,33 +365,25 @@ Nothing here has been confirmed by running Happypanda under Qt6. Before Q3:
 
 ### Reproducing the analysis
 
-Both probe environments were session-scratch and are gone. To rebuild the mapping:
+`misc/check_qt_enums.py` is this resolver, committed. It runs against whichever binding is
+installed and needs no probe environment:
 
 ```sh
-# 1. A PyQt6 environment
-python -m venv qt6probe && qt6probe/Scripts/pip install PyQt6 qtawesome
+venv/Scripts/python.exe misc/check_qt_enums.py            # per-file counts
+venv/Scripts/python.exe misc/check_qt_enums.py --sites    # every site and its replacement
+venv/Scripts/python.exe misc/check_qt_enums.py --instance # the receiver-keyed review list
 ```
 
-```
-# 2. Resolver: for every `QClass.NAME` in the tree that PyQt6 no longer exposes
-#    directly, find the single nested enum scope that does expose it.
-#    -> emits 154 mappings / 517 sites at commit 69b1ae0
-#
-#    for each (cls, attr) in regex r'\b(Q[A-Za-z0-9_]*)\.([A-Za-z_]\w*)' over
-#    version/**/*.py + misc/gui_smoke.py:
-#        c = getattr(QtCore|QtGui|QtWidgets, cls)
-#        if hasattr(c, attr): continue                     # already valid
-#        for sub in dir(c):
-#            s = getattr(c, sub)
-#            if isinstance(s, type) and issubclass(s, enum.Enum) and hasattr(s, attr):
-#                emit(f"{cls}.{attr}" -> f"{cls}.{sub}.{attr}")
-#
-# 3. Back-test the emitted mapping against the project venv, asserting both
-#    that the scoped path resolves AND that Scope.NAME == Class.NAME.
-```
+**The v1.0 recipe above only worked on PyQt6, and silently found nothing on PyQt5.** Two reasons,
+both ✅ **Verified**: PyQt5's nested scopes are `sip.enumtype` objects, not `enum.Enum`
+subclasses, so the `issubclass(s, enum.Enum)` test never fires; and `dir()` on one of them lists
+`int` methods rather than its members, so the member universe has to be built from each *class's*
+own attributes instead. The committed resolver does both.
 
-Read files with `encoding='utf-8-sig'` — 8 of 23 modules carry a UTF-8 BOM and `ast.parse` rejects
-it otherwise.
+Read files with `encoding='utf-8-sig'` — 7 of the 25 files scanned carry a UTF-8 BOM and
+`ast.parse` rejects it otherwise. A codemod must also split lines the way `ast` numbers them
+(`splitlines`, not a split on one terminator): a file with mixed endings otherwise desyncs, and
+every edit after the first odd line out lands on the wrong line.
 
 ---
 
@@ -380,15 +395,18 @@ it otherwise.
 | **Stay on PyQt5 indefinitely** | Cost does not shrink with time; every new dialog adds enum sites. Qt 5.15 open-source support is ended (⚠️ unverified). | 2026-09-09 |
 | **Big-bang switch, then fix** | Measured as unnecessary: 98% of edits are forward-compatible (verified 517/0 on PyQt5). A big-bang leaves ~572 unverified edits and a non-booting app, with no way to tell a rescoping typo from a genuine Qt6 behaviour difference. | 2026-09-09 |
 | **`hasattr` compat shims for the residual 11 edits** | Only ~11 edits and 4 import statements; a compat module for that is debt that must be remembered and deleted. Better to take them at switch time. | 2026-09-09 |
-| **`qtpy` abstraction layer** | Would decouple the codebase from the binding, but adds a dependency and an indirection layer to a single-target desktop app, and does not remove the enum work — QtPy targets the scoped spelling too. ⚠️ **Unverified** — considered on reasoning, not prototyped. | 2026-09-09 |
+| **`qtpy` abstraction layer** | Would decouple the codebase from the binding, but adds an indirection layer to a single-target desktop app, and does not remove the enum work — QtPy targets the scoped spelling too. Note it is **already installed**, as a transitive dependency of `qtawesome`, so the cost is pinning rather than adding it. ⚠️ **Unverified** — considered on reasoning, not prototyped. | 2026-09-09 |
 
 ---
 
 ## Document History
 
 * **v1.0** - Initial draft
+* **v1.1** - Q0-Q2 implemented. Counts re-derived from the AST: 503 class-keyed sites (not 517)
+  and 81 instance-level ones (not ~15). `QPalette.Background` added to §5 as a tenth removed-API
+  family. §8's reproduction recipe corrected - it only ever worked on PyQt6.
 
 ---
 
-**Last Updated:** 2026-09-09  
-**Next Review:** when Q0 starts, or on any PyQt5/PyQt6 version bump that invalidates the §4 back-test
+**Last Updated:** 2026-09-10  
+**Next Review:** when Q3 starts, or on any PyQt5/PyQt6 version bump that invalidates the §4 back-test
