@@ -130,6 +130,9 @@ below some title length at all, and neither has been tried.
     which was weighed and accepted: the cost is a dropped `a:` filter rather than a wrong match,
     and no folder in a 19,400-gallery library has a leading group that is a language at all.
     Do not narrow it back without measuring both sides again.
+  - **A configured language is written back in its configured spelling**, via
+    `language_spelling`. Capitalising instead turns a multi-word custom entry like
+    `Traditional Chinese` into a value the pickers no longer hold.
 - **The `language:` namespace holds tags that are not languages.** `translated`, `rewrite`,
   `rough grammar`, `rough translation`, `text cleaned` and `textless narrative` say what was
   done to a release and sit beside the real language rather than instead of it, and the
@@ -388,6 +391,13 @@ because **both sides are the source's own title**, not a folder name against a s
   than that (an early 59-gallery pass produced two rows) because the yield is thin and lumpy, so
   do not read a quiet run as a broken one. Check the funnel in the log first: hits, then how
   many were the same work, then how many were classified, then rows.
+- **A failure mid-run must not throw away searches already paid for.** By the time a batch of
+  candidates is waiting on its metadata lookup, the searches behind them are spent, and the
+  source bans on request volume. `_scan` flushes that batch from a `finally`, so a connection
+  error costs one lookup rather than re-spending up to `MAX_GDATA_URLS` galleries' searches on
+  the next run. The flush is itself guarded: a failure there must not replace the error that
+  caused it. The refused-search path does the same thing explicitly and then clears the batch,
+  so the two cannot classify it twice.
 - **A failed lookup is not a scanned gallery.** A batch whose request never completed leaves its
   galleries unrecorded so a later run retries them; a candidate the api answers for with an
   `error` entry is a removed gallery and must *not* hold its holder back, or that gallery is

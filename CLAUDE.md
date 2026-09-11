@@ -285,9 +285,10 @@ the first time a second consumer appears.
 for the online metadata pipeline, drawn from real failures. The four `test_init_db` failures are
 pre-existing and unrelated.
 
-`misc/gui_smoke.py` covers the settings dialog, the gallery chooser and the better version
-list headlessly — the settings round-trip, the ini's encoding, the chooser's covers, gestures
-and creator line, and two crash regressions. It runs in a temporary directory against the
+`misc/gui_smoke.py` covers the settings dialog, the gallery chooser, the better version list
+and the gallery edit dialog headlessly — the settings round-trip, the ini's encoding, the
+chooser's covers, gestures and creator line, the edit dialog's language round-trip, a scan run
+end to end, and the crash regressions. It runs in a temporary directory against the
 shipped defaults, which is deliberate: the repo's `settings.ini` is untracked, so the suite
 would otherwise test whatever configuration happens to be local. It builds widgets in
 isolation, so it proves a button reaches a method **by name** but never what that method does.

@@ -1274,6 +1274,27 @@ def _searchable(folder, artist='', language=''):
     return gallery
 
 
+def test_a_custom_language_keeps_the_spelling_it_was_configured_with(monkeypatch):
+    """It has to equal the configured entry, or the pickers no longer offer the stored value.
+
+    A single lower case word from the source takes a plain capital; a configured name may be
+    several words, and capitalising that produces a string the list does not hold.
+    """
+    monkeypatch.setattr(app_constants, 'G_DEF_LANGUAGE', 'English')
+    monkeypatch.setattr(app_constants, 'G_CUSTOM_LANGUAGES', ['Traditional Chinese'])
+    utils.init_utils()
+    assert utils.title_parser('[Yamada] T [Traditional Chinese]')['language'] ==         'Traditional Chinese'
+    assert utils.title_parser('[Yamada] T [traditional chinese]')['language'] ==         'Traditional Chinese'
+    assert utils.title_parser('[Yamada] T [korean]')['language'] == 'Korean'
+
+
+def test_a_language_stored_as_the_artist_is_dropped_whatever_the_pickers_offer():
+    """An 'a:korean$' filter matches nothing, so it must never be built."""
+    queries = fetch.search_queries(_searchable('Some Title [Korean]', 'Korean', 'Korean'))
+    assert queries
+    assert all('a:korean$' not in q for q in queries)
+
+
 @pytest.mark.parametrize('language, expected', [
     ('Japanese', ''),
     ('japanese', ''),

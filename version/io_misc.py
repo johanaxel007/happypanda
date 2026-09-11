@@ -562,7 +562,12 @@ class BetterVersionsList(QTableWidget):
         return -1
 
     def _dismiss(self, row):
-        """Dismisses a row and takes it off the table.
+        """Dismisses a row, then takes it off the table or re-renders it as dismissed.
+
+        Which of the two depends on what the window is showing: with dismissed rows listed,
+        taking this one away would leave it the only dismissal not on screen, reachable again
+        only through a refresh. Re-rendering is a reload, because the row object held by the
+        cell still says what it said before and re-reading is what keeps the two agreeing.
 
         Found by identity rather than by the index the menu was opened at: `exec_` runs a
         nested event loop, and a scan turning up a row meanwhile calls `add_row`, which
@@ -571,6 +576,9 @@ class BetterVersionsList(QTableWidget):
         if not row:
             return
         betterversions.shared_store().dismiss(row.series_id, row.url)
+        if self.show_dismissed:
+            self.load()
+            return
         at = self._row_at(row)
         if at >= 0:
             self.removeRow(at)

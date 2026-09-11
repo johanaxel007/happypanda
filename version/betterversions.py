@@ -457,24 +457,41 @@ class BetterVersionStore:
     def add(self, row):
         """Stores a row, returning the state it already had, or None when it is new.
 
-        An existing row keeps its state, so a candidate the user has already dismissed does
-        not come back as new on the next scan. The previous state is returned rather than a
-        plain "was it new", because a run that turned up only rows already on the list has to
-        be able to say so instead of reporting that it found nothing.
+        Three columns survive a re-add rather than being overwritten, because each records
+        something about the row's history that the incoming copy cannot know:
+
+        - `state`, so a candidate the user has already dismissed does not come back as new.
+        - `source`, which records how the row was found. Hand-noted wins whichever side
+          arrives second: a user who picked a row while looking at the alternatives knows
+          something the tags do not, and a re-find cannot take that back.
+        - `found_at`, which orders the list; refreshing it would move an old row to the top.
+
+        Everything else is taken from the incoming row, since a fresh classification of the
+        same candidate is the better one.
+
+        The previous state is returned rather than a plain "was it new", because a run that
+        turned up only rows already on the list has to be able to say so instead of reporting
+        that it found nothing.
         """
         row.found_at = row.found_at or datetime.datetime.now().replace(microsecond=0).isoformat(' ')
         with self._lock:
             conn = self._connection()
             existing = conn.execute(
-                'SELECT state FROM candidates WHERE series_id=? AND url=?',
+                'SELECT state, source, found_at FROM candidates WHERE series_id=? AND url=?',
                 (row.series_id, row.url)).fetchone()
+            state = existing['state'] if existing else row.state
+            source = row.source
+            found_at = row.found_at
+            if existing:
+                found_at = existing['found_at'] or row.found_at
+                source = (SOURCE_PICKER if SOURCE_PICKER in (existing['source'], row.source)
+                          else row.source)
             conn.execute(
                 'INSERT OR REPLACE INTO candidates(series_id, url, title, native_title, '
                 'thumb_url, kinds, held_title, source, found_at, state) '
                 'VALUES(?,?,?,?,?,?,?,?,?,?)',
                 (row.series_id, row.url, row.title, row.native_title, row.thumb_url,
-                 ','.join(row.kinds), row.held_title, row.source, row.found_at,
-                 existing['state'] if existing else row.state))
+                 ','.join(row.kinds), row.held_title, source, found_at, state))
             conn.commit()
         return existing['state'] if existing else None
 
@@ -716,53 +733,66 @@ class BetterVersionScan(QObject):
         pending_urls = 0
         found = 0
 
-        for x, gallery in enumerate(galleries, 1):
-            if self._stop:
-                log_i('Better version scan stopped after {} of {} galleries'.format(x - 1, len(galleries)))
-                self.aborted = True
-                break
-            log_i(f'--- Scanning gallery {x}/{len(galleries)}: {gallery.title} ---')
-            self.PROGRESS.emit(f'({x}/{len(galleries)}) Looking for a better version of: {gallery.title}')
+        try:
+            for x, gallery in enumerate(galleries, 1):
+                if self._stop:
+                    log_i('Better version scan stopped after {} of {} galleries'.format(x - 1, len(galleries)))
+                    self.aborted = True
+                    break
+                log_i(f'--- Scanning gallery {x}/{len(galleries)}: {gallery.title} ---')
+                self.PROGRESS.emit(f'({x}/{len(galleries)}) Looking for a better version of: {gallery.title}')
 
-            query = scan_query(gallery)
-            if not query:
-                log_w('Gallery has no searchable title, skipping')
-                store.mark_scanned([gallery.id])
-                continue
+                query = scan_query(gallery)
+                if not query:
+                    log_w('Gallery has no searchable title, skipping')
+                    store.mark_scanned([gallery.id])
+                    continue
 
-            log_i(f'Scanning with query: {query}')
-            # The expunged listing is a separate search holding deleted galleries, which cannot
-            # be a better version of anything.
-            results = hen.search(query, expunged=False, max_pages=SCAN_SEARCH_PAGES)
-            if results == 'error':
-                log_e('Source refused the search, stopping the scan')
-                self.aborted = True
-                # The searches behind these are already spent, so classify them rather than
-                # pay for them again next run.
-                if pending:
+                log_i(f'Scanning with query: {query}')
+                # The expunged listing is a separate search holding deleted galleries, which cannot
+                # be a better version of anything.
+                results = hen.search(query, expunged=False, max_pages=SCAN_SEARCH_PAGES)
+                if results == 'error':
+                    log_e('Source refused the search, stopping the scan')
+                    self.aborted = True
+                    # The searches behind these are already spent, so classify them rather than
+                    # pay for them again next run.
+                    if pending:
+                        found += self._classify(hen, store, pending, target)
+                    pending = []
+                    return found
+
+                hits = results.get(query, []) if results else []
+                candidates = [(t, u) for t, u in hits
+                              if not self._is_held_gallery(gallery, u)
+                              and same_work(gallery.title, t)]
+                log_i(f'{len(hits)} hit(s), {len(candidates)} of them the same work')
+                for title, _ in candidates[:5]:
+                    log_i(f"  - '{title}'")
+
+                if not candidates:
+                    store.mark_scanned([gallery.id])
+                    continue
+
+                pending.append((gallery, candidates))
+                pending_urls += len(candidates)
+                if pending_urls >= pewnet.EHen.MAX_GDATA_URLS:
                     found += self._classify(hen, store, pending, target)
-                return found
+                    pending, pending_urls = [], 0
 
-            hits = results.get(query, []) if results else []
-            candidates = [(t, u) for t, u in hits
-                          if not self._is_held_gallery(gallery, u)
-                          and same_work(gallery.title, t)]
-            log_i(f'{len(hits)} hit(s), {len(candidates)} of them the same work')
-            for title, _ in candidates[:5]:
-                log_i(f"  - '{title}'")
-
-            if not candidates:
-                store.mark_scanned([gallery.id])
-                continue
-
-            pending.append((gallery, candidates))
-            pending_urls += len(candidates)
-            if pending_urls >= pewnet.EHen.MAX_GDATA_URLS:
+            if pending:
                 found += self._classify(hen, store, pending, target)
-                pending, pending_urls = [], 0
-
-        if pending:
-            found += self._classify(hen, store, pending, target)
+                pending = []
+        finally:
+            # The searches behind these are spent whatever went wrong, and the source bans on
+            # request volume, so one lookup costs less than searching again. Guarded, so a
+            # failure here cannot replace the one that got us here.
+            if pending:
+                try:
+                    self._classify(hen, store, pending, target)
+                except Exception:
+                    log_w(f'Could not classify {len(pending)} gallery(s) whose search was '
+                          f'already spent; they will be searched for again')
         return found
 
     @staticmethod

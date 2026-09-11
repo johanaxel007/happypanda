@@ -66,6 +66,39 @@ def test_a_dismissed_row_stays_dismissed_when_a_later_scan_finds_it_again(store)
     assert len(store.rows(include_dismissed=True)) == 1
 
 
+# A row the user noted from the gallery chooser is exempt from the recheck, which judges rows
+# on the source's tags. `add` replaces the whole row, so without these the exemption was lost
+# the moment a scan turned the same candidate up.
+
+def test_a_scan_refinding_a_hand_noted_row_leaves_it_hand_noted(store):
+    store.add(a_row(source=bv.SOURCE_PICKER))
+    store.add(a_row(source=bv.SOURCE_SCAN))
+    assert [r.source for r in store.rows()] == [bv.SOURCE_PICKER]
+    assert bv.recheckable_rows(store) == [], 'the recheck must still skip it'
+
+
+def test_noting_a_scanned_row_by_hand_protects_it(store):
+    "The user picked it against the alternatives, which the tags cannot second-guess."
+    store.add(a_row(source=bv.SOURCE_SCAN))
+    store.add(a_row(source=bv.SOURCE_PICKER))
+    assert [r.source for r in store.rows()] == [bv.SOURCE_PICKER]
+    assert bv.recheckable_rows(store) == []
+
+
+def test_a_refound_row_keeps_the_time_it_was_first_found(store):
+    "It orders the list, so refreshing it would float an old row to the top of the window."
+    store.add(a_row(found_at='2025-01-01 00:00:00'))
+    store.add(a_row(found_at='2026-09-11 12:00:00'))
+    assert [r.found_at for r in store.rows()] == ['2025-01-01 00:00:00']
+
+
+def test_a_refound_row_takes_the_newer_classification(store):
+    "The tags behind it were read again, so that half is fresher than what is stored."
+    store.add(a_row(kinds=(bv.KIND_TRANSLATED,)))
+    store.add(a_row(kinds=(bv.KIND_DECENSORED, bv.KIND_REFINED)))
+    assert store.rows()[0].kinds == (bv.KIND_DECENSORED, bv.KIND_REFINED)
+
+
 def test_pruning_drops_rows_of_a_gallery_that_left_the_library(store):
     store.add(a_row(series_id=1))
     store.add(a_row(series_id=2, url='https://e-hentai.org/g/222/bbb/'))

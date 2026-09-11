@@ -494,6 +494,21 @@ window.reload()
 assert listed.rowCount() == 1, 'a dismissed row came back on the next load'
 say('review list: "not interested" removes a row for good, not just for this session')
 
+# Dismissing one while the window is showing dismissed rows. Taking it off the table there
+# would leave it the one dismissal not on screen, with only a refresh to bring it back.
+listed.show_dismissed = True
+window.reload()
+assert listed.rowCount() == 2, listed.rowCount()
+kept = next(listed.item(i, listed.HELD).data(Qt.UserRole + 1) for i in range(2)
+            if listed.item(i, listed.HELD).data(Qt.UserRole + 1).state != betterversions.STATE_DISMISSED)
+listed._dismiss(kept)
+assert listed.rowCount() == 2, 'the row just dismissed vanished from a list showing dismissals'
+betterversions.shared_store().restore(kept.series_id, kept.url)
+listed.show_dismissed = False
+window.reload()
+assert listed.rowCount() == 1, listed.rowCount()
+say('review list: dismissing a row while dismissals are shown leaves it on screen')
+
 opened_links.clear()
 remaining = listed.item(0, listed.HELD).data(Qt.UserRole + 1)
 listed._open_source(remaining)
@@ -848,6 +863,95 @@ assert any('english / censored' in m for m in rejections), rejections
 say('scan: a decensored release in another language is rejected, and the log says what it held')
 vanessa_store.close()
 
+# The translation quality axis, on the gallery shape only it admits: already English, already
+# uncensored, and marked a rough translation, so a cleaner translation is the one thing left
+# for a search to find.
+CLEAN = 'https://exhentai.org/g/2222222/cleaned00/'
+STILL_ROUGH = 'https://exhentai.org/g/2222223/rewritten/'
+
+
+class CleanerTranslationHen(StubHen):
+    def search(self, query, **kwargs):
+        self.searches.append((query, kwargs))
+        return {query: [('[Yamada] Rough Times Ahead [English]', CLEAN),
+                        ('[Yamada] Rough Times Ahead [English] [Rewrite]', STILL_ROUGH)]}
+
+    def get_metadata(self, urls):
+        self.lookups.append(list(urls))
+        tags = {CLEAN: ['language:english', 'language:translated'],
+                STILL_ROUGH: ['language:english', 'language:translated', 'language:rewrite']}
+        return ({'gmetadata': [{'gid': i, 'tags': tags.get(u, []), 'title_jpn': '', 'thumb': ''}
+                               for i, u in enumerate(urls)]},
+                {i: u for i, u in enumerate(urls)})
+
+
+rough_store = betterversions.BetterVersionStore(os.path.join(os.getcwd(), 'rough.db'))
+rough_held = a_gallery(78, 'Rough Times Ahead', 'https://exhentai.org/g/780/held/',
+                       {'Language': ['english', 'translated', 'rough translation'],
+                        'Other': ['uncensored']})
+assert betterversions.worth_scanning(rough_held, 'english'), (
+    'a rough translation is the only thing left to find for this gallery')
+refine = betterversions.BetterVersionScan()
+refine.galleries = [rough_held]
+refine.store = rough_store
+refine._make_hen = lambda: CleanerTranslationHen()
+app_constants.GLOBAL_EHEN_LOCK = False
+logged.clear()
+refine.scan()
+
+rows = rough_store.rows()
+assert [r.url for r in rows] == [CLEAN], [r.url for r in rows]
+assert rows[0].kinds == (betterversions.KIND_REFINED,), rows[0].kinds
+assert rows[0].kinds_label == 'Better translation', rows[0].kinds_label
+# The one that is rough in its own way is a trade, and the log has to say so on both sides.
+rejections = [m for m in logged if 'candidate(s) rejected' in m]
+assert any('rough: rough translation' in m for m in rejections), rejections
+assert any('rough: rewrite' in m for m in logged), [m for m in logged if ' / ' in m]
+say('scan: a cleaner release of a roughly translated gallery is found, one still rough is not')
+rough_store.close()
+
+# A connection failure partway through. The searches behind the galleries already queued for a
+# metadata lookup are spent whatever happens next, and the source bans on request volume, so
+# they have to be classified rather than searched for again on the next run.
+FIRST = 'https://exhentai.org/g/3333331/firstcand/'
+
+
+class FailsOnTheSecondGallery(StubHen):
+    def search(self, query, **kwargs):
+        self.searches.append((query, kwargs))
+        if len(self.searches) > 1:
+            raise app_constants.MetadataFetchFail('the connection went away')
+        return {query: [('[Awa] Nekokan! Meshimase [English]', FIRST)]}
+
+    def get_metadata(self, urls):
+        self.lookups.append(list(urls))
+        return ({'gmetadata': [{'gid': 0, 'tags': ['language:english', 'language:translated'],
+                                'title_jpn': '', 'thumb': ''}]}, {0: urls[0]})
+
+
+spent_store = betterversions.BetterVersionStore(os.path.join(os.getcwd(), 'spent.db'))
+searched = a_gallery(81, 'Nekokan! Meshimase', 'https://exhentai.org/g/810/held/',
+                     {'Female': ['schoolgirl uniform']})
+never_reached = a_gallery(82, 'Something Else Entirely', 'https://exhentai.org/g/820/held/',
+                          {'Female': ['schoolgirl uniform']})
+blown = betterversions.BetterVersionScan()
+blown.galleries = [searched, never_reached]
+blown.store = spent_store
+blown._make_hen = lambda: FailsOnTheSecondGallery()
+app_constants.GLOBAL_EHEN_LOCK = False
+reported = []
+blown.FINISHED.connect(reported.append)
+blown.scan()
+
+assert reported == [False], reported
+assert [r.url for r in spent_store.rows()] == [FIRST], (
+    'the search behind this row was already paid for and its result was thrown away')
+assert spent_store.scanned_ids() == {81}, (
+    'the first gallery has to count as scanned, and the one never reached must not')
+assert app_constants.GLOBAL_EHEN_LOCK is False, 'a failed scan kept the metadata lock'
+say('scan: a run that fails partway keeps the searches it had already paid for')
+spent_store.close()
+
 # The other row a real run got wrong: two unrelated works whose titles both reduce to
 # 'Seishoku'. Only the parody tag separates them, and it is read qualified so an unqualified
 # tag of the same name cannot stand in for it.
@@ -1181,6 +1285,72 @@ assert src.count('QThread(') == 2, (
 assert 'QThread(' not in open(gallerydialog_src, encoding='utf-8').read(), (
     'the gallery dialog builds a thread per metadata fetch, one of them inside a loop')
 say('threads: only the two session-long threads still build their own')
+
+# --- a gallery keeps a language the combo does not list -------------------------------------
+# The combo lists a handful of languages where the source tags dozens, so a stored Korean or
+# Speechless is regularly absent from it. The checkbox beside it is ticked and hidden while
+# one gallery is edited, so a fallback to the default is written over the real language.
+import gallerydialog  # noqa: E402
+
+from PyQt5.QtWidgets import QWidget  # noqa: E402
+
+gd_parent = QWidget()
+# The dialog registers itself with its parent's group so a multi-gallery fetch can drive them
+# all, so a bare QWidget is not enough of a parent to build one.
+gd_parent.gallery_dialog_group = gallerydialog.GalleryDialogGroup(gd_parent)
+for stored in ('Korean', 'Speechless', 'English'):
+    held = gallerydb.Gallery()
+    held.title = 'Some Title'
+    held.artist = 'Yamada'
+    held.language = stored
+    held.path = 'J:/Doujin/Some Title/gallery.zip'
+    gd = gallerydialog.GalleryDialog(gd_parent, held)
+    assert gd.lang_box.currentText() == stored, (stored, gd.lang_box.currentText())
+    written = gd.make_gallery(gallerydb.Gallery(), add_to_model=False, new=False)
+    assert written.language == stored, 'the edit dialog replaced %r with %r' % (
+        stored, written.language)
+    gd.delayed_close()
+say('gallery dialog: a stored language the combo does not list survives an edit')
+
+# A gallery with no language at all still gets the default rather than an empty combo.
+blank = gallerydb.Gallery()
+blank.title = 'Some Title'
+blank.language = ''
+blank.path = 'J:/Doujin/Some Title/gallery.zip'
+gd = gallerydialog.GalleryDialog(gd_parent, blank)
+assert gd.lang_box.currentText() == app_constants.G_DEF_LANGUAGE, gd.lang_box.currentText()
+gd.delayed_close()
+say('gallery dialog: a gallery with no language falls back to the default')
+
+# Closing the dialog after a metadata fetch has finished. worker_thread deletes the thread once
+# the work signals done, and isRunning() on a deleted QThread raises - while isinstance still
+# passes, because the python wrapper outlives the C++ one it points at.
+
+
+class _Idle(QObject):
+    DONE = pyqtSignal(object)
+
+    def run(self):
+        self.DONE.emit(None)
+
+
+closing = gallerydb.Gallery()
+closing.title = 'Some Title'
+closing.language = 'English'
+closing.path = 'J:/Doujin/Some Title/gallery.zip'
+gd = gallerydialog.GalleryDialog(gd_parent, closing)
+idle = _Idle()
+gd._fetch_thread = misc.worker_thread(gd_parent, idle, idle.run, idle.DONE, 'smoke fetch')
+gd._fetch_thread.finished.connect(gd._forget_fetch_thread)
+gd._fetch_thread.start()
+for _ in range(400):                      # let it finish and let deleteLater be delivered
+    qapp.processEvents()
+    QThread.msleep(1)
+    if gd._fetch_thread is None:
+        break
+assert gd._fetch_thread is None, 'the dialog still points at a thread that deletes itself'
+gd.delayed_close()                        # the call that asks _fetch_thread whether it is running
+say('gallery dialog: closing it after a finished fetch does not touch the deleted thread')
 
 say('')
 say('GUI SMOKE OK')

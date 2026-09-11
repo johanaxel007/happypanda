@@ -616,6 +616,10 @@ class GalleryDialog(QWidget):
             self._fetch_thread = misc.worker_thread(
                 self.parent(), self._fetch_inst, self._fetch_inst.auto_web_metadata,
                 self._fetch_inst.FINISHED, "GalleryDialog metadata thread")
+            # The thread deletes itself once the fetch ends, and the reference has to go with
+            # it: isRunning() on a deleted QThread raises rather than answering false, and the
+            # python wrapper survives, so isinstance is no guard.
+            self._fetch_thread.finished.connect(self._forget_fetch_thread)
             self._fetch_thread.start()
             log_i('fetch thread started')
             
@@ -725,6 +729,10 @@ class GalleryDialog(QWidget):
             fetch_inst.FINISHED.disconnect()
         except TypeError:
             pass
+
+    def _forget_fetch_thread(self):
+        "Drops the finished thread, which is about to delete itself."
+        self._fetch_thread = None
 
     def delayed_close(self):
         self.parent().gallery_dialog_group.unregister(self)
