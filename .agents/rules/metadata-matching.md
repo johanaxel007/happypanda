@@ -339,16 +339,18 @@ because **both sides are the source's own title**, not a folder name against a s
   therefore requires `held_langs ⊆ candidate_langs ⊆ held_langs ∪ {target}`, and translated
   requires the candidate not be known-censored when the held copy is already uncensored.
 - **Log every candidate that improves on nothing, with the tags it turned out to hold.** This is
-  where a scan discards nearly everything — a real run threw away 146 of 148 same-work
-  candidates — and the rejections are correct only as long as someone can check them. `three
+  where a scan discards nearly everything — over a whole library it threw away 9,603 of 10,343
+  same-work candidates — and the rejections are correct only as long as someone can check them. `three
   states per axis` matters in that log: a release that states no language and one that states no
   censorship are not the same as either alternative. Bounded by `MAX_LOGGED_REJECTIONS`.
-- **The measured yield is low, and that is the honest answer rather than a bug.** Two rows from
-  59 galleries on a real library, because the other releases of those works are overwhelmingly
-  translations into languages the scan is not looking for — chinese, korean, spanish, russian,
-  portuguese and french across the candidates of one run. Check the funnel in the log before
-  concluding anything is broken: hits, then how many were the same work, then how many were
-  classified, then rows.
+- **Most of what a scan finds is discarded, and that is the honest answer rather than a bug.**
+  Measured over a whole library: **7,742 galleries searched → 36,522 hits → 10,343 judged the
+  same work → 723 rows**, so roughly one gallery in eleven ends up with one. What goes is
+  overwhelmingly translations into languages the scan is not looking for — chinese, korean,
+  spanish, russian, portuguese and french dominate the rejections. A small run looks far worse
+  than that (an early 59-gallery pass produced two rows) because the yield is thin and lumpy, so
+  do not read a quiet run as a broken one. Check the funnel in the log first: hits, then how
+  many were the same work, then how many were classified, then rows.
 - **A failed lookup is not a scanned gallery.** A batch whose request never completed leaves its
   galleries unrecorded so a later run retries them; a candidate the api answers for with an
   `error` entry is a removed gallery and must *not* hold its holder back, or that gallery is
