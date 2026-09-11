@@ -174,9 +174,9 @@ def test_title_numbers(title, expected):
 # --- Chaika query cleaning -------------------------------------------------------------
 
 @pytest.mark.parametrize('query, expected', [
-    ('"Kaizoku Kyonyuu | Big Breasted Pirate" artist:"brave heart petit"$ language:english$',
+    ('"Kaizoku Kyonyuu | Big Breasted Pirate" a:"brave heart petit"$ l:english$',
      'Kaizoku Kyonyuu | Big Breasted Pirate'),
-    ('Some Truncated Title artist:foo$ language:english$', 'Some Truncated Title'),
+    ('Some Truncated Title a:foo$ l:english$', 'Some Truncated Title'),
     ('Bare title no filters', 'Bare title no filters'),
 ])
 def test_chaika_reduces_an_ehentai_query_to_a_bare_title(query, expected):
@@ -751,8 +751,48 @@ def test_previews_for_the_whole_run_are_looked_up_in_one_batch(monkeypatch):
 
     assert hen.calls == [[URL_A, URL_B, URL_C]]
     assert previews[URL_A] == {'native': '\u541b\u3068\u50d5\u306e\u590f',
-                               'thumb': 'https://ehgt.org/a.jpg'}
+                               'thumb': 'https://ehgt.org/a.jpg',
+                               'creators': ()}
     assert URL_C not in previews  # the api returned nothing for it
+
+
+def test_the_preview_lookup_keeps_the_creator_the_api_already_sent(monkeypatch):
+    """The gmetadata entry carries the artist and group namespaces and the lookup is already
+    paid for, so the creator costs nothing. Sorted, or a row reshuffles between runs.
+    """
+    monkeypatch.setattr(app_constants, 'PICKER_PREVIEWS', True)
+    hen = _RecordingHen([
+        (URL_A, {'title_jpn': '', 'thumb': '',
+                 'tags': ['group:edamametei', 'artist:uko', 'language:english']}),
+        (URL_B, {'title_jpn': '', 'thumb': '', 'tags': ['language:english']}),
+    ])
+
+    previews = fetch.Fetch()._candidate_previews([[None, [('A', URL_A), ('B', URL_B)]]], hen)
+
+    assert previews[URL_A]['creators'] == ('edamametei', 'uko')
+    assert previews[URL_B]['creators'] == (), 'a release the source credits to nobody'
+
+
+def test_a_picker_row_states_the_creator_the_titles_no_longer_carry():
+    """Reported from a real library-wide scan of the same sources: 'Pink Archive' by unacchi
+    against Alpha91's gallery of the same name. canonical_title strips the creator out of both
+    titles before they are scored, so the row is the only place it can reach the user.
+    """
+    previews = {URL_A: {'native': '君と僕の夏', 'thumb': 'https://ehgt.org/a.jpg',
+                        'creators': ('edamametei', 'uko')},
+                URL_B: {'native': '', 'thumb': '', 'creators': ()}}
+
+    rows, thumbnails = fetch.picker_labels([('A Title', URL_A), ('A Title', URL_B)], previews)
+
+    assert rows[0] == ('A Title\n君と僕の夏\nby edamametei, uko', URL_A)
+    assert rows[1] == ('A Title', URL_B), 'no native title and no creator means no extra lines'
+    assert thumbnails == {URL_A: 'https://ehgt.org/a.jpg'}
+
+
+def test_a_picker_row_is_unchanged_when_there_are_no_previews():
+    "Which is also the chaika case: the lookup is an e-hentai api call with no equivalent there."
+    rows = [('A Title', URL_A)]
+    assert fetch.picker_labels(rows, {}) == (rows, {})
 
 
 def test_a_run_with_more_candidates_than_the_api_takes_is_split(monkeypatch):
@@ -1126,11 +1166,11 @@ def test_language_is_known(tmp_path, monkeypatch, default, folder, language, exp
 # quoted run in the query - and the artist name was sent as the title.
 
 @pytest.mark.parametrize('query, expected', [
-    ('"A Normal Quoted Title" artist:"tanaka taro"$ language:english$', 'A Normal Quoted Title'),
-    ('Some Very Long Trimmed Title artist:"tanaka taro"$ language:english$',
+    ('"A Normal Quoted Title" a:"tanaka taro"$ l:english$', 'A Normal Quoted Title'),
+    ('Some Very Long Trimmed Title a:"tanaka taro"$ l:english$',
      'Some Very Long Trimmed Title'),
-    ('Fucked Into Submission 3 artist:shindou$', 'Fucked Into Submission 3'),
-    ('"Title" language:japanese$', 'Title'),
+    ('Fucked Into Submission 3 a:shindou$', 'Fucked Into Submission 3'),
+    ('"Title" l:japanese$', 'Title'),
     ('Bare Title With No Filters', 'Bare Title With No Filters'),
 ])
 def test_a_query_reduces_to_its_title_not_its_artist(query, expected):
@@ -1143,7 +1183,7 @@ def test_a_title_search_never_addresses_the_hash_endpoint(monkeypatch):
     # Archives with no ids: the branch that falls back to the endpoint itself.
     monkeypatch.setattr(hen, '_get_json', lambda *a, **k: {'archives': [{'title': 'Some Title'}]})
 
-    assert hen.search('"Some Title" language:english$') == {}
+    assert hen.search('"Some Title" l:english$') == {}
 
 
 def test_a_hash_search_still_falls_back_to_the_hash_endpoint(monkeypatch):
@@ -1174,8 +1214,8 @@ def _searchable(folder, artist='', language=''):
 @pytest.mark.parametrize('language, expected', [
     ('Japanese', ''),
     ('japanese', ''),
-    ('English', ' language:english$'),
-    ('Chinese', ' language:chinese$'),
+    ('English', ' l:english$'),
+    ('Chinese', ' l:chinese$'),
     ('', ''),
 ])
 def test_only_a_language_the_source_tags_becomes_a_filter(language, expected):
@@ -1187,13 +1227,32 @@ def test_only_a_language_the_source_tags_becomes_a_filter(language, expected):
     assert fetch.language_filter(language) == expected
 
 
+def test_the_filters_use_the_short_namespace_the_source_accepts():
+    """'a:' and 'l:' mean the same to the source's search as 'artist:' and 'language:'.
+
+    Checked against live queries rather than against the wiki, which documents the short forms
+    for tagging and omits them from its search qualifier table: a namespace that reads as an
+    alias and is not one returns a different result set with no error. Four pairs, quoted
+    multi-word artist and both filters together included, returned identical hits.
+
+    Worth the change because the filters are spent out of a capped query: across a whole
+    library the twelve characters they give back cut the queries that lose their quoted phrase
+    from 220 to 101, and a phrase cut mid-title matches nothing.
+    """
+    queries = fetch.search_queries(
+        _searchable('[Tanaka Taro] Some Title', 'Tanaka Taro', 'English'))
+    assert queries[0].endswith(' a:"tanaka taro"$ l:english$')
+    assert not any('artist:' in q or 'language:' in q for q in queries), \
+        "the app's own search grammar uses the long forms; the source query must not"
+
+
 def test_a_japanese_gallery_is_searched_for_without_a_language_filter():
     queries = fetch.search_queries(
         _searchable('[Suzupony (Suzunomoku)] Naruko The Quartetto',
                     'Suzupony (Suzunomoku)', 'Japanese'))
 
     assert queries, 'the gallery has a searchable title'
-    assert not any('language:' in q for q in queries)
+    assert not any(' l:' in q for q in queries)
 
 
 @pytest.mark.parametrize('folder, artist, bare', [
@@ -1222,8 +1281,8 @@ def test_the_artist_and_the_language_still_get_the_first_attempts():
         _searchable('[70 Nenshiki Yuukyuu Kikan (Ohagi-san)] Coppelia Brothel',
                     '70 Nenshiki Yuukyuu Kikan (Ohagi-san)', 'English'))
 
-    assert queries[0].endswith(' artist:"70 nenshiki yuukyuu kikan (ohagi-san)"$ language:english$')
-    assert queries[1].endswith('" language:english$')
+    assert queries[0].endswith(' a:"70 nenshiki yuukyuu kikan (ohagi-san)"$ l:english$')
+    assert queries[1].endswith('" l:english$')
 
 
 def test_a_gallery_with_no_searchable_title_yields_no_queries():
@@ -1274,3 +1333,17 @@ def test_chaika_paces_its_requests(monkeypatch):
 
     assert slept, 'a request issued right after the previous one must wait'
     assert 0 < slept[0] <= pewnet.ChaikaHen.MIN_REQUEST_INTERVAL
+
+
+def test_chaika_strips_the_short_namespaces_as_it_did_the_long_ones():
+    """chaika has no filter syntax, so the fallback cuts the filters off before sending.
+
+    It matches any `word:` rather than the two names, which is what let the filters be
+    shortened without touching it - but nothing said so, and a name-specific pattern here
+    would have sent `a:"x"$ l:english$` to chaika as part of the title.
+    """
+    plain = pewnet.ChaikaHen._plain_title
+    assert plain('"Coppelia Brothel" a:"ohagi-san"$ l:english$') == 'Coppelia Brothel'
+    assert plain('Some Very Long Trimmed Title a:"tanaka taro"$ l:english$') \
+        == 'Some Very Long Trimmed Title'
+    assert plain('Fucked Into Submission 3 a:shindou$') == 'Fucked Into Submission 3'

@@ -1861,6 +1861,10 @@ class SingleGalleryChoices(BasePopup):
         extras = extras or {}
         self.gallery = gallery
         self._thumbnails = extras.get('thumbnails') or {}
+        # Keyed by url, as the api answered for each candidate. Kept whole so that anything
+        # wanting one of its fields reads that field, instead of parsing it back out of the
+        # row's own label - which silently acquires whatever line is added to the label next.
+        self._previews = extras.get('previews') or {}
         self._preview_session = extras.get('session')
         self._preview_cache = {}
         self._preview_requested = set()
@@ -2083,10 +2087,13 @@ class SingleGalleryChoices(BasePopup):
             app_constants.NOTIF_BAR.add_text('This gallery is not in the library yet, so there '
                                              'is nothing to note a better version for.')
             return
-        # A labelled choice carries the native title on a second line, which is worth keeping
-        # apart: it is the only form the owner of a Japanese folder name recognises by eye.
-        label, _, native = items[0].item[0].partition('\n')
-        added = betterversions.note_candidate(self.gallery, label, items[0].item[1], native)
+        # The label's first line is the listing title and the rest is whatever else was worth
+        # showing. Every other field comes from the preview instead, so a line added to the
+        # label cannot end up in one of them.
+        label, url = items[0].item[0], items[0].item[1]
+        title = label.split('\n', 1)[0]
+        native = self._previews.get(url, {}).get('native', '')
+        added = betterversions.note_candidate(self.gallery, title, url, native)
         app_constants.NOTIF_BAR.add_text(
             'Noted a better version of {}.'.format(self.gallery.title or self.gallery.path_title)
             if added else 'That one was already noted.')

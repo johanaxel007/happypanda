@@ -26,6 +26,7 @@ import gallerydb
 import app_constants
 import pewnet
 import settings
+import tagreaders
 import utils
 from formatters import title_formatter, TranslationStyle
 
@@ -81,19 +82,10 @@ CJK_RE = re.compile(r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]')
 
 # Any bracketed group, wherever it sits in the title.
 BRACKET_GROUP_RE = re.compile(r'\[([^\[\]]+)\]')
-# Language names as a source writes them in a bracketed tag - "[Russian]", "[English, Chinese]".
-# Only used to tell two candidates for the same work apart, so this covers the languages that
-# turn up in listings rather than every language a source recognises.
-LANGUAGE_TAGS = frozenset((
-    'english', 'japanese', 'chinese', 'korean', 'spanish', 'french', 'german', 'russian',
-    'portuguese', 'italian', 'thai', 'vietnamese', 'indonesian', 'polish', 'turkish', 'dutch',
-    'hungarian', 'czech', 'arabic', 'greek', 'ukrainian', 'danish', 'finnish', 'norwegian',
-    'swedish', 'romanian', 'bulgarian', 'hebrew', 'persian', 'tagalog', 'filipino', 'cebuano',
-    'esperanto', 'catalan', 'serbian', 'croatian', 'slovak', 'slovenian', 'estonian', 'latvian',
-    'lithuanian', 'albanian', 'mongolian', 'nepali', 'bengali', 'burmese', 'hindi', 'urdu',
-    'malay', 'latin', 'afrikaans', 'armenian', 'georgian', 'azerbaijani', 'kazakh', 'sinhala',
-    'swahili', 'welsh', 'javanese',
-))
+# Shared with the better version scan, which compares the same languages coming off the api's
+# own namespace rather than off a bracketed title tag. Re-exported under this name because the
+# rule and the tests both refer to it here.
+LANGUAGE_TAGS = tagreaders.LANGUAGE_TAGS
 # The languages a work is written in rather than translated into. A local gallery in one of
 # these is not evidence of anything: the app stores G_DEF_LANGUAGE for every gallery whose
 # folder name never stated a language, so 'Japanese' is as often "unknown" as it is a fact.
@@ -232,6 +224,39 @@ def match_forms(title):
     return forms
 
 
+def picker_labels(title_url_list, previews):
+    """The rows a gallery chooser lists, and their cover urls, as (title_url_list, {url: thumb}).
+
+    A search listing gives one title, usually romaji, and nothing else. A row therefore carries
+    up to three lines: the listing title, the native title, and who the source credits the
+    release to. Each line is left out when there is nothing to put on it.
+
+    The creator is the line that settles two candidates for one work, because `canonical_title`
+    strips the '[Circle (Artist)]' group out of both titles before they are ever scored. It is
+    shown rather than compared: the other side of any such comparison is a folder name, whose
+    creator disagrees with the source's own tag often and is absent from it more often still,
+    so filtering on it would discard real matches. The rule file holds the measurement.
+
+    Without previews the rows are returned unchanged, which is also the chaika case - the
+    lookup is an e-hentai api call and there is nothing equivalent to read there.
+    """
+    if not previews:
+        return list(title_url_list), {}
+    labelled, thumbnails = [], {}
+    for title, url in title_url_list:
+        preview = previews.get(url, {})
+        native = preview.get('native', '')
+        if native and native != title:
+            title = f'{title}\n{native}'
+        creators = preview.get('creators') or ()
+        if creators:
+            title = f'{title}\nby {", ".join(creators)}'
+        if preview.get('thumb'):
+            thumbnails[url] = preview['thumb']
+        labelled.append((title, url))
+    return labelled, thumbnails
+
+
 def build_query(title, artist, lang):
     """Builds the search query, trimming an over-long title on a word boundary."""
     # A title can carry its own quotes once the full-width ones are folded to ASCII
@@ -250,15 +275,19 @@ def build_query(title, artist, lang):
 
 
 def language_filter(language):
-    """The 'language:x$' filter to search a gallery of the given language with, or ''.
+    """The 'l:x$' filter to search a gallery of the given language with, or ''.
 
     Empty for a language the source leaves untagged, since filtering on one of those matches
     nothing at all rather than narrowing anything.
+
+    The source's short form of the namespace, verified against it to return the same hits as
+    'language:' - seven characters that the query cap would otherwise take off the title. Not
+    to be confused with the app's own search grammar, where 'language:' is local syntax.
     """
     language = (language or '').strip().lower()
     if not language or language == UNTAGGED_LANGUAGE:
         return ''
-    return f' language:{language}$'
+    return f' l:{language}$'
 
 
 def search_queries(gallery, max_attempts=MAX_SEARCH_ATTEMPTS):
@@ -284,7 +313,10 @@ def search_queries(gallery, max_attempts=MAX_SEARCH_ATTEMPTS):
     artist_part = ""
     if has_artist:
         artist_name = artist_name.lower()
-        artist_part = f' artist:"{artist_name}"$' if ' ' in artist_name else f' artist:{artist_name}$'
+        # The source's short form of the namespace, verified against it to return the same
+        # hits as 'artist:', quoted form included. Five characters the query cap would
+        # otherwise take off the title.
+        artist_part = f' a:"{artist_name}"$' if ' ' in artist_name else f' a:{artist_name}$'
 
     # In descending order of how often they pay off: the folder title as-is, the romaji half
     # before the '|' that a source usually indexes, then each of those without the
@@ -935,18 +967,7 @@ class Fetch(QObject):
                 if skip_all:
                     log_w("Skipping gallery")
                     continue
-                title_url_list, thumbnails = g_data[1], {}
-                if previews:
-                    labelled = []
-                    for title, url in title_url_list:
-                        preview = previews.get(url, {})
-                        native = preview.get('native', '')
-                        if native and native != title:
-                            title = f'{title}\n{native}'
-                        if preview.get('thumb'):
-                            thumbnails[url] = preview['thumb']
-                        labelled.append((title, url))
-                    title_url_list = labelled
+                title_url_list, thumbnails = picker_labels(g_data[1], previews)
 
                 self.AUTO_METADATA_PROGRESS.emit("({}/{}) Multiple galleries found for gallery: {}".format(
                     x, len(multiple_hit_galleries), gallery.title))
@@ -955,6 +976,10 @@ class Fetch(QObject):
                 self.GALLERY_PICKER.emit(gallery, title_url_list, self.GALLERY_PICKER_QUEUE,
                                          {'position': (x, len(multiple_hit_galleries)),
                                           'thumbnails': thumbnails,
+                                          # So that noting a candidate reads its native title
+                                          # from the api's own field rather than re-deriving it
+                                          # from the row it is displayed on.
+                                          'previews': previews,
                                           'session': preview_session})
                 user_choice = self.GALLERY_PICKER_QUEUE.get()
 
@@ -1005,7 +1030,9 @@ class Fetch(QObject):
         call, so candidates are deduplicated across the whole set and looked up in batches: a
         few hundred of them cost a handful of requests, made once, rather than one call each.
 
-        Returns {url: {'native': title, 'thumb': url}}, empty when the lookup cannot be made.
+        Returns {url: {'native': title, 'thumb': url, 'creators': (name, ...)}}, empty when the
+        lookup cannot be made. Kept whole rather than reduced to the fields a row shows, so
+        that a field can be read back by name instead of re-derived from a display string.
         """
         if not app_constants.PICKER_PREVIEWS or not isinstance(hen, pewnet.EHen):
             return {}
@@ -1030,8 +1057,12 @@ class Fetch(QObject):
                 for entry in metadata_json.get('gmetadata', []):
                     url = gid_to_url.get(entry.get('gid'))
                     if url and 'error' not in entry:
+                        # Sorted rather than the set api_creators returns, so one candidate's
+                        # label reads the same on every run.
+                        creators = tuple(sorted(tagreaders.api_creators(entry)))
                         previews[url] = {'native': entry.get('title_jpn', ''),
-                                         'thumb': entry.get('thumb', '')}
+                                         'thumb': entry.get('thumb', ''),
+                                         'creators': creators}
             except Exception:
                 log.exception('Could not look up previews for the gallery picker')
 
