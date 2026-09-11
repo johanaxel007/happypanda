@@ -305,7 +305,7 @@ def search_queries(gallery, max_attempts=MAX_SEARCH_ATTEMPTS):
     # Faith II [English]" that have no artist prefix at all. An artist:english$ filter matches
     # nothing, so drop it rather than search on it.
     artist_name = (gallery.artist or '').strip()
-    if artist_name.lower().capitalize() in app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES:
+    if artist_name.lower() in utils.known_languages():
         log_w(f"Ignoring language '{artist_name}' stored as this gallery's artist")
         artist_name = ''
 

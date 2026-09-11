@@ -204,6 +204,32 @@ def test_title_parser_only_takes_a_leading_group_as_the_artist(folder, artist, l
     assert parsed['language'] == language
 
 
+# The language pickers offer four names and whatever the user has added, where the source tags
+# dozens. A folder stating any of the rest has to keep its own language: reducing it to the
+# default sends the wrong 'l:' filter on every search for it. Folder names taken from a library.
+
+@pytest.mark.parametrize('folder, artist, language', [
+    ('[BU-NONG] Closers - Seo Yuri to J no [Korean]', 'BU-NONG', 'Korean'),
+    ('(COMIC1☆6) [Clesta (Cle Masahiro)] CL-orz 22 [Dutch] {Dutchguys} [Decensored]',
+     'Clesta (Cle Masahiro)', 'Dutch'),
+    # A language the pickers do not offer must not be adopted as the artist either.
+    ('Some Title [Vietnamese]', '', 'Vietnamese'),
+    # A tag in the same namespace that names what was done rather than what language it is in
+    # is not one, so the gallery keeps the default.
+    ('[Yamada] Some Title [Text cleaned]', 'Yamada', 'English'),
+])
+def test_title_parser_reads_a_language_the_pickers_do_not_offer(folder, artist, language,
+                                                                monkeypatch):
+    # The suite reads G_DEF_LANGUAGE from an untracked settings.ini, and an ambient value equal
+    # to the one under test would let an unrecognised tag pass as a recognised one.
+    monkeypatch.setattr(app_constants, 'G_DEF_LANGUAGE', 'English')
+    monkeypatch.setattr(app_constants, 'G_CUSTOM_LANGUAGES', [])
+    utils.init_utils()
+    parsed = utils.title_parser(folder)
+    assert parsed['artist'] == artist
+    assert parsed['language'] == language
+
+
 # --- End to end through _auto_metadata_process -----------------------------------------
 
 class _StubHen(pewnet.EHen):
@@ -504,6 +530,43 @@ def test_parse_pub_date_never_raises(posted, expected_none):
 def test_parse_pub_date_keeps_a_real_timestamp_intact():
     import datetime
     assert pewnet.EHen.parse_pub_date(1406565688) == datetime.datetime.fromtimestamp(1406565688)
+
+
+# The source files 'translated', 'rewrite' and 'text cleaned' under the same `language:`
+# namespace as a real language. Taking whichever came first filed galleries under a language of
+# "Text cleaned", which then read as a language nothing could ever match.
+
+def _applied(language_tags, append=False):
+    gallery = gallerydb.Gallery()
+    gallery.artist = 'Yamada'
+    data = {
+        'title': {'def': '[Yamada] Some Title', 'jpn': ''},
+        'tags': {'Language': list(language_tags), 'Artist': ['yamada']},
+        'type': 'Manga', 'pub_date': None, 'url': 'https://e-hentai.org/g/1/a/',
+    }
+    return pewnet.EHen.apply_metadata(gallery, data, append=append).language
+
+
+@pytest.mark.parametrize('tags, expected', [
+    (['english'], 'English'),
+    # A real language wins wherever the meta tag happens to sit in the list.
+    (['text cleaned', 'english'], 'English'),
+    (['translated', 'english'], 'English'),
+    (['rewrite', 'korean'], 'Korean'),
+    # Nothing here is a language, so the tag the source did write is kept rather than dropped.
+    (['text cleaned'], 'Text cleaned'),
+    # 'translated' alone says only that a translation happened, so the folder name decides and
+    # a folder that stated nothing leaves the default.
+    (['translated'], 'English'),
+])
+def test_a_real_language_is_preferred_over_a_tag_that_only_shares_its_namespace(tags, expected,
+                                                                               monkeypatch):
+    # The suite reads G_DEF_LANGUAGE from an untracked settings.ini, and the fallback case lands
+    # on exactly that value.
+    monkeypatch.setattr(app_constants, 'G_DEF_LANGUAGE', 'English')
+    monkeypatch.setattr(app_constants, 'G_CUSTOM_LANGUAGES', [])
+    utils.init_utils()
+    assert _applied(tags) == expected
 
 
 def _gmetadata(posted):

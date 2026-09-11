@@ -21,6 +21,7 @@ import gallerydb
 import utils
 import io_misc
 import pewnet
+import tagreaders
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -1299,15 +1300,17 @@ class SettingsDialog(QWidget):
                                      'for improved releases of galleries you already hold.')
         better_version_info.setWordWrap(True)
         self.better_version_language = QComboBox()
-        # Japanese and Other are left out: the source tags a language only when a gallery has
-        # been translated into it, so neither can ever appear on a candidate.
+        # Every language the source tags, since the scan reads that tag. Japanese and Other
+        # are left out: it tags a language only once a gallery has been translated into
+        # one, so neither can ever appear on a candidate.
+        offered = {l.capitalize() for l in tagreaders.LANGUAGE_TAGS}
+        offered |= {l.strip().capitalize() for l in app_constants.G_CUSTOM_LANGUAGES if l.strip()}
         self.better_version_language.addItems(
-            [l for l in app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES
-             if l not in ('Japanese', 'Other')])
+            sorted(l for l in offered if l not in ('Japanese', 'Other')))
         self.better_version_language.setToolTip(
             'Gallery / Scan for better versions looks for a release of the same work translated\n'
             'into this language, and for a decensored release of a gallery held censored.\n'
-            'Add more languages under General / gallery custom languages.\n'
+            'Every language the source tags is offered.\n'
             'DEFAULT: English')
         web_metadata_m_l.addRow(better_version_info)
         web_metadata_m_l.addRow('Better version language:', self.better_version_language)

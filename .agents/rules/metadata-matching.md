@@ -116,6 +116,28 @@ below some title length at all, and neither has been tried.
   puts the translator in a group of its own, while `[Thai \u0e20\u0e32\u0e29\u0e32\u0e44\u0e17\u0e22]` puts the language's own name
   inside the tag. Matching the first word covers both. The leading `[Circle (Artist)]` group is
   skipped because a circle name can begin with a language word - `[English Muffin (Yamada)]`.
+- **Two language vocabularies, and only one of them is a recognition set.**
+  `tagreaders.LANGUAGE_TAGS` is what the source can tag: the documented 83, plus five names it
+  appears to use that the wiki never listed. Those five are kept because the failures are not
+  symmetric - a real tag missing from the set reads as "states no language" and lets a foreign
+  release through the filter, while a name the source never tags only ever matches nothing.
+  `app_constants.G_LANGUAGES` is the four-name list the pickers offer, and is **not** a
+  recognition set: reading a folder name or a stored artist against it filed `[Korean]` under
+  the default language and sent `a:korean$` as an artist filter. Use `utils.known_languages()`
+  for anything deciding whether a string names a language.
+  - **The leading group is tested against the same wide set, deliberately.** A circle named
+    exactly after a language - `Lao`, `Latin`, `Shona`, `Creole` - therefore loses its artist,
+    which was weighed and accepted: the cost is a dropped `a:` filter rather than a wrong match,
+    and no folder in a 19,400-gallery library has a leading group that is a language at all.
+    Do not narrow it back without measuring both sides again.
+- **The `language:` namespace holds tags that are not languages.** `translated`, `rewrite`,
+  `rough grammar`, `rough translation`, `text cleaned` and `textless narrative` say what was
+  done to a release and sit beside the real language rather than instead of it, and the
+  namespace carries names beyond those - `speechless` is on 31 galleries of one library and on
+  neither wiki list. So **prefer a tag that is in `LANGUAGE_TAGS`**, never exclude the ones
+  known to be meta: taking the first tag that was not `translated` filed galleries under a
+  language of `Text cleaned`. A release the source names no language for keeps whatever it did
+  write, since discarding it would lose the only thing recorded.
 - **A stored language is not automatically a fact.** Every gallery whose folder name never
   stated one is stored as `G_DEF_LANGUAGE`, which **ships as `English`** - so on a stock install
   the commonest stored language is also the one that means "nobody knew", and filtering on it

@@ -373,6 +373,21 @@ class GalleryDialog(QWidget):
             combobox.setCurrentIndex(default)
             return False
 
+    def _select_language(self, language):
+        """Selects a language in the combo, adding it first when the list does not offer it.
+
+        The combo lists a handful of languages where the source tags dozens, so a gallery's own
+        is regularly absent from it. Falling back to the default would lose it: the field is
+        written on Done whether or not it was touched, and there is no undo.
+        """
+        language = (language or '').strip()
+        if not language:
+            self._find_combobox_match(self.lang_box, app_constants.G_DEF_LANGUAGE, 0)
+            return
+        if self.lang_box.findText(language, Qt.MatchFixedString) == -1:
+            self.lang_box.addItem(language)
+        self._find_combobox_match(self.lang_box, language, 0)
+
     def setGallery(self, gallery):
         "To be used for when editing a gallery"
         if isinstance(gallery, gallerydb.Gallery):
@@ -389,8 +404,7 @@ class GalleryDialog(QWidget):
             self.tags_edit.setText(utils.tag_to_string(gallery.tags))
 
 
-            if not self._find_combobox_match(self.lang_box, gallery.language, 1):
-                self._find_combobox_match(self.lang_box, app_constants.G_DEF_LANGUAGE, 1)
+            self._select_language(gallery.language)
             if not self._find_combobox_match(self.type_box, gallery.type, 0):
                 self._find_combobox_match(self.type_box, app_constants.G_DEF_TYPE, 0)
             if not self._find_combobox_match(self.status_box, gallery.status, 0):
@@ -422,8 +436,7 @@ class GalleryDialog(QWidget):
                 self.tags_edit.setText(utils.tag_to_string(g.tags))
                 self.tags_edit.g_check.setChecked(True)
             if all(map(lambda x: x.language == g.language, gallery)):
-                if not self._find_combobox_match(self.lang_box, g.language, 1):
-                    self._find_combobox_match(self.lang_box, app_constants.G_DEF_LANGUAGE, 1)
+                self._select_language(g.language)
                 self.lang_box.g_check.setChecked(True)
             if all(map(lambda x: x.rating == g.rating, gallery)):
                 self.rating_box.setValue(g.rating)
@@ -496,11 +509,7 @@ class GalleryDialog(QWidget):
         self.title_edit.setText(parsed['title'])
         self.author_edit.setText(parsed['artist'])
         self.path_lbl.setText(name)
-        if not parsed['language']:
-            parsed['language'] = app_constants.G_DEF_LANGUAGE
-        l_i = self.lang_box.findText(parsed['language'])
-        if l_i != -1:
-            self.lang_box.setCurrentIndex(l_i)
+        self._select_language(parsed['language'])
         if gallerydb.GalleryDB.check_exists(name):
             self.file_exists_lbl.setText('<font color="red">Gallery already exists.</font>')
             self.file_exists_lbl.show()
@@ -620,7 +629,7 @@ class GalleryDialog(QWidget):
         self.author_edit.setText(metadata.artist)
         # tags = ""
         # lang = ['English', 'Japanese']
-        self._find_combobox_match(self.lang_box, metadata.language, 2)
+        self._select_language(metadata.language)
         self.tags_edit.setText(utils.tag_to_string(metadata.tags))
         pub_string = "{}".format(metadata.pub_date)
         pub_date = QDate.fromString(pub_string.split()[0], "yyyy-MM-dd")

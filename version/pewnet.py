@@ -43,6 +43,7 @@ from PyQt5.QtCore import QObject, pyqtSignal
 import app_constants
 import utils
 import settings
+import tagreaders
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -1160,13 +1161,18 @@ class EHen(CommonHen):
         if app_constants.IGNORED_TAGS_APPLY_TO_WEB_FETCH:
             data['tags'] = utils.remove_ignored_tags(data['tags'])
 
+        # The namespace also holds tags naming what was done to a release rather than what
+        # language it is in, written beside the language rather than instead of it. One of
+        # those is kept only when it is all the namespace holds, so nothing is discarded.
+        lang = ""
         if 'Language' in data['tags']:
-            try:
-                lang = [x for x in data['tags']['Language'] if not x == 'translated'][0].capitalize()
-            except IndexError:
-                lang = ""
-        else:
-            lang = ""
+            named = [str(x).strip() for x in data['tags']['Language'] if str(x).strip()]
+            languages = [x for x in named if x.lower() in tagreaders.LANGUAGE_TAGS]
+            rest = [x for x in named if x.lower() != 'translated']
+            if languages:
+                lang = languages[0].capitalize()
+            elif rest:
+                lang = rest[0].capitalize()
 
         title_artist_dict = utils.title_parser(title)
         if not append:

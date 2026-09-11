@@ -26,17 +26,23 @@ Nothing here writes anywhere. The gmetadata readers take the **raw** api respons
 """
 
 # Language names as a source writes them, in a bracketed title tag - "[Russian]",
-# "[English, Chinese]" - or in its `language:` namespace. Covers the languages that turn up in
-# listings rather than every language a source recognises.
+# "[English, Chinese]" - or in its `language:` namespace. The source's own documented set, so a
+# name absent from here is one no release can be tagged with.
 LANGUAGE_TAGS = frozenset((
-    'english', 'japanese', 'chinese', 'korean', 'spanish', 'french', 'german', 'russian',
-    'portuguese', 'italian', 'thai', 'vietnamese', 'indonesian', 'polish', 'turkish', 'dutch',
-    'hungarian', 'czech', 'arabic', 'greek', 'ukrainian', 'danish', 'finnish', 'norwegian',
-    'swedish', 'romanian', 'bulgarian', 'hebrew', 'persian', 'tagalog', 'filipino', 'cebuano',
-    'esperanto', 'catalan', 'serbian', 'croatian', 'slovak', 'slovenian', 'estonian', 'latvian',
-    'lithuanian', 'albanian', 'mongolian', 'nepali', 'bengali', 'burmese', 'hindi', 'urdu',
-    'malay', 'latin', 'afrikaans', 'armenian', 'georgian', 'azerbaijani', 'kazakh', 'sinhala',
-    'swahili', 'welsh', 'javanese',
+    'afrikaans', 'albanian', 'arabic', 'aramaic', 'armenian', 'bengali', 'bosnian', 'bulgarian',
+    'burmese', 'catalan', 'cebuano', 'chinese', 'cree', 'creole', 'croatian', 'czech', 'danish',
+    'dutch', 'english', 'esperanto', 'estonian', 'finnish', 'french', 'georgian', 'german',
+    'greek', 'gujarati', 'hebrew', 'hindi', 'hmong', 'hungarian', 'icelandic', 'indonesian',
+    'irish', 'italian', 'japanese', 'javanese', 'kannada', 'kazakh', 'khmer', 'korean',
+    'kurdish', 'ladino', 'lao', 'latin', 'latvian', 'marathi', 'mongolian', 'ndebele', 'nepali',
+    'norwegian', 'oromo', 'papiamento', 'pashto', 'persian', 'polish', 'portuguese', 'punjabi',
+    'romanian', 'russian', 'sango', 'sanskrit', 'serbian', 'shona', 'slovak', 'slovenian',
+    'somali', 'spanish', 'swahili', 'swedish', 'tagalog', 'tamil', 'telugu', 'thai', 'tibetan',
+    'tigrinya', 'turkish', 'ukrainian', 'urdu', 'vietnamese', 'welsh', 'yiddish', 'zulu',
+    # Undocumented, and kept because the two failures are not symmetric: a name the source does
+    # tag but never listed reads as "states no language" if it is missing here, which offers a
+    # foreign release as a match, while one it does not tag only ever matches nothing.
+    'azerbaijani', 'filipino', 'lithuanian', 'malay', 'sinhala',
 ))
 
 # The namespace naming the series a release belongs to, read qualified: the point of it is that

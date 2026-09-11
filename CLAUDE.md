@@ -145,6 +145,9 @@ Load bearing, each because a real run got it wrong:
   apart from "nobody knew". Filtering candidates on it discards correct ones. And when the filter
   has removed a candidate's alternatives, that candidate is never auto-applied however well it
   scored — an unrecognised tag shape survives the filter as "states no language".
+- **Two language vocabularies, and `G_LANGUAGES` is not the recognition set.** It is the four
+  names the pickers offer; what the source can actually tag lives in `tagreaders.LANGUAGE_TAGS`.
+  Deciding whether a string names a language goes through `utils.known_languages()`.
 - **A language filter only narrows a language the source tags.** e-hentai tags one only when
   it is not its own default, so `l:japanese$` matches nothing on the whole site — the absence
   of a tag is what says Japanese. `search_queries()` builds the ladder, and the plain title
