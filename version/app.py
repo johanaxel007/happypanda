@@ -347,7 +347,6 @@ class AppWindow(QMainWindow):
             fetch_instance.galleries = galleries
 
             self.notification_bar.begin_show()
-            fetch_instance.moveToThread(thread)
 
             def done(status):
                 self.notification_bar.end_show()
