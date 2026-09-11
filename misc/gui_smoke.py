@@ -135,8 +135,12 @@ URL_A, URL_B = 'https://e-hentai.org/g/1/a/', 'https://e-hentai.org/g/2/b/'
 choices = [('[Yamada] Kimi to Boku no Natsu' + chr(10) + jp, URL_A),
            ('[Yamada] Kimi to Boku no Natsu [English]', URL_B)]
 preview_session = object()
+# The api's answer per candidate, passed whole. The label is built from it, so anything that
+# needs one of these fields back has to read it here rather than re-split the label.
+previews = {URL_A: {'native': jp, 'thumb': 'https://ehgt.org/a.jpg', 'creators': ()},
+            URL_B: {'native': '', 'thumb': '', 'creators': ()}}
 extras = {'position': (3, 27), 'thumbnails': {URL_A: 'https://ehgt.org/a.jpg'},
-          'session': preview_session}
+          'previews': previews, 'session': preview_session}
 
 requested = []
 connected_before_queueing = []
@@ -165,6 +169,58 @@ assert jp in p.list_w.item(0).text()
 # A row with a tool tip of its own gets a second window over the card, on Qt's schedule.
 assert not any(p.list_w.item(i).toolTip() for i in range(p.list_w.count()))
 say('picker: position header and native title render, and no row carries a tool tip')
+
+# Where those rows come from. The api call behind them already fetches the whole gmetadata
+# entry for every candidate, so the creator costs no request of its own - what has to hold is
+# that it survives into the row, sorted so a label does not reshuffle between runs, and that
+# the chooser really renders the third line rather than eliding it.
+import fetch  # noqa: E402
+
+PREV_A, PREV_B = 'https://e-hentai.org/g/7/a/', 'https://e-hentai.org/g/8/b/'
+
+
+class PreviewHen(pewnet.EHen):
+    "Only get_metadata is reached; _candidate_previews refuses anything that is not an EHen."
+
+    def __init__(self):
+        self.batches = []
+
+    def get_metadata(self, urls):
+        self.batches.append(list(urls))
+        tags = {PREV_A: ['group:edamametei', 'artist:uko', 'language:english'],
+                PREV_B: ['language:english']}
+        gid_to_url = {i: u for i, u in enumerate(urls)}
+        return ({'gmetadata': [{'gid': i, 'title_jpn': jp if u == PREV_A else '',
+                                'thumb': 'https://ehgt.org/p.jpg' if u == PREV_A else '',
+                                'tags': tags.get(u, [])}
+                               for i, u in enumerate(urls)]}, gid_to_url)
+
+
+app_constants.PICKER_PREVIEWS = True
+preview_hen = PreviewHen()
+previews = fetch.Fetch()._candidate_previews(
+    [[g, [('[Edamametei (Uko)] A Title', PREV_A), ('[Someone Else] A Title', PREV_B)]]],
+    preview_hen)
+assert len(preview_hen.batches) == 1, 'the lookup must be batched across the whole run'
+assert previews[PREV_A]['creators'] == ('edamametei', 'uko'), previews[PREV_A]
+assert previews[PREV_B]['creators'] == (), 'a candidate the source credits to nobody'
+say('picker: the creator comes off the api entry the preview lookup already paid for, sorted')
+
+rows, thumbs = fetch.picker_labels(
+    [('[Edamametei (Uko)] A Title', PREV_A), ('[Someone Else] A Title', PREV_B)], previews)
+assert rows[0][0] == '[Edamametei (Uko)] A Title\n%s\nby edamametei, uko' % jp, rows[0][0]
+assert rows[1][0] == '[Someone Else] A Title', 'an uncredited candidate gets no by line'
+assert thumbs == {PREV_A: 'https://ehgt.org/p.jpg'}, thumbs
+assert fetch.picker_labels(rows, {})[0] == rows, 'no previews must leave the rows alone'
+say('picker: a row reads title / native title / by whom, and skips the lines it has no data for')
+
+creditted = misc.SingleGalleryChoices(g, rows, 'Which one?', None, {'thumbnails': thumbs})
+assert 'by edamametei, uko' in creditted.list_w.item(0).text()
+# A three-line row only renders as three lines because of these two: without them the chooser
+# shows the listing title and elides everything the previews were fetched for.
+assert creditted.list_w.wordWrap() and creditted.list_w.textElideMode() == Qt.ElideNone
+say('picker: the chooser renders the creator line instead of eliding it away')
+creditted.close()
 
 p.open_in_browser(p.list_w.item(1))
 p.open_in_browser(QPoint(-5, -5))  # empty space
@@ -267,14 +323,45 @@ p.note_better_version()
 assert len(betterversions.shared_store().rows()) == 1, 'noting the same one twice stored it twice'
 assert any('already noted' in t for t in notified), notified
 
-# The native title arrives appended to the label; it is the only form the owner of a Japanese
-# folder name recognises, so it has to be kept apart rather than stored into the romaji field.
+# The native title is the only form the owner of a Japanese folder name recognises, so it has to
+# reach its own field rather than the romaji one.
 p.list_w.setCurrentRow(0)
 p.note_better_version()
 noted = {r.url: r for r in betterversions.shared_store().rows()}
 assert noted[URL_A].native_title == jp, noted[URL_A]
 assert chr(10) not in noted[URL_A].title, noted[URL_A].title
 say('picker: a labelled choice keeps its native title in its own field')
+
+# And it comes from the api's own field, never from the label, which grows a line whenever the
+# chooser learns to show something new. Its own urls, so the rows the list case below counts
+# are left alone.
+URL_C, URL_D = 'https://e-hentai.org/g/3/c/', 'https://e-hentai.org/g/4/d/'
+credited_previews = {URL_C: {'native': jp, 'thumb': '', 'creators': ('edamametei', 'uko')},
+                     URL_D: {'native': '', 'thumb': '', 'creators': ('someone',)}}
+three_line, _ = fetch.picker_labels([('A Title', URL_C), ('No Native Title', URL_D)],
+                                    credited_previews)
+assert three_line[0][0].count(chr(10)) == 2, three_line[0][0]
+assert three_line[1][0].count(chr(10)) == 1, three_line[1][0]
+
+# Under a gallery of its own, so pruning takes these rows back out and the list case below
+# counts what it set up rather than what this one left behind.
+credited_gallery = gallerydb.Gallery()
+credited_gallery.id, credited_gallery.title = 9001, 'A Held Gallery'
+credited_gallery.path = gallery_dir
+credited = misc.SingleGalleryChoices(credited_gallery, three_line, 'Which one?', None,
+                                     {'previews': credited_previews})
+credited.list_w.setCurrentRow(0)
+credited.note_better_version()
+credited.list_w.setCurrentRow(1)      # a creator but no native title
+credited.note_better_version()
+renoted = {r.url: r for r in betterversions.shared_store().rows()}
+assert renoted[URL_C].native_title == jp, renoted[URL_C].native_title
+assert renoted[URL_C].title == 'A Title', renoted[URL_C].title
+assert renoted[URL_D].native_title == '', renoted[URL_D].native_title
+assert renoted[URL_D].title == 'No Native Title', renoted[URL_D].title
+say('picker: a three-line row notes only the title and the api native title, never the by line')
+credited.close()
+assert betterversions.shared_store().prune({g.id}) == 1, 'the credited rows were not pruned'
 
 p.close()
 assert p._preview_popup.isHidden()
@@ -385,9 +472,24 @@ assert window.better_versions_list.rowCount() == 2, window.better_versions_list.
 say('review list: %d row(s) loaded from the store' % window.better_versions_list.rowCount())
 
 listed = window.better_versions_list
-first = listed.item(0, listed.HELD).data(Qt.UserRole + 1)
-listed._dismiss(listed.model().index(0, 0), first)
+
+# The row a dismissal takes off the table is found by identity, not by the index the menu was
+# opened at. `exec_` runs a nested event loop, so a scan turning up a row while the menu is
+# open calls add_row, which re-sorts the whole table and moves everything under that index.
+# Sorted on the url, which is the column the two rows differ in - both are releases of one
+# gallery, so the held title leaves them where they are. Ascending first so the row picked
+# below is known to be the one the descending sort then moves.
+listed.sortItems(listed.SOURCE, Qt.AscendingOrder)
+target = listed.item(1, listed.HELD).data(Qt.UserRole + 1)
+listed.sortItems(listed.SOURCE, Qt.DescendingOrder)
+assert listed._row_at(target) == 0, 'the table did not actually move under the captured index'
+listed._dismiss(target)
 assert listed.rowCount() == 1, 'dismissing a row left it on screen'
+assert listed._row_at(target) == -1, 'the wrong row was taken off the table'
+remaining_url = listed.item(0, listed.SOURCE).text()
+assert remaining_url != target.url, remaining_url
+say('review list: a dismissal removes its own row even after the table has been re-sorted')
+
 window.reload()
 assert listed.rowCount() == 1, 'a dismissed row came back on the next load'
 say('review list: "not interested" removes a row for good, not just for this session')
@@ -426,6 +528,87 @@ assert listed.rowCount() == 0
 assert betterversions.shared_store().rows(include_dismissed=True) == []
 assert betterversions.shared_store().scanned_ids() == set()
 say('review list: an explicit prune against the whole library drops only what is really gone')
+
+# The recheck button hands the work to the application, which owns the library and the worker
+# threads. That hand-off is a method looked up by name at runtime, so nothing but calling it
+# proves the two sides still agree - and the same button is the stop control for the run it
+# starts, so it has to reach the other method while one is in flight and change back afterwards.
+class _RecheckHost:
+    def __init__(self):
+        self.asked = 0
+        self.stopped = 0
+
+    def recheck_better_versions(self):
+        self.asked += 1
+
+    def stop_better_version_recheck(self):
+        self.stopped += 1
+
+host = _RecheckHost()
+window.parent_widget = host
+window.recheck_btn.click()
+assert (host.asked, host.stopped) == (1, 0), 'the recheck button did not reach the application'
+
+window.set_recheck_running(True)
+assert window.recheck_btn.text() == 'Stop rechecking', window.recheck_btn.text()
+window.recheck_btn.click()
+assert (host.asked, host.stopped) == (1, 1), 'the button did not stop the run it had started'
+
+# Between the stop and the run actually ending the button must not read as idle: clicking it
+# there could only be answered with "the list is already being rechecked".
+window.set_recheck_stopping()
+assert window.recheck_btn.text() == 'Stopping...', window.recheck_btn.text()
+assert not window.recheck_btn.isEnabled(), 'a stopping run still offers a clickable button'
+
+window.set_recheck_running(False)
+assert window.recheck_btn.text() == io_misc.RECHECK_LABEL, window.recheck_btn.text()
+assert window.recheck_btn.isEnabled(), 'the button never came back after a run ended'
+window.recheck_btn.click()
+assert (host.asked, host.stopped) == (2, 1), 'the button never went back to starting a run'
+say('review list: the recheck button starts, stops, says so while stopping, then starts again')
+
+# It re-judges the rows a scan stored, and leaves alone the ones the user noted by hand: those
+# were picked against the alternatives, which is better evidence than the tags are.
+store = betterversions.shared_store()
+store.add(betterversions.BetterVersion(series_id=1, url='https://e-hentai.org/g/90/scan/',
+                                       source=betterversions.SOURCE_SCAN))
+store.add(betterversions.BetterVersion(series_id=1, url='https://e-hentai.org/g/91/hand/',
+                                       source=betterversions.SOURCE_PICKER))
+assert [r.source for r in betterversions.recheckable_rows(store)] == ['scan'], \
+    'a hand-noted row would be re-judged by tags that were never what put it on the list'
+store.dismiss(1, 'https://e-hentai.org/g/90/scan/')
+store.dismiss(1, 'https://e-hentai.org/g/91/hand/')
+say('review list: a recheck covers the scanned rows only, never one you noted yourself')
+
+# A recheck can dismiss a row on a rule, and it judges against the held gallery's tags as they
+# stand - which a metadata fetch may have rewritten since. So the dismissed rows have to be
+# reachable and reversible, or a rule that was wrong about one loses it silently.
+app_constants.GALLERY_DATA = [g]
+restore_store = betterversions.shared_store()
+GONE = 'https://e-hentai.org/g/95/gone/'
+restore_store.add(betterversions.BetterVersion(
+    series_id=g.id, url=GONE, title='A Release', held_title='A Held Gallery',
+    kinds=(betterversions.KIND_DECENSORED,), source=betterversions.SOURCE_SCAN))
+restore_store.dismiss(g.id, GONE)
+window.reload()
+assert GONE not in [window.better_versions_list.item(r, listed.SOURCE).text()
+                    for r in range(listed.rowCount())], 'a dismissed row is on the live list'
+
+window.dismissed_box.setChecked(True)
+shown = {listed.item(r, listed.SOURCE).text(): r for r in range(listed.rowCount())}
+assert GONE in shown, 'the toggle did not bring the dismissed row back into view'
+assert '(dismissed)' in listed.item(shown[GONE], listed.KINDS).text(), \
+    'a dismissed row on screen must say so rather than look live'
+say('review list: "Show dismissed" lists the rows a recheck or a click turned down, marked as such')
+
+listed._restore(listed.item(shown[GONE], listed.HELD).data(Qt.UserRole + 1))
+window.dismissed_box.setChecked(False)
+assert GONE in [listed.item(r, listed.SOURCE).text() for r in range(listed.rowCount())], \
+    'a restored row did not come back onto the live list'
+assert restore_store.rows()[0].kinds == (betterversions.KIND_DECENSORED,), \
+    'restoring cost the row its classification'
+say('review list: a dismissed row can be put back, keeping what it was stored with')
+restore_store.dismiss(g.id, GONE)
 
 # --- the scan, against a stubbed source --------------------------------------------------------
 # The real thing is hours of paced requests, so what is checked here is everything around them:
@@ -769,6 +952,106 @@ cancelled.cancel()
 cancelled.scan()
 assert stub.searches == [], 'a cancelled scan still issued requests'
 say('scan: a cancel before the first gallery issues no requests at all')
+
+# --- the recheck, against the same stubbed source ----------------------------------------------
+# It is the only way a guard added after a scan reaches the rows that scan already stored, so
+# what has to hold is that it re-judges them on the two same-work guards, dismisses rather than
+# deletes, costs no search at all, and gives the metadata lock back.
+recheck_store = betterversions.BetterVersionStore(os.path.join(os.getcwd(), 'recheck-store.db'))
+OTHER_ARTIST = 'https://e-hentai.org/g/20/other/'
+SAME_ARTIST = 'https://e-hentai.org/g/21/same/'
+BY_HAND = 'https://e-hentai.org/g/22/hand/'
+
+recheck_held = a_gallery(50, 'Pink Archive', 'https://e-hentai.org/g/50/held/',
+                         {'Artist': ['unacchi'], 'Parody': ['blue archive'],
+                          'Other': ['mosaic censorship']})
+for url, source in ((OTHER_ARTIST, betterversions.SOURCE_SCAN),
+                    (SAME_ARTIST, betterversions.SOURCE_SCAN),
+                    (BY_HAND, betterversions.SOURCE_PICKER)):
+    recheck_store.add(betterversions.BetterVersion(
+        series_id=50, url=url, title='Pink Archive', held_title='Pink Archive',
+        kinds=(betterversions.KIND_DECENSORED,), source=source))
+
+
+class RecheckHen:
+    "Answers only the lookup; a search here would mean the recheck is paying twice."
+
+    def __init__(self):
+        self.searches = []
+        self.lookups = []
+
+    def search(self, *args, **kwargs):
+        self.searches.append(args)
+        return {}
+
+    def get_metadata(self, urls):
+        self.lookups.append(list(urls))
+        tags = {OTHER_ARTIST: ['artist:alpha91', 'parody:blue_archive', 'other:uncensored'],
+                SAME_ARTIST: ['artist:unacchi', 'parody:blue_archive', 'other:uncensored'],
+                BY_HAND: ['artist:someone_else', 'parody:blue_archive']}
+        gid_to_url = {i: u for i, u in enumerate(urls)}
+        return ({'gmetadata': [{'gid': i, 'tags': tags.get(u, []), 'title_jpn': '', 'thumb': ''}
+                               for i, u in enumerate(urls)]}, gid_to_url)
+
+
+recheck_hen = RecheckHen()
+betterversions.make_hen, _real_make_hen = (lambda: recheck_hen), betterversions.make_hen
+app_constants.GLOBAL_EHEN_LOCK = False
+
+recheck = betterversions.BetterVersionRecheck()
+recheck.galleries = [recheck_held]
+recheck.store = recheck_store
+recheck_done = []
+recheck.FINISHED.connect(recheck_done.append)
+recheck.take_lock()
+recheck.recheck()
+
+assert recheck_hen.searches == [], 'the recheck searched for something it already had'
+assert recheck_done == [1], recheck_done
+assert app_constants.GLOBAL_EHEN_LOCK is False, 'the recheck kept the metadata lock'
+say('recheck: it judges the stored rows with no search at all, and gives the lock back')
+
+# The row noted by hand is never looked up: its tags were not what put it on the list.
+assert BY_HAND not in [u for batch in recheck_hen.lookups for u in batch], recheck_hen.lookups
+left = {r.url for r in recheck_store.rows()}
+assert left == {SAME_ARTIST, BY_HAND}, left
+say('recheck: the row by another artist is gone, the matching one and the hand-noted one stay')
+
+# Dismissed, not deleted, so a guard that turns out wrong is recoverable.
+assert len(recheck_store.rows(include_dismissed=True)) == 3, 'a rejected row was deleted'
+say('recheck: a rejected row is dismissed rather than deleted')
+
+# A row whose gallery is not loaded is "no evidence", not "not the same work" - App.prune owns
+# that case, and judging it here would empty the list during a startup that is still loading.
+orphan_recheck = betterversions.BetterVersionRecheck()
+orphan_recheck.galleries = []
+orphan_recheck.store = recheck_store
+orphan_done = []
+orphan_recheck.FINISHED.connect(orphan_done.append)
+orphan_recheck.recheck()
+assert orphan_done == [0], orphan_done
+assert orphan_recheck.unresolved == 1, orphan_recheck.unresolved
+assert {r.url for r in recheck_store.rows()} == {SAME_ARTIST, BY_HAND}
+say('recheck: a row whose gallery is not loaded is left alone rather than dismissed')
+
+# A long list has to be stoppable, and a stop must not undo the rows already judged: each was
+# decided on its own evidence, and the rows never reached are left for the next run.
+cancelled_recheck = betterversions.BetterVersionRecheck()
+cancelled_recheck.galleries = [recheck_held]
+cancelled_recheck.store = recheck_store
+cancelled_done = []
+cancelled_recheck.FINISHED.connect(cancelled_done.append)
+recheck_hen.lookups.clear()
+cancelled_recheck.cancel()
+cancelled_recheck.recheck()
+assert recheck_hen.lookups == [], 'a cancelled recheck still issued requests'
+assert cancelled_recheck.aborted, 'a stopped pass must not report as a finished one'
+assert cancelled_done == [0], cancelled_done
+assert {r.url for r in recheck_store.rows()} == {SAME_ARTIST, BY_HAND}, 'a stop undid a dismissal'
+say('recheck: a cancel before the first batch issues no requests and keeps what it had judged')
+
+betterversions.make_hen = _real_make_hen
+recheck_store.close()
 scan_store.close()
 
 # --- the gallery context menu passes a selection to the scan -----------------------------------

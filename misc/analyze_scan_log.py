@@ -14,7 +14,9 @@ all name another language or another series is working exactly as intended.
 Usage:
     python misc/analyze_scan_log.py [happypanda.log] [--run N] [--rejections] [--gallery TEXT]
 
-    --run N        analyse the Nth scan run in the file (default: the last one, -1)
+    --run N        analyse a scan run by index: 0 is the first in the file, -1 the last
+                   (the default). A long run split across a rotated log is one run only when
+                   the parts are concatenated in order first.
     --rejections   group every turned-down candidate by the reason its tags gave
     --gallery TEXT show the full detail for galleries whose title contains TEXT
 """
@@ -132,8 +134,12 @@ def summarise(stats, rows):
 
 
 def axes(summary):
-    """The language, censorship and parody a logged tag summary states."""
-    parts = [p.strip() for p in summary.split(' / ')]
+    """The language, censorship and parody a logged tag summary states.
+
+    The creator segment is dropped rather than counted: it is absent whenever the source
+    credits nobody, so a summary with no series would otherwise present it as one.
+    """
+    parts = [p.strip() for p in summary.split(' / ') if not p.strip().startswith('by ')]
     while len(parts) < 3:
         parts.append('')
     return parts[0], parts[1], parts[2]
@@ -147,6 +153,8 @@ def reason_of(held_summary, candidate_summary):
     """
     if 'a different series' in candidate_summary:
         return 'a different series'
+    if 'a different creator' in candidate_summary:
+        return 'a different creator'
     held_language, held_censorship, _ = axes(held_summary)
     language, censorship, _ = axes(candidate_summary)
     if language == 'no language' and held_language != 'no language':
@@ -201,6 +209,10 @@ def main():
         print('No better-version scan runs found in {}.'.format(args.log))
         return 1
 
+    if not -len(runs) <= args.run < len(runs):
+        parser.error('--run {} is out of range: the file holds {} scan run(s), so 0 to {} '
+                     'or -1 to -{}'.format(args.run, len(runs), len(runs) - 1, len(runs)))
+
     run = runs[args.run]
     admitted = RUN_START_RE.search(run[0])
     galleries = parse_galleries(run)
@@ -211,11 +223,13 @@ def main():
         number, len(runs), admitted.group(1), admitted.group(2)))
     summarise(stats, rows)
 
+    # Both, when both were asked for: they answer different questions, and silently dropping
+    # one reads as the run simply not having had any.
     if args.gallery:
         show_gallery(galleries, args.gallery)
-    elif args.rejections:
+    if args.rejections:
         show_rejections(rejections)
-    else:
+    if not args.gallery and not args.rejections:
         print('\nPass --rejections to see why each candidate was turned down, '
               'or --gallery TEXT to inspect one.')
     return 0
