@@ -142,12 +142,13 @@ def base_most(classes, names):
 
 
 def source_files():
-    """Every module the migration covers: the application, plus the GUI smoke gate."""
+    """Every module the migration covers: the application, plus the two smoke gates."""
     out = []
     for root, dirs, names in os.walk(os.path.join(REPO, 'version')):
         dirs[:] = [d for d in dirs if d != '__pycache__']
         out.extend(os.path.join(root, n) for n in names if n.endswith('.py'))
     out.append(os.path.join(REPO, 'misc', 'gui_smoke.py'))
+    out.append(os.path.join(REPO, 'misc', 'app_smoke.py'))
     return sorted(out)
 
 

@@ -80,7 +80,7 @@ Every claim below is tagged ✅ **Verified** or ⚠️ **Unverified** — see th
 | Area | State |
 |------|-------|
 | Binding | PyQt5 5.15.11 / Qt 5.15.2, pinned in `requirements.txt`. ✅ **Verified** by importing `PyQt5.QtCore` in the project venv. |
-| Modules importing Qt | 16 of 19 in `version/`, plus `misc/gui_smoke.py`. Only `settings.py`, `asm_manager.py` and `database/db.py` are Qt-free. ✅ **Verified** by AST scan of every `from PyQt5.* import`. |
+| Modules importing Qt | 16 of 20 in `version/`, plus `misc/gui_smoke.py` and `misc/app_smoke.py`. Only `settings.py`, `asm_manager.py`, `app_constants.py` and `tagreaders.py` are Qt-free. ✅ **Verified** by AST scan of every `from PyQt5.* import`. |
 | Qt modules used | `QtCore`, `QtGui`, `QtWidgets` only. No `QtWebEngine`, `QtMultimedia`, `QtSql`, `QtNetwork`, `QtSvg`, `QtPrintSupport`. ✅ **Verified** by grep across `version/` and `misc/`. |
 | `.ui` files / `uic` | None. All UI is hand-built in Python. ✅ **Verified** by grep for `loadUi`, `uic`, `.ui`. |
 | Styling | One plain CSS file, `res/style.css`. No `.qss`. ✅ **Verified** by directory listing. |
@@ -122,7 +122,8 @@ began, most of them `QSizePolicy.Policy` in `gallerydialog.py`.
 | Gate | Covers | Verdict for this migration |
 |------|--------|----------------------------|
 | `pytest tests/ -q` | 283 pass, 4 pre-existing failures in `test_db.py::test_init_db`. ✅ **Verified** by running it at the start of Q0. | **Was weak; no longer.** No test referenced Qt at all before Q0. `tests/test_qt_scoping.py` now resolves every scoped site against the installed binding and asserts no unscoped one is left, which is what turns a lazy paint-time AttributeError into a red suite. |
-| `misc/gui_smoke.py` | Settings dialog, gallery chooser, better-version review list, two crash regressions. | **The only GUI gate.** Ported in Q1, so it now exercises the Qt6 dialect; it still imports PyQt5 by name, which is a Q3 edit. |
+| `misc/gui_smoke.py` | Settings dialog, gallery chooser, better-version review list, gallery edit dialog, crash regressions. | **Widgets in isolation.** Ported in Q1, so it now exercises the Qt6 dialect; it still imports PyQt5 by name, which is a Q3 edit. |
+| `misc/app_smoke.py` | The real `AppWindow` and its own methods: confirmation dialogs, the worker thread, the metadata lock. | **App-level assembly.** The only gate that builds the window, so a mis-scoped `StandardButton` in a confirmation surfaces here rather than in front of a user. Same PyQt5-by-name Q3 edit. |
 | Launching the app | Everything else. | The real gate. Manual, and per CLAUDE.md expects a multi-minute library scan. |
 
 ---
@@ -347,7 +348,7 @@ Nothing here has been confirmed by running Happypanda under Qt6. Before Q3:
 1. **Does the app launch under PyQt6 at all?** Everything in §4 and §5 is API-level probing. No
    window has been painted. This is the single largest unknown.
 2. **Do the 7 custom painters render correctly?** `gallery.py:382,729` and
-   `misc.py:136,209,389,961,1810`. Qt6 changed high-DPI pixmap handling and made scaling always-on;
+   `misc.py:147,220,400,973,1826`. Qt6 changed high-DPI pixmap handling and made scaling always-on;
    ⚠️ **Unverified** whether the gallery grid, star ratings and type badges still lay out correctly.
 3. **Does `res/style.css` still apply?** ⚠️ **Unverified**.
 4. **Does the PyInstaller build produce a working exe?** ⚠️ **Unverified**. Note CLAUDE.md's warning
@@ -365,9 +366,9 @@ Nothing here has been confirmed by running Happypanda under Qt6. Before Q3:
    the motivation for the whole exercise.
 8. **Do the int-typed parameters still accept an enum member?** PyQt5's enums are ints, so
    `setFrameStyle(QFrame.Shape.StyledPanel)` is fine today; PyQt6's are Python enums, and an
-   `int` parameter is where that bites. The call sites are `misc.py:191,209,1500`,
-   `io_misc.py:660`, and the `QListWidgetItem.ItemType.Type` / `QTableWidgetItem.ItemType.Type`
-   default arguments at `misc.py:2615,2621`. Deliberately left alone: ⚠️ **Unverified** either
+   `int` parameter is where that bites. The call sites are `misc.py:191,209,1501`,
+   `io_misc.py:766`, and the `QListWidgetItem.ItemType.Type` / `QTableWidgetItem.ItemType.Type`
+   default arguments at `misc.py:2623,2629`. Deliberately left alone: ⚠️ **Unverified** either
    way without PyQt6 installed, and both candidate fixes carry their own risk —
    `setFrameShape()` is **not** equivalent (✅ **Verified**: `setFrameStyle(StyledPanel)`
    leaves `frameShadow()` 0, `setFrameShape(StyledPanel)` leaves it 16), and an `int()` wrapper
@@ -415,6 +416,10 @@ every edit after the first odd line out lands on the wrong line.
 ## Document History
 
 * **v1.0** - Initial draft
+* **v1.3** - Rebased onto `feat/better-versions-scan`. The 15 enum sites that branch had
+  added since the audit were rescoped, `misc/app_smoke.py` joined the scanned modules, and the
+  `exec_` alias it installed on `QMessageBox` went with the last caller. §8's line references
+  re-derived.
 * **v1.2** - Review follow-ups: a project class deriving from Qt hid an unscoped site from the
   checker (`misc_db.py:379`, an import-time failure under Qt6); the scoping gate extended to the
   receiver-keyed sites; §8 gained the int-typed-parameter question.
@@ -424,5 +429,5 @@ every edit after the first odd line out lands on the wrong line.
 
 ---
 
-**Last Updated:** 2026-09-10  
+**Last Updated:** 2026-09-11  
 **Next Review:** when Q3 starts, or on any PyQt5/PyQt6 version bump that invalidates the §4 back-test

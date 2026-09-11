@@ -557,7 +557,7 @@ class BetterVersionsList(QTableWidget):
         "Where `row` currently sits in the table, or -1 when it is no longer in it."
         for at in range(self.rowCount()):
             item = self.item(at, self.HELD)
-            if item is not None and item.data(Qt.UserRole + 1) is row:
+            if item is not None and item.data(Qt.ItemDataRole.UserRole + 1) is row:
                 return at
         return -1
 
@@ -569,7 +569,7 @@ class BetterVersionsList(QTableWidget):
         only through a refresh. Re-rendering is a reload, because the row object held by the
         cell still says what it said before and re-reading is what keeps the two agreeing.
 
-        Found by identity rather than by the index the menu was opened at: `exec_` runs a
+        Found by identity rather than by the index the menu was opened at: `exec` runs a
         nested event loop, and a scan turning up a row meanwhile calls `add_row`, which
         re-sorts the whole table - so that index can by then belong to a different row.
         """

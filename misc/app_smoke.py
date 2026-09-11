@@ -62,9 +62,8 @@ app.AppWindow._check_update = lambda self: logins.append('update')
 # Every confirmation the window raises, and the answer it gets. A dialog nobody answers would
 # block the harness forever, and which answer it got is half of what is being asserted.
 dialogs = []
-ANSWER = [QMessageBox.No]
+ANSWER = [QMessageBox.StandardButton.No]
 QMessageBox.exec = lambda self: (dialogs.append(self.text()), ANSWER[0])[1]
-QMessageBox.exec_ = QMessageBox.exec
 
 searches = []
 lookups = []
@@ -147,7 +146,7 @@ for url in (WRONG, RIGHT):
         kinds=(betterversions.KIND_DECENSORED,), source=betterversions.SOURCE_SCAN))
 
 dialogs.clear()
-ANSWER[0] = QMessageBox.No
+ANSWER[0] = QMessageBox.StandardButton.No
 window.recheck_better_versions()
 assert len(dialogs) == 1 and 'Re-judge the 2 row(s)' in dialogs[0], dialogs
 assert '1 request(s)' in dialogs[0], dialogs[0]
@@ -164,7 +163,7 @@ metadata_reply[0] = ({'gmetadata': [
 
 dialogs.clear()
 lookups.clear()
-ANSWER[0] = QMessageBox.Yes
+ANSWER[0] = QMessageBox.StandardButton.Yes
 window.recheck_better_versions()
 assert window._better_version_recheck is not None, 'Yes did not start a recheck'
 assert window.better_versions_window.recheck_btn.text() == 'Stop rechecking'
@@ -225,7 +224,7 @@ failing = betterversions.BetterVersionRecheck()
 failing.galleries = [held]
 failing.store = store
 failing.FINISHED.connect(lambda *_: lock_at_emit.append(app_constants.GLOBAL_EHEN_LOCK),
-                         Qt.DirectConnection)
+                         Qt.ConnectionType.DirectConnection)
 failing._recheck = lambda: (_ for _ in ()).throw(RuntimeError('forced'))
 failing.take_lock()
 assert app_constants.GLOBAL_EHEN_LOCK is True, 'take_lock did not claim it'

@@ -384,7 +384,7 @@ class GalleryDialog(QWidget):
         if not language:
             self._find_combobox_match(self.lang_box, app_constants.G_DEF_LANGUAGE, 0)
             return
-        if self.lang_box.findText(language, Qt.MatchFixedString) == -1:
+        if self.lang_box.findText(language, Qt.MatchFlag.MatchFixedString) == -1:
             self.lang_box.addItem(language)
         self._find_combobox_match(self.lang_box, language, 0)
 

@@ -218,7 +218,7 @@ creditted = misc.SingleGalleryChoices(g, rows, 'Which one?', None, {'thumbnails'
 assert 'by edamametei, uko' in creditted.list_w.item(0).text()
 # A three-line row only renders as three lines because of these two: without them the chooser
 # shows the listing title and elides everything the previews were fetched for.
-assert creditted.list_w.wordWrap() and creditted.list_w.textElideMode() == Qt.ElideNone
+assert creditted.list_w.wordWrap() and creditted.list_w.textElideMode() == Qt.TextElideMode.ElideNone
 say('picker: the chooser renders the creator line instead of eliding it away')
 creditted.close()
 
@@ -500,8 +500,8 @@ say('review list: "not interested" removes a row for good, not just for this ses
 listed.show_dismissed = True
 window.reload()
 assert listed.rowCount() == 2, listed.rowCount()
-kept = next(listed.item(i, listed.HELD).data(Qt.UserRole + 1) for i in range(2)
-            if listed.item(i, listed.HELD).data(Qt.UserRole + 1).state != betterversions.STATE_DISMISSED)
+kept = next(listed.item(i, listed.HELD).data(Qt.ItemDataRole.UserRole + 1) for i in range(2)
+            if listed.item(i, listed.HELD).data(Qt.ItemDataRole.UserRole + 1).state != betterversions.STATE_DISMISSED)
 listed._dismiss(kept)
 assert listed.rowCount() == 2, 'the row just dismissed vanished from a list showing dismissals'
 betterversions.shared_store().restore(kept.series_id, kept.url)
@@ -617,7 +617,7 @@ assert '(dismissed)' in listed.item(shown[GONE], listed.KINDS).text(), \
     'a dismissed row on screen must say so rather than look live'
 say('review list: "Show dismissed" lists the rows a recheck or a click turned down, marked as such')
 
-listed._restore(listed.item(shown[GONE], listed.HELD).data(Qt.UserRole + 1))
+listed._restore(listed.item(shown[GONE], listed.HELD).data(Qt.ItemDataRole.UserRole + 1))
 window.dismissed_box.setChecked(False)
 assert GONE in [listed.item(r, listed.SOURCE).text() for r in range(listed.rowCount())], \
     'a restored row did not come back onto the live list'

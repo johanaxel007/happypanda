@@ -550,13 +550,13 @@ class AppWindow(QMainWindow):
 
         summary, detail = betterversions.recheck_confirmation_text(rows)
         msgbox = QMessageBox(self)
-        msgbox.setIcon(QMessageBox.Question)
+        msgbox.setIcon(QMessageBox.Icon.Question)
         msgbox.setWindowTitle('Recheck the better version list')
-        msgbox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msgbox.setDefaultButton(QMessageBox.No)
+        msgbox.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msgbox.setDefaultButton(QMessageBox.StandardButton.No)
         msgbox.setText(summary)
         msgbox.setDetailedText(detail)
-        if msgbox.exec() != QMessageBox.Yes:
+        if msgbox.exec() != QMessageBox.StandardButton.Yes:
             return
 
         recheck = betterversions.BetterVersionRecheck()
