@@ -48,7 +48,9 @@ DB_NAME = 'better_versions.db'
 
 KIND_DECENSORED = 'decensored'
 KIND_TRANSLATED = 'translated'
-KIND_LABELS = {KIND_DECENSORED: 'Decensored', KIND_TRANSLATED: 'Translated'}
+KIND_REFINED = 'refined'
+KIND_LABELS = {KIND_DECENSORED: 'Decensored', KIND_TRANSLATED: 'Translated',
+               KIND_REFINED: 'Better translation'}
 
 SOURCE_SCAN = 'scan'
 SOURCE_PICKER = 'picker'
@@ -75,6 +77,10 @@ MAX_LOGGED_REJECTIONS = 5
 UNCENSORED_TAGS = frozenset(('uncensored',))
 CENSORED_TAGS = frozenset(('mosaic censorship', 'full censorship'))
 TRANSLATED_TAG = 'translated'
+# What the source writes when a translation is there but poor. 'text cleaned' and 'textless
+# narrative' are deliberately not here: they say the original text was removed or absent, which
+# is a fact about the release rather than a caveat on its translation.
+ROUGH_TAGS = frozenset(('rewrite', 'rough grammar', 'rough translation'))
 
 
 @dataclass
@@ -129,8 +135,10 @@ def tag_summary(values, parodies=(), creators=()):
     nothing about its language, one that says nothing about its censorship, one the source has
     not placed in a series at all, and one it credits to nobody.
 
-    The creators come last and carry a 'by' in front of them, so that a summary with no series
-    cannot be read as one whose series is an artist's name.
+    The segments after the censorship carry a word in front of them - 'rough', 'by' - so that
+    a summary missing an earlier one cannot be read as stating it. A release the source marked
+    neither rough nor anything else says nothing, which is the ordinary case and not a claim
+    that the translation is good.
     """
     languages = ', '.join(sorted(gallery_languages(values))) or 'no language'
     if values & UNCENSORED_TAGS:
@@ -140,6 +148,9 @@ def tag_summary(values, parodies=(), creators=()):
     else:
         censorship = 'censorship unstated'
     summary = f'{languages} / {censorship}'
+    rough = values & ROUGH_TAGS
+    if rough:
+        summary += ' / rough: ' + ', '.join(sorted(rough))
     if parodies:
         summary += ' / ' + ', '.join(sorted(parodies))
     if creators:
@@ -150,17 +161,19 @@ def tag_summary(values, parodies=(), creators=()):
 # --- classification -----------------------------------------------------------------------
 
 def worth_scanning(gallery, target_language):
-    """Whether searching for this gallery could turn up anything the two axes recognise.
+    """Whether searching for this gallery could turn up anything the three axes recognise.
 
-    A gallery the source has never tagged states nothing either way, and one already holding
-    the target translation and an uncensored release has nothing left to find. This filter is
-    what keeps a scan to a fraction of the library: every gallery it drops is a request that
-    could not have paid off.
+    A gallery the source has never tagged states nothing on any of them, and one already
+    holding the target translation uncensored and unmarked has nothing left to find. This
+    filter is what keeps a scan to a fraction of the library: every gallery it drops is a
+    request that could not have paid off.
     """
     if not getattr(gallery, 'link', '') or not getattr(gallery, 'tags', None):
         return False
     values = gallery_tag_values(gallery.tags)
     if TRANSLATED_TAG not in values and target_language not in values:
+        return True
+    if values & ROUGH_TAGS:
         return True
     return bool(CENSORED_TAGS & values) and not (UNCENSORED_TAGS & values)
 
@@ -280,10 +293,11 @@ def scan_confirmation_text(to_scan, in_view, selected=0):
     if len(to_scan) > 200:
         listed += f'\n... and {len(to_scan) - 200} more'
     detail = (
-        f'Looking for: a release translated into {wanted}, and a decensored release of a '
-        f'gallery held in its censored form.\n\n'
-        f'Skipped: galleries the source has never tagged, galleries already holding both, and '
-        f'galleries a previous scan has already searched for.\n\n{listed}')
+        f'Looking for: a release translated into {wanted}, a decensored release of a gallery '
+        f'held in its censored form, and a cleaner translation of one the source marked a '
+        f'rewrite, rough grammar or a rough translation.\n\n'
+        f'Skipped: galleries the source has never tagged, galleries already holding all three, '
+        f'and galleries a previous scan has already searched for.\n\n{listed}')
     return summary, detail
 
 
@@ -315,35 +329,44 @@ def same_work(held_title, candidate_title):
 
 
 def better_kinds(held_values, candidate_values, language):
-    """Which of the two axes the candidate improves on, as a sorted tuple. Empty means neither.
+    """Which of the three axes the candidate improves on, as a sorted tuple. Empty means none.
 
     Decided from the tags the source wrote rather than from the candidate's title: a release
     marks itself '[Decensored]' inconsistently, while 'uncensored' is the tag the site's own
     filters run on.
 
     A row has to be a strict improvement and not a trade, which is a condition on the *other*
-    axis in each case. An uncensored release in a language the held gallery is not in gives a
+    axes in each case. An uncensored release in a language the held gallery is not in gives a
     language away to gain the censorship, and a translation that is censored gives the
     censorship back to gain the language. Neither is worth telling anyone about.
 
-    The held gallery only has to lack the `uncensored` tag, not to state a censorship one. That
-    keeps a release nobody tagged in scope, at the cost of rows for a gallery that was already
-    uncensored without saying so - so a decensored row is worth checking rather than certain.
+    Two of the three read an absence as the improvement: the held gallery only has to lack the
+    `uncensored` tag, and the candidate only has to lack the rough ones. That keeps a release
+    nobody tagged in scope, at the cost of rows for a gallery that was already uncensored, or
+    a candidate no better translated, without either saying so - so those rows are worth
+    checking rather than certain.
     """
     held_langs = gallery_languages(held_values)
     candidate_langs = gallery_languages(candidate_values)
     held_uncensored = bool(held_values & UNCENSORED_TAGS)
+    # Give or take the one being scanned for, which is the case where the candidate improves
+    # on the language axis at the same time.
+    same_languages = held_langs <= candidate_langs <= held_langs | {language}
 
     kinds = []
-    # The language sets have to match, give or take the one being scanned for - which is the
-    # case where the candidate improves on both axes at once.
-    if (candidate_values & UNCENSORED_TAGS) and not held_uncensored \
-            and held_langs <= candidate_langs <= held_langs | {language}:
+    if (candidate_values & UNCENSORED_TAGS) and not held_uncensored and same_languages:
         kinds.append(KIND_DECENSORED)
     if language in candidate_langs and language not in held_langs \
             and TRANSLATED_TAG not in held_values \
             and not (held_uncensored and (candidate_values & CENSORED_TAGS)):
         kinds.append(KIND_TRANSLATED)
+    # The same translation done better. `held_langs` has to be non-empty for there to be a
+    # translation to improve at all: the source will write a rough tag with no language beside
+    # it, and without this every untagged candidate reads as a cleaner version of nothing.
+    if held_langs and (held_values & ROUGH_TAGS) and not (candidate_values & ROUGH_TAGS) \
+            and same_languages \
+            and not (held_uncensored and (candidate_values & CENSORED_TAGS)):
+        kinds.append(KIND_REFINED)
     return tuple(sorted(kinds))
 
 

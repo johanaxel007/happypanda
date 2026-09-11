@@ -519,6 +519,81 @@ def test_an_already_uncensored_gallery_gets_no_decensored_row():
     assert bv.better_kinds(held, candidate, 'english') == ()
 
 
+# --- better_kinds, the translation quality axis ---------------------------------------------
+# The source marks a translation it considers poor, so a gallery can already be in the language
+# you want and still be worth replacing. Three tags say so, and the improvement is a release in
+# the same language carrying none of them.
+
+def test_a_clean_release_of_a_roughly_translated_gallery_is_a_better_version():
+    held = bv.gallery_tag_values({'Language': ['english', 'translated', 'rough translation']})
+    candidate = bv.api_tag_values({'tags': ['language:english', 'language:translated']})
+    assert bv.better_kinds(held, candidate, 'english') == (bv.KIND_REFINED,)
+
+
+@pytest.mark.parametrize('tag', ['rewrite', 'rough grammar', 'rough translation'])
+def test_each_rough_tag_makes_a_gallery_worth_replacing(tag):
+    held = bv.gallery_tag_values({'Language': ['english', 'translated', tag]})
+    candidate = bv.api_tag_values({'tags': ['language:english', 'language:translated']})
+    assert bv.better_kinds(held, candidate, 'english') == (bv.KIND_REFINED,)
+
+
+def test_a_candidate_that_is_rough_in_its_own_way_is_not_an_improvement():
+    "Trading one caveat for another is not worth telling anyone about."
+    held = bv.gallery_tag_values({'Language': ['english', 'translated', 'rough translation']})
+    candidate = bv.api_tag_values({'tags': ['language:english', 'language:translated',
+                                            'language:rewrite']})
+    assert bv.better_kinds(held, candidate, 'english') == ()
+
+
+def test_a_gallery_whose_translation_is_unmarked_gets_no_quality_row():
+    "Nothing says the held translation is poor, so a release that is equally silent is a wash."
+    held = bv.gallery_tag_values({'Language': ['english', 'translated']})
+    candidate = bv.api_tag_values({'tags': ['language:english', 'language:translated']})
+    assert bv.better_kinds(held, candidate, 'english') == ()
+
+
+def test_an_untranslated_candidate_cannot_refine_a_rough_translation():
+    "It carries none of the held gallery's languages, so taking it would lose the translation."
+    held = bv.gallery_tag_values({'Language': ['english', 'translated', 'rough translation']})
+    candidate = bv.api_tag_values({'tags': ['female:schoolgirl uniform']})
+    assert bv.better_kinds(held, candidate, 'english') == ()
+
+
+def test_a_rough_tag_with_no_language_beside_it_refines_nothing():
+    """The source writes one without a language, and then there is no translation to improve.
+
+    Without the guard the held gallery states no language, so every candidate that states none
+    either satisfies the language condition and reads as a cleaner version of nothing.
+    """
+    held = bv.gallery_tag_values({'Language': ['rough translation']})
+    candidate = bv.api_tag_values({'tags': ['female:schoolgirl uniform']})
+    assert bv.better_kinds(held, candidate, 'english') == ()
+
+
+def test_a_refined_release_that_puts_the_censorship_back_is_a_trade():
+    held = bv.gallery_tag_values({'Language': ['english', 'translated', 'rough grammar'],
+                                  'Other': ['uncensored']})
+    candidate = bv.api_tag_values({'tags': ['language:english', 'language:translated',
+                                            'other:mosaic_censorship']})
+    assert bv.better_kinds(held, candidate, 'english') == ()
+
+
+def test_a_release_that_is_both_cleaner_and_uncensored_reports_both():
+    held = bv.gallery_tag_values({'Language': ['english', 'translated', 'rough translation'],
+                                  'Other': ['mosaic censorship']})
+    candidate = bv.api_tag_values({'tags': ['language:english', 'language:translated',
+                                            'other:uncensored']})
+    assert bv.better_kinds(held, candidate, 'english') == (bv.KIND_DECENSORED, bv.KIND_REFINED)
+
+
+def test_a_rough_translation_is_named_in_the_log_summary():
+    "The log is the only record of why a candidate was turned down, so both sides state it."
+    values = bv.gallery_tag_values({'Language': ['english', 'translated', 'rough translation']})
+    assert bv.tag_summary(values) == 'english / censorship unstated / rough: rough translation'
+    clean = bv.gallery_tag_values({'Language': ['english', 'translated']})
+    assert bv.tag_summary(clean) == 'english / censorship unstated'
+
+
 # --- worth_scanning -----------------------------------------------------------------------
 
 class FakeGallery:
@@ -541,6 +616,17 @@ def test_a_gallery_with_nothing_left_to_find_is_skipped():
     "Already in the target language and already uncensored: a query could not pay off."
     g = FakeGallery(tags={'Language': ['english', 'translated'], 'Other': ['uncensored']})
     assert not bv.worth_scanning(g, 'english')
+
+
+def test_a_roughly_translated_gallery_is_worth_a_query_despite_having_everything_else():
+    """Already in the target language and already uncensored, but marked a rough translation.
+
+    This is the gallery the two-axis filter dropped: nothing was left to find until a better
+    translation counted as something to find.
+    """
+    g = FakeGallery(tags={'Language': ['english', 'translated', 'rough translation'],
+                          'Other': ['uncensored']})
+    assert bv.worth_scanning(g, 'english')
 
 
 def test_a_gallery_the_source_never_tagged_is_skipped():

@@ -35,7 +35,14 @@ HITS_RE = re.compile(r'(\d+) hit\(s\), (\d+) of them the same work')
 CLASSIFIED_RE = re.compile(r'Classified (\d+)/(\d+) candidate\(s\) in (\d+) request\(s\)')
 REJECTED_RE = re.compile(r'(\d+) same-title candidate\(s\) rejected for (.*) \(held: (.*)\):')
 CANDIDATE_RE = re.compile(r"^\s*- (.*?): '(.*)'$")
-ROW_RE = re.compile(r'((?:Decensored|Translated)(?:, Translated)?) version of (.*?): (\S+)$')
+# Matched by the shape of a kind label rather than by enumerating the kinds, so an axis added
+# later still shows up here. Anchored at the start of the message, which is why the caller
+# strips the log's own prefix first.
+ROW_RE = re.compile(r'([A-Z][a-z]*(?: [a-z]+)*(?:, [A-Z][a-z]*(?: [a-z]+)*)*) version of (.*?): (\S+)$')
+# The recheck writes about a better version too, and its lines end in a url the same way.
+# Excluded by their own wording rather than by tightening ROW_RE, which is what SEEN_RE
+# already does for the two 'nothing new here' messages.
+RECHECK_RE = re.compile(r'^(?:Dismissing|Put) a better version of ')
 SEEN_RE = re.compile(r'version of (.*?) (?:is already on the list|was dismissed earlier)')
 NO_HITS_RE = re.compile(r'No hits found with')
 FULL_PAGE_RE = re.compile(r'Found (\d+) potential gallery entries')
@@ -105,8 +112,9 @@ def funnel(galleries):
                 rejections.append((held_title, held, candidate.group(1), candidate.group(2)))
                 stats['named'] += 1
                 continue
-            row = ROW_RE.search(line)
-            if row and not SEEN_RE.search(line):
+            message = line.split('betterversions ')[-1]
+            row = ROW_RE.match(message)
+            if row and not SEEN_RE.search(line) and not RECHECK_RE.match(message):
                 rows.append((row.group(1), row.group(2), row.group(3)))
                 stats['rows'] += 1
             elif SEEN_RE.search(line):
@@ -134,15 +142,18 @@ def summarise(stats, rows):
 
 
 def axes(summary):
-    """The language, censorship and parody a logged tag summary states.
+    """The language, censorship, parody and translation quality a logged tag summary states.
 
-    The creator segment is dropped rather than counted: it is absent whenever the source
-    credits nobody, so a summary with no series would otherwise present it as one.
+    Only the first two segments are positional. The rest are recognised by the word in front
+    of them, because each is absent whenever the source says nothing on that axis - a summary
+    with no series would otherwise present its creators as one.
     """
-    parts = [p.strip() for p in summary.split(' / ') if not p.strip().startswith('by ')]
+    segments = [p.strip() for p in summary.split(' / ')]
+    rough = next((p[len('rough: '):] for p in segments if p.startswith('rough: ')), '')
+    parts = [p for p in segments if not p.startswith('by ') and not p.startswith('rough: ')]
     while len(parts) < 3:
         parts.append('')
-    return parts[0], parts[1], parts[2]
+    return parts[0], parts[1], parts[2], rough
 
 
 def reason_of(held_summary, candidate_summary):
@@ -155,14 +166,18 @@ def reason_of(held_summary, candidate_summary):
         return 'a different series'
     if 'a different creator' in candidate_summary:
         return 'a different creator'
-    held_language, held_censorship, _ = axes(held_summary)
-    language, censorship, _ = axes(candidate_summary)
+    held_language, held_censorship, _, held_rough = axes(held_summary)
+    language, censorship, _, rough = axes(candidate_summary)
     if language == 'no language' and held_language != 'no language':
         return 'untranslated, so the translation would be lost'
-    if language == held_language:
-        return 'already in that language, and no censorship to gain'
     if held_censorship == 'uncensored' and censorship == 'censored':
         return 'would put the censorship back'
+    if language == held_language:
+        if held_rough and rough:
+            return 'rough in its own way, so the translation is a trade rather than a gain'
+        if held_rough:
+            return 'already in that language, and no censorship or translation to gain'
+        return 'already in that language, and no censorship to gain'
     return 'in {}, which is neither yours nor the target'.format(language or 'no language')
 
 

@@ -354,12 +354,27 @@ because **both sides are the source's own title**, not a folder name against a s
   A row noted from the picker is skipped — the user chose it against the alternatives — and a
   failing row is **dismissed, not deleted**, so a guard that turns out wrong is recoverable.
 - **A row must be a strict improvement, never a trade — and the condition is on the *other*
-  axis.** An uncensored release in a language the held gallery is not in gives the language away
+  axes.** An uncensored release in a language the held gallery is not in gives the language away
   to gain the censorship; a translation that is censored gives the censorship back to gain the
   language. Both were reported to a user before `better_kinds` compared the axes together: a
   gallery held in English and censored was offered a Spanish uncensored release. Decensored
   therefore requires `held_langs ⊆ candidate_langs ⊆ held_langs ∪ {target}`, and translated
   requires the candidate not be known-censored when the held copy is already uncensored.
+- **Three axes, and two of them read an absence as the improvement.** The third is translation
+  quality: the source marks a poor translation `rewrite`, `rough grammar` or `rough translation`
+  (`ROUGH_TAGS`), so a gallery can hold the language you want and still be worth replacing by a
+  release in the same language carrying none of them. It reuses the decensored axis's language
+  condition, which is also what stops an untranslated candidate reaching it and taking the
+  translation away. `text cleaned` and `textless narrative` are deliberately out: they say the
+  original text was removed or absent, which is not a caveat on a translation. Like decensored,
+  this axis is satisfied by a *missing* tag, so a row is worth checking rather than certain.
+- **Widening `worth_scanning` reaches its galleries by itself; no rescan is needed.** A gallery
+  the filter rejects is never passed to `mark_scanned`, so one that becomes eligible under a new
+  rule is simply unscanned and the next ordinary run searches for it. Measured when the quality
+  axis was added: a store holding 7,780 scanned galleries contained **none** of the 314 newly
+  eligible ones, so the top-up cost 314 requests rather than the 8,094 of a full rescan. Check
+  the store before building a rules-version mechanism for this; the note below about a guard not
+  reaching stored rows is about `better_kinds`, which is a different thing.
 - **Log every candidate that improves on nothing, with the tags it turned out to hold.** This is
   where a scan discards nearly everything — over a whole library it threw away 9,603 of 10,343
   same-work candidates — and the rejections are correct only as long as someone can check them. `three
