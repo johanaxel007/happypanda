@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout,
                              QLabel, QPushButton, QMessageBox,
                              QFileDialog, QScrollArea, QLineEdit,
                              QTableWidget, QTableWidgetItem, QPlainTextEdit,
-                             QMenu, qApp)
+                             QMenu, QCheckBox, qApp)
 
 import app_constants
 import misc
@@ -398,6 +398,11 @@ class GalleryDownloader(QWidget):
     def closeEvent(self, QCloseEvent):
         self.hide()
 
+# The recheck button's resting label. Named because the button doubles as the stop control for
+# the run it starts, and has to be able to change back.
+RECHECK_LABEL = 'Recheck the list'
+
+
 class BetterVersionsList(QTableWidget):
     """The rows of the better version review list.
 
@@ -414,6 +419,9 @@ class BetterVersionsList(QTableWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._galleries = {}
+        # Whether dismissed rows are listed too. Off by default: the list is a queue of things
+        # to act on, and a dismissed row is one that has been acted on.
+        self.show_dismissed = False
         self.setColumnCount(4)
         self.setIconSize(QSize(50, 70))
         self.setAlternatingRowColors(True)
@@ -448,7 +456,7 @@ class BetterVersionsList(QTableWidget):
         stored title until then.
         """
         self._gallery_index(refresh=True)
-        rows = betterversions.shared_store().rows()
+        rows = betterversions.shared_store().rows(include_dismissed=self.show_dismissed)
         self.setSortingEnabled(False)
         self.setRowCount(0)
         for row in rows:
@@ -482,7 +490,12 @@ class BetterVersionsList(QTableWidget):
         self.insertRow(at)
         self.setItem(at, self.HELD, held)
         self.setItem(at, self.CANDIDATE, candidate)
-        self.setItem(at, self.KINDS, QTableWidgetItem(row.kinds_label))
+        kinds = row.kinds_label
+        if row.state == betterversions.STATE_DISMISSED:
+            # Only ever on screen with the toggle on, where every other row is live, so it has
+            # to say which it is rather than look like one of them.
+            kinds = f'{kinds} (dismissed)'
+        self.setItem(at, self.KINDS, QTableWidgetItem(kinds))
         self.setItem(at, self.SOURCE, QTableWidgetItem(row.url))
 
     @staticmethod
@@ -540,11 +553,39 @@ class BetterVersionsList(QTableWidget):
         else:
             utils.open_path(path)
 
-    def _dismiss(self, idx, row):
+    def _row_at(self, row):
+        "Where `row` currently sits in the table, or -1 when it is no longer in it."
+        for at in range(self.rowCount()):
+            item = self.item(at, self.HELD)
+            if item is not None and item.data(Qt.UserRole + 1) is row:
+                return at
+        return -1
+
+    def _dismiss(self, row):
+        """Dismisses a row and takes it off the table.
+
+        Found by identity rather than by the index the menu was opened at: `exec_` runs a
+        nested event loop, and a scan turning up a row meanwhile calls `add_row`, which
+        re-sorts the whole table - so that index can by then belong to a different row.
+        """
         if not row:
             return
         betterversions.shared_store().dismiss(row.series_id, row.url)
-        self.removeRow(idx.row())
+        at = self._row_at(row)
+        if at >= 0:
+            self.removeRow(at)
+
+    def _restore(self, row):
+        """Puts a dismissed row back, then reloads so it reappears in its place.
+
+        Reloaded rather than edited in place: the row object held by the cell still says
+        'dismissed', and re-reading is what keeps the two from disagreeing.
+        """
+        if not row:
+            return
+        betterversions.shared_store().restore(row.series_id, row.url)
+        log_i(f'Put a better version of {row.held_title} back on the list: {row.url}')
+        self.load()
 
     def contextMenuEvent(self, event):
         idx = self.indexAt(event.pos())
@@ -560,7 +601,12 @@ class BetterVersionsList(QTableWidget):
                        lambda: self._open_folder(row))
         menu.addAction('Copy the source URL', lambda: clipboard.setText(row.url))
         menu.addSeparator()
-        menu.addAction('Not interested', lambda: self._dismiss(idx, row))
+        # A row can be dismissed by a recheck as well as by hand, so the way back matters even
+        # for one the user never turned down themselves.
+        if row.state == betterversions.STATE_DISMISSED:
+            menu.addAction('Put back on the list', lambda: self._restore(row))
+        else:
+            menu.addAction('Not interested', lambda: self._dismiss(row))
         menu.exec_(event.globalPos())
         event.accept()
         del menu
@@ -591,11 +637,26 @@ class BetterVersionsWindow(QWidget):
         buttons_layout = QHBoxLayout()
         refresh_btn = QPushButton('Refresh')
         refresh_btn.clicked.connect(self.reload)
+        self._recheck_running = False
+        self.recheck_btn = QPushButton(RECHECK_LABEL)
+        self.recheck_btn.setToolTip(
+            'Judge the rows already here the way a scan judges a fresh candidate.\n'
+            'Nothing is searched for again, so this costs one request per 25 rows.\n'
+            'A row that turns out to be a different work is dismissed, not deleted.')
+        self.recheck_btn.clicked.connect(self._recheck)
+        self.dismissed_box = QCheckBox('Show dismissed', self)
+        self.dismissed_box.setToolTip(
+            'Also list the rows you turned down and the ones a recheck judged wrong.\n'
+            'Right click one to put it back on the list.')
+        self.dismissed_box.toggled.connect(self._show_dismissed)
         forget_btn = QPushButton('Forget scan progress')
         forget_btn.setToolTip('The next scan searches for every gallery again, rather than only\n'
                               'the ones no scan has reached yet. The rows already found are kept.')
         forget_btn.clicked.connect(self._forget_progress)
         buttons_layout.addWidget(refresh_btn, 0, Qt.AlignLeft)
+        buttons_layout.addWidget(self.recheck_btn, 0, Qt.AlignLeft)
+        buttons_layout.addWidget(self.dismissed_box, 0, Qt.AlignLeft)
+        buttons_layout.addStretch(1)
         buttons_layout.addWidget(forget_btn, 0, Qt.AlignRight)
         main_layout.addLayout(buttons_layout)
 
@@ -622,6 +683,43 @@ class BetterVersionsWindow(QWidget):
             self.info_lbl.setText(
                 'Nothing found yet. Run Gallery / Scan for better versions, or note a candidate '
                 'from the gallery chooser during a metadata fetch.')
+
+    def _recheck(self):
+        """Starts the recheck, or stops the one already running.
+
+        Both go through the application, which owns the library and the worker threads: the
+        window only knows the rows, and judging one needs the held gallery's own tags, which
+        live in the loaded library rather than in this list's database.
+        """
+        if self._recheck_running:
+            self.parent_widget.stop_better_version_recheck()
+        else:
+            self.parent_widget.recheck_better_versions()
+
+    def _show_dismissed(self, shown):
+        self.better_versions_list.show_dismissed = shown
+        self.reload()
+
+    def set_recheck_running(self, running):
+        """Turns the recheck button into the stop control for the run it started.
+
+        One button rather than two, because this window is the only place a recheck can be
+        started from, so it is where someone will look to stop it.
+        """
+        self._recheck_running = running
+        self.recheck_btn.setText('Stop rechecking' if running else RECHECK_LABEL)
+        self.recheck_btn.setEnabled(True)
+
+    def set_recheck_stopping(self):
+        """Says the stop has been asked for, while the run is still ending.
+
+        A recheck only notices between batches, so there is a gap in which it is still going.
+        Reading as idle through that gap invites a click that can only be answered with "the
+        list is already being rechecked".
+        """
+        self._recheck_running = False
+        self.recheck_btn.setText('Stopping...')
+        self.recheck_btn.setEnabled(False)
 
     def _forget_progress(self):
         betterversions.shared_store().forget_scanned()

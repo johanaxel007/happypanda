@@ -226,6 +226,7 @@ class AppWindow(QMainWindow):
         self.better_versions_window = io_misc.BetterVersionsWindow(self)
         self.better_versions_window.hide()
         self._better_version_scan = None
+        self._better_version_recheck = None
         # Only once the whole library is in memory, never on opening the window: see
         # _prune_better_versions.
         self.db_startup.DONE.connect(self._prune_better_versions)
@@ -419,6 +420,12 @@ class AppWindow(QMainWindow):
         if self._better_version_scan:
             self.notification_bar.add_text('A scan for better versions is already running.')
             return
+        # Checked explicitly rather than left to the metadata lock, which is only claimed when
+        # the global lock setting is on.
+        if self._better_version_recheck:
+            self.notification_bar.add_text('The better version list is being rechecked; '
+                                           'wait for it to finish.')
+            return
         if app_constants.GLOBAL_EHEN_LOCK or app_constants.SCANNING_FOR_GALLERIES:
             self.notification_bar.add_text('Please wait until the running metadata fetch or '
                                            'gallery scan has finished.')
@@ -516,6 +523,94 @@ class AppWindow(QMainWindow):
         misc.worker_thread(self, scan, scan.scan, scan.FINISHED,
                            'App.scan_better_versions').start()
         spinner.show()
+
+    def recheck_better_versions(self):
+        """Re-judges the rows already on the list against the current classification rules.
+
+        Separate from a scan because a scan cannot reach them: every gallery it searched is
+        recorded, so a rule added afterwards would need `Forget scan progress` and a second
+        full pass. These candidates are already known, so the recheck only looks their tags up.
+        """
+        if self._better_version_scan:
+            self.notification_bar.add_text('A scan for better versions is already running.')
+            return
+        if self._better_version_recheck:
+            self.notification_bar.add_text('The better version list is already being rechecked.')
+            return
+        if app_constants.GLOBAL_EHEN_LOCK:
+            self.notification_bar.add_text('A metadata fetch is already running!')
+            return
+
+        rows = betterversions.recheckable_rows()
+        if not rows:
+            self.notification_bar.add_text('No rows on the better version list to recheck.')
+            return
+
+        summary, detail = betterversions.recheck_confirmation_text(rows)
+        msgbox = QMessageBox(self)
+        msgbox.setIcon(QMessageBox.Question)
+        msgbox.setWindowTitle('Recheck the better version list')
+        msgbox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msgbox.setDefaultButton(QMessageBox.No)
+        msgbox.setText(summary)
+        msgbox.setDetailedText(detail)
+        if msgbox.exec() != QMessageBox.Yes:
+            return
+
+        recheck = betterversions.BetterVersionRecheck()
+        recheck.galleries = [g for g in app_constants.GALLERY_DATA +
+                             app_constants.GALLERY_ADDITION_DATA if g.id]
+        # Claimed on this thread for the reason scan_better_versions gives: every other check
+        # of the flag happens here.
+        recheck.take_lock()
+        self._better_version_recheck = recheck
+        self.better_versions_window.set_recheck_running(True)
+
+        def done(dismissed):
+            self.notification_bar.end_show()
+            self._better_version_recheck = None
+            self.better_versions_window.set_recheck_running(False)
+            self.better_versions_window.reload()
+            # Read before the worker goes: a stopped pass must not read as a finished one.
+            unresolved, aborted = recheck.unresolved, recheck.aborted
+            try:
+                recheck.deleteLater()
+            except RuntimeError:
+                pass
+            if dismissed is False:
+                return
+            if dismissed:
+                message = '{} row(s) turned out to be a different work and were dismissed.'.format(
+                    dismissed)
+            elif aborted:
+                message = 'Stopped before any row turned out to be wrong.'
+            else:
+                message = 'Every row on the list still looks like a release of its gallery.'
+            if unresolved:
+                message += (' {} could not be judged, so they were left alone.'.format(unresolved))
+            if aborted and dismissed:
+                message += ' The recheck stopped early, so run it again to cover the rest.'
+            self.notification_bar.add_text(message)
+
+        self.notification_bar.begin_show()
+        # Bound methods of gui objects, so the worker's emits are queued onto the gui thread.
+        recheck.PROGRESS.connect(self.notification_bar.add_text)
+        recheck.FINISHED.connect(done)
+        misc.worker_thread(self, recheck, recheck.recheck, recheck.FINISHED,
+                           'App.recheck_better_versions').start()
+
+    def stop_better_version_recheck(self):
+        """Asks a running recheck to stop after the batch it is waiting on.
+
+        The dismissals it has already made stand - each was judged on its own evidence - and
+        the rows it never reached are untouched, so running it again covers them.
+        """
+        if not self._better_version_recheck:
+            return
+        self._better_version_recheck.cancel()
+        # Not straight back to the resting label: the run ends between batches, and `done`
+        # is what knows it has actually finished.
+        self.better_versions_window.set_recheck_stopping()
 
     def stop_better_version_scan(self):
         """Asks the running scan to stop after the gallery it is working on.

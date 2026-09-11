@@ -31,6 +31,7 @@ from thefuzz import fuzz
 
 import app_constants
 import gallerydb  # noqa: F401  imported before fetch, which leaves it half initialised otherwise
+import tagreaders
 import fetch
 import pewnet
 import settings
@@ -75,10 +76,6 @@ UNCENSORED_TAGS = frozenset(('uncensored',))
 CENSORED_TAGS = frozenset(('mosaic censorship', 'full censorship'))
 TRANSLATED_TAG = 'translated'
 
-# The namespace naming the series a release belongs to, read qualified: the point of it is that
-# it is a parody tag rather than a word that happens to appear elsewhere in the tags.
-PARODY_NAMESPACE = 'parody'
-
 
 @dataclass
 class BetterVersion:
@@ -108,79 +105,32 @@ class BetterVersion:
 
 # --- tags ---------------------------------------------------------------------------------
 
-def gallery_tag_values(tags):
-    """Every tag stored on a gallery, lowercased and without its namespace.
-
-    `Gallery.tags` maps a namespace to its tags, and the source writes some tags with no
-    namespace at all - those are stored under 'default'. Dropping the namespace is what makes
-    one lookup find both.
-    """
-    values = set()
-    for group in (tags or {}).values():
-        if isinstance(group, str):
-            group = (group,)
-        for tag in group or ():
-            value = str(tag).strip().lower()
-            if value:
-                values.add(value)
-    return values
-
-
-def api_tag_values(entry):
-    """Every tag of a raw gmetadata entry, in the same form as a stored gallery's.
-
-    The api writes each tag as 'namespace:tag' or bare, with underscores where the site shows
-    spaces. parse_metadata applies the same normalisation on its way to a gallery; it is
-    repeated here rather than reused because none of this may reach anything that writes one.
-    """
-    values = set()
-    for tag in (entry or {}).get('tags') or ():
-        value = str(tag).split(':', 1)[-1].strip().lower().replace('_', ' ')
-        if value:
-            values.add(value)
-    return values
+# Re-exported from tagreaders, which owns the one definition of what a namespace means. Named
+# here as well because the classification below reads as one vocabulary.
+PARODY_NAMESPACE = tagreaders.PARODY_NAMESPACE
+CREATOR_NAMESPACES = tagreaders.CREATOR_NAMESPACES
+gallery_tag_values = tagreaders.gallery_tag_values
+api_tag_values = tagreaders.api_tag_values
+gallery_namespace_values = tagreaders.gallery_namespace_values
+api_namespace_values = tagreaders.api_namespace_values
+gallery_languages = tagreaders.gallery_languages
+gallery_parodies = tagreaders.gallery_parodies
+api_parodies = tagreaders.api_parodies
+gallery_creators = tagreaders.gallery_creators
+api_creators = tagreaders.api_creators
+same_parody = tagreaders.same_parody
+same_creator = tagreaders.same_creator
 
 
-def gallery_languages(values):
-    """The languages among a set of tag values, as the source names them."""
-    return {v for v in values if v in fetch.LANGUAGE_TAGS}
-
-
-def gallery_parodies(tags):
-    """The works a gallery is a parody of, from its stored tags.
-
-    Namespace-qualified, unlike the other readers here: the parody is only meaningful as a
-    parody, and an unqualified tag of the same name would say nothing about which series a
-    release belongs to.
-    """
-    for namespace, group in (tags or {}).items():
-        if str(namespace).strip().lower() != PARODY_NAMESPACE:
-            continue
-        if isinstance(group, str):
-            group = (group,)
-        return {str(t).strip().lower() for t in group or () if str(t).strip()}
-    return set()
-
-
-def api_parodies(entry):
-    """The works a raw gmetadata entry is a parody of, in the same form as a stored gallery's."""
-    found = set()
-    for tag in (entry or {}).get('tags') or ():
-        namespace, _, name = str(tag).partition(':')
-        if namespace.strip().lower() != PARODY_NAMESPACE:
-            continue
-        name = name.strip().lower().replace('_', ' ')
-        if name:
-            found.add(name)
-    return found
-
-
-def tag_summary(values, parodies=()):
+def tag_summary(values, parodies=(), creators=()):
     """What a tag set states on each axis, in the form the log shows it.
 
     Every axis has a third state that matters as much as the other two: a release that says
-    nothing about its language, one that says nothing about its censorship, and one the source
-    has not placed in a series at all.
+    nothing about its language, one that says nothing about its censorship, one the source has
+    not placed in a series at all, and one it credits to nobody.
+
+    The creators come last and carry a 'by' in front of them, so that a summary with no series
+    cannot be read as one whose series is an artist's name.
     """
     languages = ', '.join(sorted(gallery_languages(values))) or 'no language'
     if values & UNCENSORED_TAGS:
@@ -192,6 +142,8 @@ def tag_summary(values, parodies=()):
     summary = f'{languages} / {censorship}'
     if parodies:
         summary += ' / ' + ', '.join(sorted(parodies))
+    if creators:
+        summary += ' / by ' + ', '.join(sorted(creators))
     return summary
 
 
@@ -220,7 +172,7 @@ def target_language():
     signal and filtering on one that cannot appear would find nothing at all.
     """
     language = (app_constants.BETTER_VERSION_LANGUAGE or 'English').strip().lower()
-    if language not in fetch.LANGUAGE_TAGS:
+    if language not in tagreaders.LANGUAGE_TAGS:
         log_w(f"'{language}' is not a language the source tags; using english instead")
         return 'english'
     return language
@@ -362,26 +314,6 @@ def same_work(held_title, candidate_title):
     return False
 
 
-def same_parody(held_parodies, candidate_parodies):
-    """Whether two releases can be the same work, judged on the series the source tags them with.
-
-    The parody is the one thing a short title cannot carry. `canonical_title` strips the group
-    naming the series, so a Phantasy Star Online 2 doujin called 'Seishoku' and a Fate/Grand
-    Order one of the same name reduce to the same eight characters and score a perfect match.
-
-    Read from the tag rather than the title because the source normalises it: one
-    'kantai collection' where titles write both 'Kantai Collection' and 'Kantai Collection
-    -KanColle-', which no string comparison of titles separates from a real mismatch. Compared
-    by intersection so a crossover tagged with several still matches a release tagged with one.
-
-    Undecidable when either side names none, which is common enough that absence cannot stand in
-    for a mismatch: the answer there is yes and the other checks carry it.
-    """
-    if not held_parodies or not candidate_parodies:
-        return True
-    return bool(held_parodies & candidate_parodies)
-
-
 def better_kinds(held_values, candidate_values, language):
     """Which of the two axes the candidate improves on, as a sorted tuple. Empty means neither.
 
@@ -413,6 +345,25 @@ def better_kinds(held_values, candidate_values, language):
             and not (held_uncensored and (candidate_values & CENSORED_TAGS)):
         kinds.append(KIND_TRANSLATED)
     return tuple(sorted(kinds))
+
+
+def make_hen():
+    """The source to work against: exhentai when its login works, e-hentai otherwise.
+
+    The same choice auto_web_metadata makes, and for the same reason - exhentai lists galleries
+    e-hentai does not, and those are exactly the releases worth being told about.
+    """
+    if 'exhentai' in app_constants.DEFAULT_EHEN_URL:
+        try:
+            exprops = settings.ExProperties()
+            hen = pewnet.ExHen(exprops.cookies)
+            if hen.check_login(exprops.cookies):
+                log_i('Working against exhentai')
+                return hen
+        except ValueError:
+            pass
+    log_i('Working against e-hentai')
+    return pewnet.EHen()
 
 
 def scan_query(gallery):
@@ -557,6 +508,20 @@ class BetterVersionStore:
                          (STATE_DISMISSED, series_id, url))
             conn.commit()
 
+    def restore(self, series_id, url):
+        """Puts a dismissed row back on the list.
+
+        The counterpart to `dismiss` rather than a delete, because a row can be dismissed by a
+        rule as well as by hand: a recheck judges against the held gallery's tags as they stand,
+        and a metadata fetch may have rewritten those since the row was stored. Without this
+        there is no way back from a rule that was wrong about a row.
+        """
+        with self._lock:
+            conn = self._connection()
+            conn.execute('UPDATE candidates SET state=? WHERE series_id=? AND url=?',
+                         (STATE_NEW, series_id, url))
+            conn.commit()
+
     def mark_scanned(self, series_ids):
         "Records that these galleries have been searched, so a resumed scan skips them."
         stamp = datetime.datetime.now().replace(microsecond=0).isoformat(' ')
@@ -690,13 +655,18 @@ class BetterVersionScan(QObject):
         self.take_lock()  # for a direct call; the gui thread normally claimed it already
         try:
             found = self._scan()
+        # The lock goes back before FINISHED on every path, not in the finally after it: the
+        # emit is queued to the gui thread, which may start the next run while this one is
+        # still unwinding, and that run's take_lock would then be undone by this one.
         except app_constants.MetadataFetchFail as err:
             log_e(f'Better version scan could not reach the source: {err}')
+            self._release_lock()
             self.PROGRESS.emit(f'Scan for better versions cancelled: {err}')
             self.FINISHED.emit(False)
             return
         except Exception:
             log.exception('Better version scan failed')
+            self._release_lock()
             self.PROGRESS.emit('Scan for better versions failed, see happypanda.log')
             self.FINISHED.emit(False)
             return
@@ -705,22 +675,8 @@ class BetterVersionScan(QObject):
         self.FINISHED.emit(found)
 
     def _make_hen(self):
-        """The source to search: exhentai when its login works, e-hentai otherwise.
-
-        The same choice auto_web_metadata makes, and for the same reason - exhentai lists
-        galleries e-hentai does not, and those are exactly the releases worth being told about.
-        """
-        if 'exhentai' in app_constants.DEFAULT_EHEN_URL:
-            try:
-                exprops = settings.ExProperties()
-                hen = pewnet.ExHen(exprops.cookies)
-                if hen.check_login(exprops.cookies):
-                    log_i('Scanning for better versions on exhentai')
-                    return hen
-            except ValueError:
-                pass
-        log_i('Scanning for better versions on e-hentai')
-        return pewnet.EHen()
+        "The source this run works against, as an override point for a run that supplies its own."
+        return make_hen()
 
     def _scan(self):
         target = target_language()
@@ -853,6 +809,7 @@ class BetterVersionScan(QObject):
         for gallery, candidates in pending:
             held_values = gallery_tag_values(gallery.tags)
             held_parodies = gallery_parodies(gallery.tags)
+            held_creators = gallery_creators(gallery.tags)
             rejected = []
             for title, url in candidates:
                 entry = entries.get(url)
@@ -860,11 +817,17 @@ class BetterVersionScan(QObject):
                     continue
                 candidate_values = api_tag_values(entry)
                 candidate_parodies = api_parodies(entry)
-                summary = tag_summary(candidate_values, candidate_parodies)
+                candidate_creators = api_creators(entry)
+                summary = tag_summary(candidate_values, candidate_parodies, candidate_creators)
                 # The titles already matched, so a different series means the title was too
                 # short to tell the two works apart.
                 if not same_parody(held_parodies, candidate_parodies):
                     rejected.append((title, summary + ' - a different series'))
+                    continue
+                # Two doujins of one franchise share the series as readily as the title, so
+                # this is what separates them.
+                if not same_creator(held_creators, candidate_creators):
+                    rejected.append((title, summary + ' - a different creator'))
                     continue
                 kinds = better_kinds(held_values, candidate_values, target)
                 if not kinds:
@@ -891,7 +854,8 @@ class BetterVersionScan(QObject):
                     log_i(f'{row.kinds_label} version of {row.held_title} is already on the '
                           f'list: {url}')
             if rejected:
-                self._log_rejections(gallery, tag_summary(held_values, held_parodies), rejected)
+                self._log_rejections(
+                    gallery, tag_summary(held_values, held_parodies, held_creators), rejected)
             # A gallery counts as scanned once every candidate of its own has been looked up.
             # One left unresolved by a failed request means the search has to happen again, or
             # its candidates would be dropped with nothing recording that they were missed.
@@ -900,6 +864,192 @@ class BetterVersionScan(QObject):
             else:
                 store.mark_scanned([gallery.id])
         return found
+
+
+def recheck_confirmation_text(rows):
+    """What to tell the user before a recheck, as (summary, detail).
+
+    The request count is stated because it is the only cost: the candidates are already on the
+    list, so nothing is searched for again and the figure is exact rather than a ceiling.
+    """
+    requests = (len(rows) + pewnet.EHen.MAX_GDATA_URLS - 1) // pewnet.EHen.MAX_GDATA_URLS
+    summary = (
+        f'Re-judge the {len(rows)} row(s) on the list against the current rules?\n\n'
+        f'That is {requests} request(s) - the releases are already known, so none of them is '
+        f'searched for again. A row that turns out to be a different work is dismissed rather '
+        f'than deleted, so nothing here is lost.\n\nYour library is not touched.')
+    detail = (
+        'Each row is checked the way a scan checks a fresh candidate: the series the source '
+        'tags it with, and who the source credits it to. A row you noted by hand from the '
+        'gallery chooser is left alone - you picked it while looking at the alternatives, '
+        'which is better evidence than the tags are.\n\n'
+        'Whether a row still improves on your gallery is deliberately not rechecked: that '
+        "reads your own gallery's tags, which a metadata fetch may have rewritten since, and "
+        'dismissing a row over that is not what this offers to do.')
+    return summary, detail
+
+
+class BetterVersionRecheck(QObject):
+    """Re-judges the rows already on the list against the current classification rules.
+
+    A scan records every gallery it searched, so a rule added afterwards would reach the
+    library only through `forget_scanned` and a second full pass - one request per gallery,
+    hours of them. The candidates on the list are already known, so re-judging them costs one
+    request per MAX_GDATA_URLS rows and no searching at all.
+
+    Only the two same-work guards are applied, and a row that fails one is dismissed rather
+    than deleted: that keeps it out of the window and out of a later scan while leaving it in
+    the database for a rule that turns out to be wrong.
+    """
+
+    PROGRESS = pyqtSignal(str)
+    FINISHED = pyqtSignal(object)  # how many rows were dismissed, or False when it never ran
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.galleries = []
+        self.store = None
+        # Rows no evidence arrived for, as opposed to rows that were judged and kept.
+        self.unresolved = 0
+        # Whether the run stopped early. The rows it reached are judged and their dismissals
+        # stand, but a partial pass must not be reported as having cleared the whole list.
+        self.aborted = False
+        self._stop = False
+        self._took_lock = False
+
+    def cancel(self):
+        """Asks the recheck to stop after the batch it is waiting on.
+
+        A temporary ban is waited out inside the request itself, so a cancel during one only
+        takes effect once that wait is over.
+        """
+        log_i('Better version recheck was asked to stop')
+        self._stop = True
+
+    def take_lock(self):
+        "Claims the metadata lock, from the gui thread, as BetterVersionScan.take_lock is."
+        if app_constants.USE_GLOBAL_EHEN_LOCK and not self._took_lock:
+            app_constants.GLOBAL_EHEN_LOCK = True
+            self._took_lock = True
+
+    def _release_lock(self):
+        "Clears the lock, but only if this recheck is what claimed it."
+        if self._took_lock:
+            app_constants.GLOBAL_EHEN_LOCK = False
+            self._took_lock = False
+
+    def recheck(self):
+        "Entry point for the worker thread."
+        if app_constants.GLOBAL_EHEN_LOCK and not self._took_lock:
+            log_e('A metadata fetch is already running!')
+            self.PROGRESS.emit('A metadata fetch is already running!')
+            self.FINISHED.emit(False)
+            return
+        self.take_lock()  # for a direct call; the gui thread normally claimed it already
+        try:
+            dismissed = self._recheck()
+        # Released before FINISHED on every path, for the reason BetterVersionScan.scan gives.
+        except app_constants.MetadataFetchFail as err:
+            log_e(f'Better version recheck could not reach the source: {err}')
+            self._release_lock()
+            self.PROGRESS.emit(f'Recheck cancelled: {err}')
+            self.FINISHED.emit(False)
+            return
+        except Exception:
+            log.exception('Better version recheck failed')
+            self._release_lock()
+            self.PROGRESS.emit('Recheck of the better version list failed, see happypanda.log')
+            self.FINISHED.emit(False)
+            return
+        finally:
+            self._release_lock()
+        self.FINISHED.emit(dismissed)
+
+    def _recheck(self):
+        store = self.store or shared_store()
+        rows = recheckable_rows(store)
+        held = {g.id: g for g in self.galleries if g.id}
+        log_i(f'Rechecking {len(rows)} better version row(s) against the current rules')
+        if not rows:
+            self.PROGRESS.emit('No rows on the better version list to recheck.')
+            return 0
+
+        hen = make_hen()
+        chunk = pewnet.EHen.MAX_GDATA_URLS
+        urls = []
+        for row in rows:
+            if row.url not in urls:
+                urls.append(row.url)
+
+        entries = {}
+        for i in range(0, len(urls), chunk):
+            if self._stop:
+                log_i('Better version recheck stopped after {} of {} row(s)'.format(
+                    i, len(urls)))
+                self.aborted = True
+                break
+            batch = urls[i:i + chunk]
+            self.PROGRESS.emit('Rechecking the better version list ({}/{})'.format(
+                min(i + chunk, len(urls)), len(urls)))
+            result = hen.get_metadata(batch)
+            if not result or result == 'error':
+                log_w(f'Could not look up {len(batch)} row(s); leaving them as they are')
+                continue
+            metadata_json, gid_to_url = result
+            for entry in metadata_json.get('gmetadata', []):
+                url = gid_to_url.get(entry.get('gid'))
+                if url and 'error' not in entry:
+                    entries[url] = entry
+
+        dismissed = 0
+        for row in rows:
+            entry = entries.get(row.url)
+            gallery = held.get(row.series_id)
+            # A row the lookup never answered for, and one whose gallery is not loaded, are
+            # both "no evidence" rather than "not the same work". `prune` owns the second case.
+            if entry is None or gallery is None:
+                self.unresolved += 1
+                continue
+            reason = row_rejection(gallery, entry)
+            if not reason:
+                continue
+            # Both sides, for the reason _log_rejections gives: a dismissal is only auditable
+            # if the log says what each side actually carried when it was made.
+            held_summary = tag_summary(gallery_tag_values(gallery.tags),
+                                       gallery_parodies(gallery.tags),
+                                       gallery_creators(gallery.tags))
+            summary = tag_summary(api_tag_values(entry), api_parodies(entry), api_creators(entry))
+            log_i(f'Dismissing a better version of {row.held_title} ({held_summary}): '
+                  f'{reason} ({summary}): {row.url}')
+            store.dismiss(row.series_id, row.url)
+            dismissed += 1
+        log_i(f'Recheck dismissed {dismissed} row(s); {self.unresolved} could not be judged')
+        return dismissed
+
+
+def recheckable_rows(store=None):
+    """The rows a recheck would re-judge.
+
+    A row noted from the gallery chooser is left out: the user picked it while looking at the
+    alternatives, which is better evidence than the tags are, and the tags were never what put
+    it on the list.
+    """
+    return [r for r in (store or shared_store()).rows() if r.source != SOURCE_PICKER]
+
+
+def row_rejection(gallery, entry):
+    """Why a stored row is not another release of its gallery after all, or '' when it is.
+
+    The two same-work guards only. Whether the release still improves on the gallery is
+    deliberately left alone: that reads the gallery's own tags, which a metadata fetch may have
+    rewritten since the row was stored, and a row dismissed over that would be dismissed for a
+    change in the library rather than for being wrong.
+    """
+    if not same_parody(gallery_parodies(gallery.tags), api_parodies(entry)):
+        return 'a different series'
+    if not same_creator(gallery_creators(gallery.tags), api_creators(entry)):
+        return 'a different creator'
+    return ''
 
 
 if __name__ == '__main__':

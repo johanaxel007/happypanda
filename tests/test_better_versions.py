@@ -403,6 +403,58 @@ def test_an_untagged_series_decides_nothing(held, candidate):
     assert bv.same_parody(held, candidate)
 
 
+# --- who made a release -------------------------------------------------------------------
+# The series is not enough on its own: two doujins of one franchise share it as readily as
+# they share a short title. Every case below is a row a real library-wide scan stored.
+
+def test_the_creator_is_read_from_both_namespaces():
+    assert bv.gallery_creators({'Artist': ['nyanyakun'], 'Group': ['nyanyahouse'],
+                                'Other': ['uncensored']}) == {'nyanyakun', 'nyanyahouse'}
+    assert bv.api_creators({'tags': ['artist:ikameshi', 'group:ikameshi_shokudou',
+                                     'language:english']}) == {'ikameshi', 'ikameshi shokudou'}
+    # Unqualified, an artist's name says nothing about who made the release.
+    assert bv.gallery_creators({'default': ['nyanyakun']}) == set()
+
+
+def test_two_doujins_of_one_franchise_are_told_apart_by_their_creator():
+    """From a real scan: 'MIZUGI Archive' by guchico was offered Subachi's 'Mizugi Archive'.
+
+    Both are Blue Archive, so the series tag agrees, and both canonicalise to the same title.
+    """
+    assert bv.same_parody({'blue archive'}, {'blue archive'})
+    assert not bv.same_creator({'guchico'}, {'subachi', 'subachikyu'})
+
+
+def test_a_character_name_as_a_title_is_not_a_work():
+    """Nine AI sets of 'Fischl' were offered against a held gallery of that name. The title is
+    a character, the series is Genshin Impact on both sides, and only the creator differs.
+    """
+    assert not bv.same_creator({'pineapple panda'}, {'miyabi'})
+
+
+def test_a_release_credited_to_its_circle_alone_still_matches_its_artist():
+    "The source credits one, the other or both, so the two namespaces are pooled."
+    assert bv.same_creator({'yabuishikai', 'sui shinon'}, {'yabuishikai'})
+
+
+def test_the_creator_tag_beats_the_names_written_in_the_title():
+    """Why the tag rather than the '[Circle (Artist)]' group: across a real run the titles
+    wrote 'jackdempa' and '[Jaku Denpa]' for one artist, and '[Google Translated]' where an
+    artist belongs. The source's own namespace normalises all of it.
+    """
+    assert bv.same_creator({'jackdempa'}, bv.api_creators({'tags': ['artist:jackdempa']}))
+
+
+@pytest.mark.parametrize('held, candidate', [
+    (set(), {'mori takuya'}),
+    ({'hiiragi yuichi'}, set()),
+    (set(), set()),
+])
+def test_an_uncredited_release_decides_nothing(held, candidate):
+    "29 of 709 candidates in a real run carried no creator tag; absence is not a mismatch."
+    assert bv.same_creator(held, candidate)
+
+
 # --- a row has to be an improvement, not a trade ------------------------------------------
 # Both of these come from a real scan run: the first is the row it got wrong.
 
@@ -541,3 +593,170 @@ def test_a_double_space_in_a_source_title_does_not_cut_the_query_short():
 def test_a_gallery_whose_title_reduces_to_nothing_gets_no_query():
     "An empty query matches the whole site."
     assert bv.scan_query(FakeGallery(title='')) == ''
+
+
+# --- the classification pass itself --------------------------------------------------------
+# Every guard above is a function a test can call directly, which proves nothing about whether
+# _classify consults it. These drive the pass with a stub source instead.
+
+class FakeHen:
+    "Answers get_metadata from a url -> gmetadata entry map, the way EHen's api does."
+
+    def __init__(self, entries):
+        self.entries = entries
+        self.batches = []
+
+    def get_metadata(self, urls):
+        self.batches.append(list(urls))
+        gid_to_url = {i: url for i, url in enumerate(urls, 1)}
+        gmetadata = [dict(self.entries[url], gid=i) for i, url in enumerate(urls, 1)
+                     if url in self.entries]
+        return {'gmetadata': gmetadata}, gid_to_url
+
+
+def classify(store, gallery, candidates, entries, target='english'):
+    "Runs one classification pass and returns the rows it stored."
+    scan = bv.BetterVersionScan()
+    scan._classify(FakeHen(entries), store, [(gallery, candidates)], target)
+    return store.rows()
+
+
+def test_a_release_by_another_creator_never_reaches_the_list(store):
+    """The row this whole guard exists for, from a real library-wide scan: a held 'Pink
+    Archive' by unacchi was offered Alpha91's gallery of the same name. Same title, same
+    series, different artist.
+    """
+    held = FakeGallery(title='Pink Archive (Blue Archive)',
+                       tags={'Group': ['unahouse'], 'Artist': ['unacchi'],
+                             'Parody': ['blue archive'], 'Other': ['mosaic censorship']})
+    url = 'https://e-hentai.org/g/2699042/635a4d5ea9/'
+    entries = {url: {'title': '[Alpha91] Pink Archive (Blue Archive)', 'title_jpn': '',
+                     'thumb': '', 'tags': ['artist:alpha91', 'parody:blue_archive',
+                                           'other:uncensored']}}
+    assert classify(store, held, [(entries[url]['title'], url)], entries) == []
+
+
+def test_the_same_release_by_the_same_creator_still_reaches_the_list(store):
+    "The guard must not cost the rows it was never aimed at."
+    held = FakeGallery(title='Pink Archive (Blue Archive)',
+                       tags={'Group': ['unahouse'], 'Artist': ['unacchi'],
+                             'Parody': ['blue archive'], 'Other': ['mosaic censorship']})
+    url = 'https://e-hentai.org/g/2699043/635a4d5ea0/'
+    entries = {url: {'title': '[Unahouse (Unacchi)] Pink Archive (Blue Archive)',
+                     'title_jpn': '', 'thumb': '',
+                     'tags': ['artist:unacchi', 'parody:blue_archive', 'other:uncensored']}}
+    rows = classify(store, held, [(entries[url]['title'], url)], entries)
+    assert [r.kinds for r in rows] == [(bv.KIND_DECENSORED,)]
+
+
+def test_a_release_the_source_credits_to_nobody_is_still_offered(store):
+    "The guard fails open, so an uncredited release behaves exactly as it did before it."
+    held = FakeGallery(title='Nekokan! Meshimase',
+                       tags={'Artist': ['nekonyan'], 'Other': ['mosaic censorship']})
+    url = 'https://e-hentai.org/g/3/c/'
+    entries = {url: {'title': 'Nekokan! Meshimase', 'title_jpn': '', 'thumb': '',
+                     'tags': ['other:uncensored']}}
+    rows = classify(store, held, [(entries[url]['title'], url)], entries)
+    assert [r.kinds for r in rows] == [(bv.KIND_DECENSORED,)]
+
+
+def test_a_rejected_candidate_still_counts_its_gallery_as_scanned(store):
+    "Otherwise the gallery is searched for again on every later run, forever."
+    held = FakeGallery(title='Pink Archive (Blue Archive)', id=7,
+                       tags={'Artist': ['unacchi'], 'Other': ['mosaic censorship']})
+    url = 'https://e-hentai.org/g/4/d/'
+    entries = {url: {'title': '[Alpha91] Pink Archive', 'title_jpn': '', 'thumb': '',
+                     'tags': ['artist:alpha91', 'other:uncensored']}}
+    classify(store, held, [(entries[url]['title'], url)], entries)
+    assert store.scanned_ids() == {7}
+
+
+# --- rechecking the rows already on the list -----------------------------------------------
+# A scan records every gallery it searched, so a guard added afterwards can only reach the
+# rows it already stored through this path.
+
+def test_a_hand_noted_row_is_never_rechecked(store):
+    """The user picked it from the chooser while looking at the alternatives.
+
+    That is better evidence than the tags, and the tags were never what put it on the list.
+    """
+    store.add(a_row(series_id=1, source=bv.SOURCE_PICKER))
+    store.add(a_row(series_id=2, url='https://e-hentai.org/g/222/bbb/', source=bv.SOURCE_SCAN))
+    assert [r.series_id for r in bv.recheckable_rows(store)] == [2]
+
+
+def test_a_row_by_another_creator_is_rejected_on_recheck():
+    held = FakeGallery(tags={'Artist': ['unacchi'], 'Parody': ['blue archive']})
+    entry = {'tags': ['artist:alpha91', 'parody:blue_archive']}
+    assert bv.row_rejection(held, entry) == 'a different creator'
+
+
+def test_a_row_of_another_series_is_rejected_on_recheck():
+    """The one row a real library-wide scan stored before the series guard existed: a Phantasy
+    Star Online 2 doujin called 'Seishoku' against a Fate/Grand Order one.
+    """
+    held = FakeGallery(tags={'Artist': ['nyanyakun'], 'Parody': ['phantasy star online 2']})
+    entry = {'tags': ['artist:ikameshi', 'parody:fate_grand_order']}
+    assert bv.row_rejection(held, entry) == 'a different series'
+
+
+def test_a_row_that_still_looks_right_survives_a_recheck():
+    held = FakeGallery(tags={'Group': ['unahouse'], 'Artist': ['unacchi'],
+                             'Parody': ['blue archive']})
+    entry = {'tags': ['artist:unacchi', 'parody:blue_archive', 'other:uncensored']}
+    assert bv.row_rejection(held, entry) == ''
+
+
+def test_the_recheck_never_judges_a_row_on_whether_it_still_improves():
+    """A metadata fetch rewrites the held gallery's tags, so the improvement axes move under
+    the list. Dismissing a row over that would dismiss it for a change in the library.
+    """
+    held = FakeGallery(tags={'Artist': ['unacchi'], 'Other': ['uncensored'],
+                             'Language': ['english', 'translated']})
+    # Improves on neither axis any more, and is still the same work.
+    entry = {'tags': ['artist:unacchi', 'other:mosaic censorship']}
+    assert bv.row_rejection(held, entry) == ''
+
+
+# --- putting a dismissed row back ----------------------------------------------------------
+# A row can be dismissed by a rule as well as by hand, and the recheck judges against the held
+# gallery's tags as they stand - which a metadata fetch may have rewritten since. That is why
+# dismissal has a way back rather than being a delete.
+
+def test_a_dismissed_row_can_be_put_back_on_the_list(store):
+    store.add(a_row())
+    store.dismiss(1, 'https://e-hentai.org/g/111/aaa/')
+    assert store.rows() == []
+
+    store.restore(1, 'https://e-hentai.org/g/111/aaa/')
+    rows = store.rows()
+    assert [r.url for r in rows] == ['https://e-hentai.org/g/111/aaa/']
+    assert rows[0].state == bv.STATE_NEW, rows[0].state
+
+
+def test_a_restored_row_keeps_everything_it_was_stored_with(store):
+    "Restoring must not cost the classification, or the row comes back saying nothing."
+    store.add(a_row(kinds=(bv.KIND_DECENSORED, bv.KIND_TRANSLATED), native_title='\u539f\u9898'))
+    store.dismiss(1, 'https://e-hentai.org/g/111/aaa/')
+    store.restore(1, 'https://e-hentai.org/g/111/aaa/')
+
+    row = store.rows()[0]
+    assert row.kinds == (bv.KIND_DECENSORED, bv.KIND_TRANSLATED)
+    assert row.native_title == '\u539f\u9898'
+    assert row.held_title == 'Nekokan! Meshimase'
+
+
+def test_restoring_a_row_that_was_never_dismissed_changes_nothing(store):
+    store.add(a_row())
+    store.restore(1, 'https://e-hentai.org/g/111/aaa/')
+    assert [r.state for r in store.rows()] == [bv.STATE_NEW]
+
+
+def test_a_later_scan_offers_a_restored_row_as_already_listed(store):
+    """Restoring puts the row back in the 'new' state, so a rescan has to report it as one it
+    already knows rather than as a fresh find.
+    """
+    store.add(a_row())
+    store.dismiss(1, 'https://e-hentai.org/g/111/aaa/')
+    store.restore(1, 'https://e-hentai.org/g/111/aaa/')
+    assert store.add(a_row()) == bv.STATE_NEW
