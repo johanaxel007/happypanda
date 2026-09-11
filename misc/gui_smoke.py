@@ -1296,7 +1296,7 @@ say('threads: only the two session-long threads still build their own')
 # one gallery is edited, so a fallback to the default is written over the real language.
 import gallerydialog  # noqa: E402
 
-from PyQt5.QtWidgets import QWidget  # noqa: E402
+from PyQt6.QtWidgets import QWidget  # noqa: E402
 
 gd_parent = QWidget()
 # The dialog registers itself with its parent's group so a multi-gallery fetch can drive them

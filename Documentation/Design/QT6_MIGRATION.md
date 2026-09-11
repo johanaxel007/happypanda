@@ -122,8 +122,8 @@ began, most of them `QSizePolicy.Policy` in `gallerydialog.py`.
 | Gate | Covers | Verdict for this migration |
 |------|--------|----------------------------|
 | `pytest tests/ -q` | 283 pass, 4 pre-existing failures in `test_db.py::test_init_db`. ✅ **Verified** by running it at the start of Q0. | **Was weak; no longer.** No test referenced Qt at all before Q0. `tests/test_qt_scoping.py` now resolves every scoped site against the installed binding and asserts no unscoped one is left, which is what turns a lazy paint-time AttributeError into a red suite. |
-| `misc/gui_smoke.py` | Settings dialog, gallery chooser, better-version review list, gallery edit dialog, crash regressions. | **Widgets in isolation.** Ported in Q1, so it now exercises the Qt6 dialect; it still imports PyQt5 by name, which is a Q3 edit. |
-| `misc/app_smoke.py` | The real `AppWindow` and its own methods: confirmation dialogs, the worker thread, the metadata lock. | **App-level assembly.** The only gate that builds the window, so a mis-scoped `StandardButton` in a confirmation surfaces here rather than in front of a user. Same PyQt5-by-name Q3 edit. |
+| `misc/gui_smoke.py` | Settings dialog, gallery chooser, better-version review list, gallery edit dialog, crash regressions. | **Widgets in isolation.** Ported in Q1 and named PyQt6 in Q3, so it exercises the shipping binding. |
+| `misc/app_smoke.py` | The real `AppWindow` and its own methods: confirmation dialogs, the worker thread, the metadata lock. | **App-level assembly.** The only gate that builds the window, so a mis-scoped `StandardButton` in a confirmation surfaces here rather than in front of a user. Named PyQt6 with the rest in Q3. |
 | Launching the app | Everything else. | The real gate. Manual, and per CLAUDE.md expects a multi-minute library scan. |
 
 ---
@@ -338,7 +338,7 @@ Checked against the four Core Constraints in `CLAUDE.md`.
 | **Q0 — Tooling** | `misc/check_qt_enums.py` and `tests/test_qt_scoping.py`. The gate landed in two halves: the resolve-and-invariant tests were green from the first commit, and the zero-unscoped assertion was added once Q2 finished, so the suite is never red. | 🟢 | — | ✅ 2026-09-10 |
 | **Q1 — Port the gate** | `misc/gui_smoke.py`: 15 enum sites, `QMouseEvent`→`QPointF`, and `from PyQt5 import sip` — a bare `import sip` only ever worked because PyQt5 aliases it into `sys.modules`. | 🟢 | Q0 | ✅ 2026-09-10 |
 | **Q2 — Forward-compatible codemod** | 610 edits, still on PyQt5: 503 class-keyed and 81 instance-level enum sites plus the 26 removed-API swaps. Landed as one commit per module, renames separated from behavioural swaps. | 🟡 | Q1 | ✅ 2026-09-10 |
-| **Q3 — Switch the binding** | The edits from §4 plus `requirements.txt` and `HappyPanda.spec`, and the three §5 families v1.0 missed. `pytest`, `misc/gui_smoke.py` and the scoping gate all pass on PyQt6 6.11.0 / Qt 6.11.2, and the app launches. | 🟡 | Q2 | ✅ 2026-09-10 |
+| **Q3 — Switch the binding** | The edits from §4 plus `requirements.txt` and `HappyPanda.spec`, and the three §5 families v1.0 missed. `pytest`, both smoke harnesses and the scoping gate all pass on PyQt6 6.11.0 / Qt 6.11.2, and the app launches. | 🟡 | Q2 | ✅ 2026-09-10 |
 | **Q4 — Retire `FORCE_HIGH_DPI_SUPPORT`** | Four-place settings removal per Core Constraint 4, plus CHANGELOG. Separate commit — it is a user-visible behaviour change, not part of the port. Q3 already deleted the two `setAttribute` calls, so the setting is **inert but still wired**: the checkbox saves a value nothing reads. | 🟢 | Q3 | — |
 | **Q5 — Shakedown** | Drive all 62 widget subclasses by hand against a **copy** of the database. This phase dominates the schedule, and every failure now aborts the process rather than printing (§5). | 🔴 | Q3 | — |
 
@@ -445,6 +445,8 @@ every edit after the first odd line out lands on the wrong line.
 ## Document History
 
 * **v1.0** - Initial draft
+* **v1.5** - Rebased onto `feat/qt6-migration-prep`. The two smoke harnesses the base branch had
+  grown since Q3 named PyQt5 in their imports and now name PyQt6.
 * **v1.4** - Q3 shipped. §5 gained the three families v1.0 missed (`QPalette.Background`,
   `Qt.Orientations`, `QByteArray.append`) and the abort-on-unhandled-exception behaviour change.
   Q4/Q5 blocked on the startup regression.

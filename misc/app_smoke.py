@@ -35,8 +35,8 @@ def say(msg):
     print(msg, flush=True)
 
 
-from PyQt5.QtWidgets import QApplication, QMessageBox  # noqa: E402
-from PyQt5.QtCore import Qt, QThread, QElapsedTimer  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PyQt6.QtCore import Qt, QThread, QElapsedTimer  # noqa: E402
 
 qapp = QApplication(sys.argv)
 
