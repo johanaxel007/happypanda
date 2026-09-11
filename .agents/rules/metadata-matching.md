@@ -45,8 +45,8 @@ The analyzer separates the three failure modes, and they need opposite fixes:
 
 Two things have to stay inside the budget whatever else moves. **A filter only narrows a
 language the source tags at all** — e-hentai tags one only when it is not its own default, so
-`language:japanese$` matches nothing on the entire site and `language_filter()` returns nothing
-for it. And **the plain title**, no prefix and no filters, is the form a source is likeliest to
+`l:japanese$` matches nothing on the entire site and `language_filter()` returns nothing for
+it. And **the plain title**, no prefix and no filters, is the form a source is likeliest to
 hold; a gallery whose stored artist or language is the thing the source disagrees with is only
 reachable through it.
 
@@ -145,6 +145,17 @@ below some title length at all, and neither has been tried.
   indexes none of them.
 - Strip `"` from a title before wrapping the query in quotes, or the phrase closes early.
 - A quoted phrase that had to be truncated matches nothing — drop the quotes when trimming.
+- **The filters use the source's short namespaces, `a:` and `l:`.** They are spent out of
+  `MAX_QUERY_LENGTH`, so the twelve characters they give back go to the title: measured over a
+  whole library, the queries that lose their quoted phrase fall from 220 to 101. The short
+  forms were checked against live queries — four pairs, quoted multi-word artist and both
+  filters together, identical hits — because the wiki documents them for *tagging* and leaves
+  them out of its search qualifier table, which is the `f_sh` trap exactly. Do not confuse
+  these with the app's **own** search grammar in `app_constants`, where `artist:` / `language:`
+  / `lang:` are local syntax over the library and must keep their long names.
+- **`MAX_QUERY_LENGTH = 200` is ours, not the source's.** No site limit was ever established
+  for it. Raising it is a plausible alternative to shortening the filters, and needs its own
+  live check before anyone trusts it.
 - `split_on_separator()` takes the **raw** folder name. A deleted separator survives only as the
   whitespace run around it, and formatting collapses that.
 - **`Gallery.path_title` is only a title when the path is a live directory.** It returns
@@ -159,10 +170,29 @@ Ambiguity is resolved by a human, at the *end* of the pass, so what the chooser 
 matching rather than a separate UI concern.
 
 - **The listing gives one title, it may be the wrong alphabet, and it has no cover.** A
-  Japanese folder name against a list of romaji candidates cannot be told apart by eye. Three
+  Japanese folder name against a list of romaji candidates cannot be told apart by eye. Four
   things address this and none should be removed: every choice carries its source url and opens
   in a browser on right or double click; the local gallery opens its own folder the same way;
-  and `PICKER_PREVIEWS` supplies each candidate's native title and cover.
+  and `PICKER_PREVIEWS` supplies each candidate's native title, cover, and the creator the
+  source credits it to.
+- **The creator belongs in the row, and only in the row.** `canonical_title` strips the
+  `[Circle (Artist)]` group out of both titles before either is scored, so who made a release is
+  exactly the thing the score cannot see - and two doujins of one franchise share the parody tag
+  as readily as they share a short title. `picker_labels` puts it on a third line, read off the
+  `artist:`/`group:` namespaces of an entry `_candidate_previews` has already fetched, so it
+  costs no request.
+  - **Do not turn it into a guard here.** The candidate's side is the api's, but the local side
+    is a folder name, and measured over a whole library the folder's `[Circle (Artist)]` group
+    **disagrees with the source's own tag for 8.4%** of the galleries that state one and is
+    **absent from 41%** of them - `[774]` against `774 house`/`nanashi`, `[Abarenbou Tengu]`
+    against `abarenbow tengu`, and a large `[Anthology]` class whose real credits are several
+    contributors the folder never names. Filtering or reordering on that discards correct
+    matches; the stored `artist` column agrees with the source 18,668 to 102, but only because a
+    previous fetch overwrote it, and `gallery.exed` means a run skips exactly those galleries.
+  - **This is why the fetch still has no creator guard where the scan does.** Only ambiguous
+    galleries reach the picker, so a lone perfect-scoring hit by a different artist is still
+    auto-applied. Closing that needs the candidate's tags *before* `_select_match`, which means
+    a `gdata` lookup per gallery batch and splitting the per-gallery loop into two passes.
 - **Batch the preview lookup across the whole run, never per dialog.** `_candidate_previews`
   collects every candidate url from every ambiguous gallery, dedupes, and asks `gdata` in chunks
   of `EHen.MAX_GDATA_URLS`. One call per dialog would be a request each and would put
@@ -171,6 +201,13 @@ matching rather than a separate UI concern.
 - **Read the raw `gmetadata`, not `parse_metadata`'s output.** Preview data is only ever looked
   at. Routing it through the parser puts it one call away from `apply_metadata`, which writes to
   the gallery.
+- **Pass the preview data to the chooser, never re-derive it from the row's label.** The label is
+  a display string that grows a line whenever the chooser learns to show something new, so
+  anything parsing it back out silently acquires that line. `note_better_version` split the label
+  once to recover the native title, and the day a creator line was added it began storing
+  `by <artist>` into the native-title field of `better_versions.db`. The whole `previews` dict
+  therefore rides along in the picker's `extras`, beside `thumbnails`, and every field is read
+  from it by name.
 - **Do not swap the api lookup for scraping the search page.** The listing html very likely
   carries a thumbnail already, which looks like a free replacement for the `gdata` call. It has
   never been verified against a live page, the markup differs between the list and thumbnail
@@ -262,6 +299,38 @@ because **both sides are the source's own title**, not a folder name against a s
   naming none decides nothing — about a fifth are untagged, so absence is not a mismatch. It has
   to run in `_classify` rather than `same_work`, because the candidate's tags do not exist until
   the batched lookup has happened.
+- **The series is not enough on its own — the creator is the other half.** Two doujins of one
+  franchise share the parody as readily as they share a short title, so `same_parody` passes
+  them both. `same_creator` compares the **`Artist:` and `Group:` namespaces pooled**, by
+  intersection, on the same terms as the parody: undecidable when either side credits nobody.
+  Measured over a whole library's list of 725 stored rows, with every candidate's tags read
+  back from the api: **26 rows are a different work**, all of them verified by hand — `Pink
+  Archive` by unacchi offered Alpha91's, `MIZUGI Archive` by guchico offered Subachi's, nine AI
+  sets of `Fischl` against a held gallery of that name. 57 of them shared the held gallery's
+  parody tag, which is why that guard did not catch them.
+  - **Read the tag, never the `[Circle (Artist)]` group.** Scoring the title's own group instead
+    turns 65 rows into mismatches where the api says 26: the titles write `jackdempa` and
+    `[Jaku Denpa]` for one artist, `[chaccu, TinkerBell]` against a stored `chaccu`, and
+    `[Google Translated]` or `[Pixiv+FANBOX]` where an artist belongs. The source normalises
+    the namespace; the title is whatever the uploader typed.
+  - **A release credited to a decensorer is not a counter-example, though it looks like one.**
+    `[jnnkleeche] Umi no Soko [uncensored]`, `[Japanese Underground Skinmag] Love Generation
+    (Uncensored)` and `(NotoriousCRS) Second Chance` all read as the same work republished
+    under an editor's name. Their api tags say otherwise: the jnnkleeche one is a yaoi merman
+    manga (`male:yaoi`, `male:merman`), the NotoriousCRS one a 3D `Misc` set, and both Skinmag
+    releases keep the original artist in `artist:` and agree. Do not weaken the guard for this
+    case — it was checked and it does not exist.
+  - **Content-tag overlap is not a second chance for a rejected row.** Measured on the same
+    data, agreeing rows median 0.67 Jaccard and rejected ones 0.05, but no cutoff rescues any
+    of the 26 while 163 correct rows already sit below 0.5. The creator tag alone is the signal.
+- **A guard added after a scan cannot reach the rows it already stored.** `mark_scanned` records
+  every gallery searched, so a rescan would need `forget_scanned` and a second full pass — one
+  request per gallery, hours of them. `BetterVersionRecheck` re-judges the stored rows instead,
+  at one request per `MAX_GDATA_URLS`, and applies only the two same-work guards: whether a row
+  still *improves* reads the held gallery's own tags, which a metadata fetch rewrites, so a row
+  dismissed on that would be dismissed for a change in the library rather than for being wrong.
+  A row noted from the picker is skipped — the user chose it against the alternatives — and a
+  failing row is **dismissed, not deleted**, so a guard that turns out wrong is recoverable.
 - **A row must be a strict improvement, never a trade — and the condition is on the *other*
   axis.** An uncensored release in a language the held gallery is not in gives the language away
   to gain the censorship; a translation that is censored gives the censorship back to gain the

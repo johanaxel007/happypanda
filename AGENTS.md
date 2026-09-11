@@ -56,7 +56,8 @@ import app_constants, gallerydb, fetch, pewnet
 | `version/gallerydb.py` | database access and the `Gallery` model |
 | `version/utils.py` | `title_parser` (folder name → title/artist/language), archive and image helpers |
 | `version/formatters/title_formatter.py` | title normalisation, `TranslationStyle` |
-| `version/betterversions.py` | the better version review list: its own SQLite store, the two-axis classification, and `BetterVersionScan` |
+| `version/betterversions.py` | the better version review list: its own SQLite store, the two-axis classification, `BetterVersionScan` and `BetterVersionRecheck` |
+| `version/tagreaders.py` | reading the source's tags off a stored gallery or a raw `gmetadata` entry, and comparing two releases on them. Imports nothing else, so it is safe anywhere in the import order |
 | `version/settings.py` | ini-backed settings; `app_constants.py` reads defaults through it |
 | `version/settingsdialog.py` | every setting needs a widget here **and** a read in `restore_options` **and** a write in `accept` |
 
@@ -71,6 +72,7 @@ venv\Scripts\pyinstaller.exe --noconfirm --clean HappyPanda.spec   # build -> di
 python misc/analyze_fetch_log.py path/to/happypanda.log --failures # diagnose a fetch run
 python misc/analyze_scan_log.py path/to/happypanda.log --rejections # diagnose a better-version scan
 venv/Scripts/python.exe misc/gui_smoke.py                          # exercise the gui headlessly
+venv/Scripts/python.exe misc/app_smoke.py                          # drive the real AppWindow headlessly
 ```
 
 The build reads its version string from `VS.txt`.
@@ -84,9 +86,10 @@ The build reads its version string from `VS.txt`.
   on exact mock call counts. Everything else must pass.
 - **Static checks are thin here.** There is no type checker and no lint gate configured. The
   GUI has no pytest coverage, because the modules import each other flatly and a dialog needs a
-  QApplication; `misc/gui_smoke.py` stands in for the settings dialog and the gallery chooser
-  under the offscreen platform. Run it for a change to either, and still launch the app for
-  anything it does not reach.
+  QApplication; `misc/gui_smoke.py` stands in for the settings dialog, the gallery chooser and
+  the better version list under the offscreen platform, and `misc/app_smoke.py` builds the real
+  `AppWindow` and drives its own methods. Run the first for a widget change, the second for
+  anything touching an `AppWindow` method, and still launch the app for what neither reaches.
 - **A signal is a hand-off to code that can delete you.** Widgets here carry
   `WA_DeleteOnClose`, so a slot may destroy the widget that emitted. Emit last, and never touch
   `self` afterwards - `misc/gui_smoke.py` holds the regression case.
@@ -143,9 +146,15 @@ Load bearing, each because a real run got it wrong:
   has removed a candidate's alternatives, that candidate is never auto-applied however well it
   scored — an unrecognised tag shape survives the filter as "states no language".
 - **A language filter only narrows a language the source tags.** e-hentai tags one only when
-  it is not its own default, so `language:japanese$` matches nothing on the whole site — the
-  absence of a tag is what says Japanese. `search_queries()` builds the ladder, and the plain
-  title with no prefix and no filters has to stay inside `MAX_SEARCH_ATTEMPTS`.
+  it is not its own default, so `l:japanese$` matches nothing on the whole site — the absence
+  of a tag is what says Japanese. `search_queries()` builds the ladder, and the plain title
+  with no prefix and no filters has to stay inside `MAX_SEARCH_ATTEMPTS`. The filters go out
+  under the source's short namespaces (`a:`, `l:`), verified live, to spend less of
+  `MAX_QUERY_LENGTH` on them; the app's own search box keeps `artist:` / `language:`.
+- **A better version has to agree on its creator, not just its series.** Two doujins of one
+  franchise share the parody tag as readily as a short title, so `same_creator` compares the
+  pooled `Artist:`/`Group:` namespaces alongside `same_parody`. Read from the tag, never from
+  the title's `[Circle (Artist)]` group.
 - **`TranslationStyle.SEARCH` for queries, not `DEFAULT`.** `DEFAULT` converts ASCII *to* full
   width for filenames; searching needs the inverse.
 
@@ -273,9 +282,21 @@ the first time a second consumer appears.
 for the online metadata pipeline, drawn from real failures. The four `test_init_db` failures are
 pre-existing and unrelated.
 
-`misc/gui_smoke.py` covers the settings dialog and the gallery chooser headlessly — the
-settings round-trip, the ini's encoding, the chooser's covers and gestures, and two crash
-regressions. It runs in a temporary directory against the shipped defaults, which is
-deliberate: the repo's `settings.ini` is untracked, so the suite would otherwise test whatever
-configuration happens to be local. It reaches nothing else, so anything touching another
-dialog or signal still has to be exercised by launching the app.
+`misc/gui_smoke.py` covers the settings dialog, the gallery chooser and the better version
+list headlessly — the settings round-trip, the ini's encoding, the chooser's covers, gestures
+and creator line, and two crash regressions. It runs in a temporary directory against the
+shipped defaults, which is deliberate: the repo's `settings.ini` is untracked, so the suite
+would otherwise test whatever configuration happens to be local. It builds widgets in
+isolation, so it proves a button reaches a method **by name** but never what that method does.
+
+`misc/app_smoke.py` covers that: it constructs the real `AppWindow` and drives its own methods
+— the confirmation dialog, the worker thread, the notification, the metadata lock — with only
+the network stubbed, on `pewnet.EHen` itself so the `isinstance` checks in the pipeline still
+hold. It is the only gate on app-level assembly, which is where a method can reference a name
+that does not exist and stay green under both pytest and `gui_smoke`. Run it for anything
+touching an `AppWindow` method. `gui_smoke.py` stays the encoding gate — building the window
+loads the icon font, and qtawesome opens its charmap without an encoding, so
+`-W error::EncodingWarning` fails inside a dependency there.
+
+Between them they still reach no other dialog, so anything touching one has to be exercised by
+launching the app.
