@@ -191,17 +191,22 @@ missed — `Qt.Orientations`, a QFlags companion type Qt6 folded into its enum, 
 all green under it. `FORCE_HIGH_DPI_SUPPORT` still needs removing through all four settings
 places (Q4, Core Constraint 4), and the shakedown has not begun.
 
-**A blocker is still open before any of that is worth finishing, but its shape has changed twice:
-startup is roughly four times slower under PyQt6** — about 26s against about 126s across the three
-startup phases on a 19,974-gallery library. **Bisecting the binding names the release: it enters at
-Qt 6.7.** PyQt6 6.6.1 / Qt 6.6.3 loads the same library in about 16s, within about 1.3× of the
-PyQt5 floor, while 6.7.0 takes about 38s and 6.11 about 47s. **And profiling the GUI thread's own
-event delivery names the mechanism: queued meta-call delivery.** The application invalidates its
-sort/filter proxy 112 times during one library load under both Qt versions, and each of those costs
-about twice as much under 6.7. So the better fix is not to pin an old Qt but to stop making 112 of
-them — that helps at every Qt version, and the cost being cut is the application's own. Nothing has
-been pinned. Twenty-five candidate causes are excluded, each with the measurement that excluded it,
-and the ones still untested are listed so a later session resumes rather than restarts. See
+**A blocker is still open before any of that is worth finishing, though it is much smaller than it
+was: startup was roughly four times slower under PyQt6** — about 26s against about 126s across the
+three startup phases on a 19,974-gallery library. **Bisecting the binding names the release: it
+enters at Qt 6.7**, and profiling the GUI thread names the mechanism: **queued meta-call
+delivery**, the same number of calls under both Qt versions at about twice the cost each.
+**Most of those calls turned out to be the application's own**, so reading the library in a single
+batch cuts them from 112 to 8 — the gallery load drops from about 38s to about 5s and the whole
+startup from about 135s to about 104s, on any Qt 6. That has shipped: the startup fetch limit now
+defaults to no limit. Nothing is pinned.
+
+What is left is **responsiveness**, which the batch size does not touch: the models are filled from
+a worker thread while the GUI thread owns them, so Windows reports the window as not responding for
+about a minute during startup — and did so before this work too. Moving the inserts onto the GUI
+thread is the proper fix and wants its own session. Twenty-eight candidate causes are excluded,
+each with the measurement that excluded it, and the ones still untested are listed so a later
+session resumes rather than restarts. See
 [`Documentation/Design/QT6_STARTUP_REGRESSION.md`](Documentation/Design/QT6_STARTUP_REGRESSION.md)
 — read it before re-testing anything, and note the `feat/qt6-migration-prep` branch remains a
 clean PyQt5 fallback that is unaffected.
