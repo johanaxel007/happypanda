@@ -121,7 +121,7 @@ began, most of them `QSizePolicy.Policy` in `gallerydialog.py`.
 
 | Gate | Covers | Verdict for this migration |
 |------|--------|----------------------------|
-| `pytest tests/ -q` | 283 pass, 4 pre-existing failures in `test_db.py::test_init_db`. ✅ **Verified** by running it at the start of Q0. | **Was weak; no longer.** No test referenced Qt at all before Q0. `tests/test_qt_scoping.py` now resolves every scoped site against the installed binding and asserts no unscoped one is left, which is what turns a lazy paint-time AttributeError into a red suite. |
+| `pytest tests/ -q` | 344 pass, 4 pre-existing failures in `test_db.py::test_init_db`. ✅ **Verified** 2026-09-12; the 283 recorded at Q0 is stale, the suite has grown since. | **Was weak; no longer.** No test referenced Qt at all before Q0. `tests/test_qt_scoping.py` now resolves every scoped site against the installed binding and asserts no unscoped one is left, which is what turns a lazy paint-time AttributeError into a red suite. |
 | `misc/gui_smoke.py` | Settings dialog, gallery chooser, better-version review list, gallery edit dialog, crash regressions. | **Widgets in isolation.** Ported in Q1 and named PyQt6 in Q3, so it exercises the shipping binding. |
 | `misc/app_smoke.py` | The real `AppWindow` and its own methods: confirmation dialogs, the worker thread, the metadata lock. | **App-level assembly.** The only gate that builds the window, so a mis-scoped `StandardButton` in a confirmation surfaces here rather than in front of a user. Named PyQt6 with the rest in Q3. |
 | Launching the app | Everything else. | The real gate. Manual, and per CLAUDE.md expects a multi-minute library scan. |
