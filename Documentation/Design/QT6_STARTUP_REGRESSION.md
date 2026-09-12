@@ -469,7 +469,7 @@ comparable with them, and the noise here is wide enough to swallow a real effect
 
 ### Rebuilding the harnesses
 
-Both were scratch scripts. To recreate:
+The first two below are scratch scripts; the rest ship. To recreate the scratch ones:
 
 - **Instrumentation** — in `gallerydb.DatabaseStartup`, wrap the four steps of `fetch_galleries`
   in `time.perf_counter()` accumulators on a class-level dict and log it once after the loop.
@@ -484,11 +484,14 @@ Both were scratch scripts. To recreate:
   per-row `SELECT list_id FROM series_list_map WHERE series_id=?` plus `os.path.exists` back on the
   worker. Take the binding as `sys.argv[1]` and create the `QApplication` before connecting; for
   the event-loop variant, run the workload on a thread and call `qapp.exec()` on the main thread.
-- **Hung-window probe** — `IsHungAppWindow` through `ctypes.windll.user32`, polled every 250 ms
-  from a *second* process over the windows `EnumWindows` reports with `Happypanda` in the title.
-  It is the call Explorer uses to decide whether to paint "(Not Responding)", so it answers the
-  question directly; a timer-lateness probe inside the application measures its own event-queue
-  backlog and is inflated by whatever instrumentation is attached.
+- **Hung-window probe and phase timings** — `misc/measure_startup.py`, committed. It launches the
+  application, polls `IsHungAppWindow` from a second process over the windows `EnumWindows`
+  reports titled `Happypanda`, and reads the four phase timings back out of the log. That call is
+  the one Explorer uses to decide whether to paint "(Not Responding)", so it answers the question
+  directly; a timer-lateness probe inside the application measures its own event-queue backlog
+  and is inflated by whatever instrumentation is attached. Each argument is a labelled
+  configuration with the environment that selects it, and it alternates them rather than running
+  them in blocks, so the protocol above is what it does by default.
 - **GUI-thread event profiler** — subclass `QApplication`, wrap `notify()` in a `perf_counter`
   and accumulate by `(int(event.type()), type(receiver).__name__)`. Gate it behind an
   environment variable: it costs a Python call per event, so it must be off when the same build
