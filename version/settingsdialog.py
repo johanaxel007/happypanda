@@ -1685,8 +1685,8 @@ class SettingsDialog(QWidget):
         self.advanced_dbstartup_fetch_limit_spinbox.setMaximum(1_000_000)
         self.advanced_dbstartup_fetch_limit_spinbox.setValue(app_constants.DATABASE_STARTUP_FETCH_LIMIT)
         self.advanced_dbstartup_fetch_limit_spinbox.setToolTip('Batch size of galleries that is fetched from the database upon startup.\n' \
-                                                               'Higher number means faster loading. 0 means no limit, but the app may appear stuck for a few seconds.\n' \
-                                                               'DEFAULT: 1000')
+                                                               '0 means no limit and is by far the fastest: any other value makes the view re-sort the rows it already holds on every batch.\n' \
+                                                               'DEFAULT: 0')
         advanced_dbstartup_l.addRow('Startup gallery fetch limit:', self.advanced_dbstartup_fetch_limit_spinbox)
 
     def _make_about_happypanda(self, tab_widget: QTabWidget):

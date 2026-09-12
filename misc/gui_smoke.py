@@ -56,6 +56,10 @@ assert d.better_version_language.currentText() == app_constants.BETTER_VERSION_L
 # ini of its own. A near miss applied over your metadata is the failure with no undo, and the
 # score distribution is bimodal enough that a high bar costs few correct matches.
 assert d.fuzz_confidence_threshold.value() == 95, d.fuzz_confidence_threshold.value()
+# 0 is one batch for the whole library, and is also the "no limit" sentinel, so a widget that
+# failed to read it back would silently restore the batching this default exists to avoid.
+assert d.advanced_dbstartup_fetch_limit_spinbox.value() == 0, \
+    d.advanced_dbstartup_fetch_limit_spinbox.value()
 say('restore_options: filter=%s previews=%s better version=%s'
     % (d.filter_by_language.isChecked(), d.picker_previews.isChecked(),
        d.better_version_language.currentText()))
@@ -69,7 +73,10 @@ say('settings: the better version language offers only languages a candidate can
 d.filter_by_language.setChecked(False)
 d.picker_previews.setChecked(False)
 d.better_version_language.setCurrentText('Chinese')
+d.advanced_dbstartup_fetch_limit_spinbox.setValue(2500)
 d.accept()
+assert app_constants.DATABASE_STARTUP_FETCH_LIMIT == 2500, 'fetch limit did not survive accept()'
+assert settings.get(0, 'Application', 'db startup fetch limit', int) == 2500
 assert app_constants.FILTER_RESULTS_BY_LANGUAGE is False, 'filter did not survive accept()'
 assert app_constants.PICKER_PREVIEWS is False, 'previews did not survive accept()'
 assert app_constants.BETTER_VERSION_LANGUAGE == 'Chinese', 'language did not survive accept()'
@@ -81,7 +88,16 @@ d2 = settingsdialog.SettingsDialog()
 assert d2.filter_by_language.isChecked() is False
 assert d2.picker_previews.isChecked() is False
 assert d2.better_version_language.currentText() == 'Chinese', 'the language latched to its default'
-say('settings: all three round trip through accept() into a reopened dialog')
+assert d2.advanced_dbstartup_fetch_limit_spinbox.value() == 2500
+say('settings: all four round trip through accept() into a reopened dialog')
+
+# Back to 0, which is the default and also the sentinel: it has to be storable like any other
+# value rather than read as "never configured".
+d2.advanced_dbstartup_fetch_limit_spinbox.setValue(0)
+d2.accept()
+assert app_constants.DATABASE_STARTUP_FETCH_LIMIT == 0
+assert settingsdialog.SettingsDialog().advanced_dbstartup_fetch_limit_spinbox.value() == 0
+say('settings: a fetch limit of 0 stores and reloads rather than reverting')
 
 # A stored language the combo does not list still has to come back out of it, or the next Ok
 # silently writes whichever entry happened to be first instead.

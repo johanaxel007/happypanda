@@ -226,7 +226,9 @@ SEND_FILES_TO_TRASH = get(True, 'Application', 'send files to trash', bool)
 SHOW_SIDEBAR_WIDGET = get(False, 'Application', 'show sidebar widget', bool)
 ENABLE_NOTIFICATIONS = get(True, 'Application', 'enable notifications', bool)
 ALWAYS_DROP_TO_INBOX = get(False, 'Application', 'always send to inbox', bool)
-DATABASE_STARTUP_FETCH_LIMIT = get(1000, 'Application', 'db startup fetch limit', int)
+# 0 is one batch for the whole library. The sorted proxy re-maps the rows it already holds on
+# every insert, so a second batch pays for the first and splitting the work does not divide it.
+DATABASE_STARTUP_FETCH_LIMIT = get(0, 'Application', 'db startup fetch limit', int)
 
 # ADVANCED
 GALLERY_DATA_FIX_REGEX = get("", 'Advanced', 'gallery data fix regex', str)
