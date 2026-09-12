@@ -75,7 +75,6 @@ user_stylesheet_path = ""
 INTERNAL_LEVEL = 8
 FIRST_TIME_LEVEL = get(INTERNAL_LEVEL, 'Application', 'first time level', int)
 UPDATE_VERSION = get('0.30', 'Application', 'version', str)
-FORCE_HIGH_DPI_SUPPORT = get(False, 'Advanced', 'force high dpi support', bool)
 
 # sizes
 MAIN_W = 1061 # main window
