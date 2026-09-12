@@ -1473,7 +1473,9 @@ class TagText(QPushButton):
                 menu.addAction("Lookup tag",
                                lambda: utils.lookup_tag(
                                    self.text() if not self.namespace else '{}:{}'.format(self.namespace, self.text())))
-                menu.exec(ev.globalPos())
+                # A Qt6 mouse event carries no globalPos; the name resolves only through
+                # qtawesome's Qt5 compatibility layer, which a menu's position should not rest on.
+                menu.exec(ev.globalPosition().toPoint())
 
         return super().mousePressEvent(ev)
 
@@ -2698,17 +2700,18 @@ class GalleryListView(QWidget):
         self.setWindowTitle('Gallery List')
         self.count = 0
 
-    def all_check_state(self, new_state):
+    def all_check_state(self, _state=None):
         row = 0
         done = False
         while not done:
             item = self.view_list.item(row)
             if item:
                 row += 1
-                if new_state == Qt.CheckState.Unchecked:
-                    item.setCheckState(Qt.CheckState.Unchecked)
-                else:
+                # stateChanged carries a plain int, so the box itself is what is asked here.
+                if self.check_all.isChecked():
                     item.setCheckState(Qt.CheckState.Checked)
+                else:
+                    item.setCheckState(Qt.CheckState.Unchecked)
             else:
                 done = True
 

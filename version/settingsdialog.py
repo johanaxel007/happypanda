@@ -319,7 +319,6 @@ class SettingsDialog(QWidget):
 
         # Advanced / Misc
         self.external_viewer_args.setText(app_constants.EXTERNAL_VIEWER_ARGS)
-        self.force_high_dpi_support.setChecked(app_constants.FORCE_HIGH_DPI_SUPPORT)
 
         # Advanced / Gallery / Gallery Text Fixer
         self.g_data_regex_fix_edit.setText(app_constants.GALLERY_DATA_FIX_REGEX)
@@ -641,9 +640,6 @@ class SettingsDialog(QWidget):
         set(self.cache_size[1], 'Advanced', 'cache size')
         QPixmapCache.setCacheLimit(self.cache_size[0]*
                              self.cache_size[1])
-
-        app_constants.FORCE_HIGH_DPI_SUPPORT = self.force_high_dpi_support.isChecked()
-        set(app_constants.FORCE_HIGH_DPI_SUPPORT, 'Advanced', 'force high dpi support')
 
         # Advanced / General / Gallery Text Fixer
         app_constants.GALLERY_DATA_FIX_REGEX = self.g_data_regex_fix_edit.text()
@@ -1060,7 +1056,10 @@ class SettingsDialog(QWidget):
         self.ns_map_edit = DictStrStrEdit(app_search, 'alias', 'namespace')
         ns_map_groupbox_l.addWidget(self.ns_map_edit)
         
-        self.use_ns_map_checkbox.stateChanged.connect(lambda state: self.ns_map_edit.setEnabled(state == Qt.CheckState.Checked))
+        # The signal hands its slot a plain int, never a Qt.CheckState, so the box is what is
+        # asked rather than the argument.
+        self.use_ns_map_checkbox.stateChanged.connect(
+            lambda _: self.ns_map_edit.setEnabled(self.use_ns_map_checkbox.isChecked()))
         self.restore_default_ns_map_button.clicked.connect(self.restore_default_ns_map)
         self.ns_map_edit.setEnabled(self.use_ns_map_checkbox.isChecked())
 
@@ -1508,12 +1507,6 @@ class SettingsDialog(QWidget):
         advanced_misc.setLayout(advanced_misc_main_layout)
         misc_controls_layout = QFormLayout()
         advanced_misc_main_layout.addLayout(misc_controls_layout)
-
-        high_dpi_info = QLabel("Warning: This option may incur some scaling or painting artifacts")
-        misc_controls_layout.addRow(high_dpi_info)
-        self.force_high_dpi_support = QCheckBox("Force High DPI support *", self)
-        misc_controls_layout.addRow(self.force_high_dpi_support)
-
 
         # Advanced / Misc / External Viewer Arguments
         external_view_group, external_view_l = groupbox("External Viewer Arguments", QFormLayout, tab_widget)

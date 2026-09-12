@@ -28,7 +28,7 @@ def say(msg):
     print(msg, flush=True)
 
 
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QListWidgetItem  # noqa: E402
 from PyQt6.QtCore import QPoint, QEvent, Qt  # noqa: E402
 from PyQt6.QtGui import QPixmap, QColor  # noqa: E402
 
@@ -107,6 +107,19 @@ assert d3.better_version_language.currentText() == 'Portuguese'
 d3.accept()
 assert app_constants.BETTER_VERSION_LANGUAGE == 'Portuguese', 'an unlisted language was lost'
 say('settings: a language the combo does not list survives a save rather than being replaced')
+
+# `stateChanged` hands its slot a plain int, never a `Qt.CheckState`, so a slot that compares
+# the two gates its widget on a condition that can never hold. Both directions are asserted,
+# because a slot that hardcodes either one of them satisfies a single direction.
+app_constants.ENABLE_NAMESPACE_MAP = True
+d4 = settingsdialog.SettingsDialog()
+assert d4.use_ns_map_checkbox.isChecked(), 'the box did not come back from settings'
+assert d4.ns_map_edit.isEnabled(), 'the editor is disabled with its box ticked'
+d4.use_ns_map_checkbox.setChecked(False)
+assert not d4.ns_map_edit.isEnabled(), 'unticking the box left the editor enabled'
+d4.use_ns_map_checkbox.setChecked(True)
+assert d4.ns_map_edit.isEnabled(), 'ticking the box left the editor disabled'
+say('settings: the namespace map editor follows its checkbox in both directions')
 
 # --- the ini is UTF-8 whatever the system locale is -----------------------------------------
 # A frozen build never enables UTF-8 mode however the environment is set, so without an
@@ -1371,6 +1384,23 @@ for _ in range(400):                      # let it finish and let deleteLater be
 assert gd._fetch_thread is None, 'the dialog still points at a thread that deletes itself'
 gd.delayed_close()                        # the call that asks _fetch_thread whether it is running
 say('gallery dialog: closing it after a finished fetch does not touch the deleted thread')
+
+# --- the gallery list chooser's check-all --------------------------------------------------
+# The only control over a list of galleries about to be added, and nothing else reaches it.
+
+g_list = misc.GalleryListView()
+rows = []
+for title in ('First', 'Second'):
+    row = QListWidgetItem(title)
+    row.setCheckState(Qt.CheckState.Checked)
+    g_list.view_list.addItem(row)
+    rows.append(row)
+
+g_list.check_all.setChecked(False)
+assert all(r.checkState() == Qt.CheckState.Unchecked for r in rows),     'unchecking check-all left rows checked: %s' % [r.checkState() for r in rows]
+g_list.check_all.setChecked(True)
+assert all(r.checkState() == Qt.CheckState.Checked for r in rows),     'checking check-all left rows unchecked: %s' % [r.checkState() for r in rows]
+say('gallery list: check-all drives every row, in both directions')
 
 say('')
 say('GUI SMOKE OK')
