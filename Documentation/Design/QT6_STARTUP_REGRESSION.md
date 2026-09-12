@@ -1,8 +1,8 @@
 # PyQt6 Startup Performance Regression
 
-**Version:** 1.5  
+**Version:** 1.6  
 **Date:** 2026-09-12  
-**Status:** In progress — S0–S6 complete and the batch-size fix has shipped; S7 open.  
+**Status:** In progress — S0–S7 complete; the freeze is unexplained and S8 is open for it.  
 **Target:** PyQt6 6.11.0 / Qt 6.11.2 on Python 3.14.7 (baseline: PyQt5 5.15.11 / Qt 5.15.2)
 
 > Switching the binding to PyQt6 makes database startup **roughly four times slower** — 12.1s
@@ -27,11 +27,17 @@
 > That makes pinning Qt 6.6 the fallback rather than the answer: **112 proxy invalidations per
 > library load is the application's own doing**, and cutting them helps under every Qt version.
 > **S6 cut them to 8 by reading the library in one batch** — the gallery load drops from about 38s
-> to about 5s and the whole startup from about 135s to about 104s, on *any* Qt 6 (§12). What that
-> does not fix is responsiveness: the window is reported as not responding for around a minute
-> either way, because the models are mutated from a worker thread. Phase S7.
+> to about 5s and the whole startup from about 135s to about 104s, on *any* Qt 6 (§12).
+>
+> **What none of it fixes is responsiveness, and S7 establishes that the cross-thread model
+> mutation was not the reason.** The models are now filled from the GUI thread, which is what Qt
+> requires, and it costs **0.6% of total startup** and leaves the window reported as not
+> responding for the **whole** load either way (§13). So the freeze has no named cause. Phase S8.
 
 **Audited:** 2026-09-10, at commit `7ba4813` (branch `feat/qt6-migration`).
+**Amended:** 2026-09-12 — phase S7 executed. The startup no longer mutates a model or a widget
+off the GUI thread, which measures free; the freeze it was opened to fix is unchanged, so §13
+carries the result, §9 the detach that was tried and dropped, and S8 replaces the claim.
 **Amended:** 2026-09-10 — phases S0–S3 executed; §5 and §7 rewritten around the result.
 **Amended:** 2026-09-12 — phase S6 executed: the startup batch size is the lever, and it is
 binary. §12 carries the measurements, including the finding that the window is already reported
@@ -383,7 +389,8 @@ subtraction: start the real application with subsystems disabled until the ratio
 | **S4 — Narrow within the model/view** | Built the missing model/view harness rung — binding-neutral, so three more hypotheses fall — then bisected the binding. **Found the release**: it enters at Qt 6.7, and 6.6.1 is within ~1.3× of PyQt5. See §5. | 🔴 | S3 | ✅ 2026-09-12 |
 | **S5 — Name what changed in Qt 6.7** | Nine subtractions from the running application, all null, then a GUI-thread event profile applied identically to 6.6.3 and 6.7.0. **Found the mechanism**: queued meta-call delivery, same count, ~2× the cost per call. See §11. | 🔴 | S4 | ✅ 2026-09-12 |
 | **S6 — Cut the meta-calls** | Not by suppressing the re-search, which measured *worse*, but by reading the library in one batch: `DATABASE_STARTUP_FETCH_LIMIT` now defaults to 0. 112 proxy meta-calls become 8, the gallery load about 38s becomes about 5s. See §12. | 🟡 | S5 | ✅ 2026-09-12 |
-| **S7 — Stop mutating the models off the GUI thread** | `fetch_galleries` calls `insertRows` from the `DatabaseStartup` thread on models the GUI thread owns (`gallerydb.py:2282`, `app.py:71-75`). Qt does not support this, and it is why every model signal is delivered as a queued meta-call and why the window is hung for about a minute. The fix is to hand each batch to a GUI-thread slot instead. Restructures the startup path, so it wants its own session. | 🔴 | S6 | — |
+| **S7 — Stop mutating the models off the GUI thread** | Each batch, and the delegate's paint level, now reach the GUI thread as a signal. `DatabaseStartup` holds no reference to a widget at all. **It is free and it does not fix the freeze**: 128.8s against 128.0s over four runs each, with the window unresponsive for the whole load either way. See §13. | 🟡 | S6 | ✅ 2026-09-12 |
+| **S8 — Find what actually freezes the window** | Nothing left in this document explains it. The load is ~128s and the window is reported as not responding for ~113s of it, unbroken, under every configuration tried. The first lead is the tag phase, which is 20,447 blocking round trips between two Python threads and covers most of that window; §11's untested list is the rest. | 🔴 | S7 | — |
 
 Effort: 🟢 low (hours, localized) · 🟡 medium (days, several files) · 🔴 high (cross-cutting, or
 dominated by manual verification).
@@ -447,9 +454,18 @@ comparable with them, and the noise here is wide enough to swallow a real effect
   window, and the log rotates at 10 MB — a figure can end up in `happypanda.log.1` mid-phase.
 - **Kill the run once the line you need appears.** A full startup spends another ~90s loading tags
   after the gallery phase, which is wasted unless that phase is what is being measured.
-- **Two different acceptance figures.** Throughput is the `TIMING galleries` line; responsiveness
-  is the hung-window probe below. A timer inside the application measures its own event-queue
-  backlog and answers neither.
+- **Two different acceptance figures.** Throughput is the four phase lines **summed** — one of
+  them alone stopped being comparable at S7 (§13) — and responsiveness is the hung-window probe
+  below. A timer inside the application measures its own event-queue backlog and answers neither.
+- **The A/B control has to be the code as it stands.** Gating the change behind an environment
+  variable only holds while the gated-off branch is still the original. Editing the body both
+  branches share turns the control into a third variant, silently: one series here measured the
+  change at 1.6× slower, and what it had actually measured was a proxy being detached and
+  re-attached from the loader thread. Re-run the control after every edit that touches it.
+- **`venv/Scripts/python.exe` is a launcher.** The process it starts owns the window, so the pid
+  `Popen` reports never matches it. Find the window by title and end the run with
+  `taskkill /T /F`, or the application outlives the probe and loads the same database underneath
+  the next run — which is enough on its own to invalidate a whole series.
 
 ### Rebuilding the harnesses
 
@@ -508,6 +524,8 @@ Both were scratch scripts. To recreate:
 | **Per-call sip conversion overhead in `data()`** | The same replica sorting on the role that builds a `QDateTime` per comparison: 4.46s against 4.53s over more than a million round-trips. | 2026-09-12 |
 | **Attributing the step to Riverbank's layer or to Qt separately** | Both crossings fail to load: binding 6.6.1 on Qt 6.7.3 raises `ImportError` on `QtGui`, binding 6.7.1 on Qt 6.6.3 on `QtCore`. The two halves cannot be varied independently. | 2026-09-12 |
 | **Bisecting from PyQt6 6.0** | 6.0 and 6.1 have no `win_amd64` wheel on PyPI, and the application itself will not run below 6.5 (`QAction.setMenu` absent in 6.2/6.3, hard exit in 6.4). | 2026-09-12 |
+| **The cross-thread model mutation as the cause of the freeze** | Moving every insert onto the GUI thread changes the window's unresponsive stretch from about 116s to about 113s, on a load of about 128s. The arithmetic said so before the run did: the gallery phase is 5.4s, and it was never long enough to account for a freeze that lasts the whole startup. | 2026-09-12 |
+| **Detaching the sort/filter proxy for the duration of the insert** | The proxy keeps its mapping sorted, so filling the model with it detached and building the mapping once looked like the cheaper shape. Measured against the plain GUI-thread insert in the same interleaved series: **130.6s against 131.9s**, a difference several times smaller than that series' own run-to-run band. Dropped rather than shipped. | 2026-09-12 |
 | **Keeping both bindings installed for A/B convenience** | `misc/check_qt_enums.py` and `tests/test_qt_scoping.py` resolve PyQt5 first, so a venv holding both silently gates the Qt6 branch against Qt5. Install the second binding only for the duration of a comparison. | 2026-09-10 |
 
 ---
@@ -667,6 +685,55 @@ single re-map at the end. The change was reverted and nothing of it ships.
 
 ---
 
+## 13. What S7 changed: the models are filled from the thread that owns them
+
+`fetch_galleries` called `insertRows` on every registered view from the `DatabaseStartup` thread,
+and `startup` called `_increment_paint_level`, which calls `update()` on a widget, from the same
+place. Qt allows neither. `DatabaseStartup` now emits `BATCH_READY` and `PAINT_LEVEL`, `AppWindow`
+receives both, and `gallerydb` holds no reference to a view, a model or a widget.
+
+### It costs nothing, and it fixes nothing
+
+Four runs of each, alternating, on the development database with the startup scan and the
+watchdog monitor disabled. ✅ **Verified**.
+
+| Filled from | Startup, four phases summed | Window not responding |
+|-------------|----------------------------:|----------------------:|
+| the loader thread (as it was) | 127.2, 126.9, 128.3, 129.8s — **mean 128.0s** | 114.8, 115.2, 115.5, 118.2s |
+| the GUI thread (as it is) | 129.3, 128.4, 129.0, 128.4s — **mean 128.8s** | 113.8, 113.0, 113.5, 113.0s |
+
+**0.6% apart on a band under 3s wide**, and the freeze is unbroken from end to end under both.
+Correctness was the whole of what this bought.
+
+The claim S7 was opened on — that the cross-thread mutation is why the window hangs — does not
+survive its own arithmetic, which was available before any of this ran: §12 measured the gallery
+phase at 4.9s and the unbroken freeze at 91.5s, and model mutation happens nowhere else.
+
+### The gallery phase's timing line is no longer the gate
+
+The loader now emits the batch and returns, so the `Loading galleries` stopwatch stops before the
+GUI thread has inserted anything. That work does not disappear, it lands in whichever phase is
+running when the event is delivered:
+
+| Filled from | galleries | chapters | tags |
+|-------------|----------:|---------:|-----:|
+| the loader thread | ~5.3s | 6.9–10.1s | 112.9–117.4s |
+| the GUI thread | ~5.4s | 89.8–102.2s | 20.7–33.7s |
+
+Identical totals, and the model work moves from the tag phase to the chapter phase. **Compare the
+sum of the four phases across this change, never one line.** §7's "every phase's gate is the
+`TIMING galleries` line" holds only for the phases that ran before S7.
+
+### What now covers it
+
+`misc/app_smoke.py` seeds its temporary database with galleries in two views and records the
+thread each `insertRows` really ran on. Before S7 there was no coverage of `DatabaseStartup` of
+any kind: nothing imports it, and the harness built its window against an empty database, so the
+batch loop never ran a single iteration. The assertion fails against the old arrangement, naming
+the loader thread, which is the only reason it is worth having.
+
+---
+
 ## Document History
 
 * **v1.0** - Initial report
@@ -692,8 +759,14 @@ single re-map at the end. The change was reverted and nothing of it ships.
 * **v1.5** - §8 gained the measurement protocol every figure here was produced under, which was
   scattered across the result sections and nowhere stated, plus rebuild recipes for the
   hung-window probe and the GUI-thread event profiler.
+* **v1.6** - Phase S7 executed. The startup fills the models from the GUI thread and `gallerydb`
+  no longer references a widget, which measures free - 128.8s against 128.0s - and leaves the
+  window unresponsive for the whole load exactly as before, so the freeze this phase was opened
+  on has no named cause and S8 replaces it. Detaching the proxy for the insert was measured and
+  dropped. §13 carries it; §8 gained the three traps that cost this session its first two
+  measurement series, and the first automated coverage `DatabaseStartup` has ever had.
 
 ---
 
 **Last Updated:** 2026-09-12  
-**Next Review:** when S7 is picked up, or if the migration is reconsidered on other grounds
+**Next Review:** when S8 is picked up, or if the migration is reconsidered on other grounds

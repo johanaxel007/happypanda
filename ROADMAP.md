@@ -201,12 +201,12 @@ batch cuts them from 112 to 8 — the gallery load drops from about 38s to about
 startup from about 135s to about 104s, on any Qt 6. That has shipped: the startup fetch limit now
 defaults to no limit. Nothing is pinned.
 
-What is left is **responsiveness**, which the batch size does not touch: the models are filled from
-a worker thread while the GUI thread owns them, so Windows reports the window as not responding for
-about a minute during startup — and did so before this work too. Moving the inserts onto the GUI
-thread is the proper fix and wants its own session. Twenty-eight candidate causes are excluded,
-each with the measurement that excluded it, and the ones still untested are listed so a later
-session resumes rather than restarts. See
+What is left is **responsiveness**, and it now has no named cause. The models were being filled
+from a worker thread while the GUI thread owned them; they are filled from the GUI thread now,
+which is what Qt requires, and it costs 0.6% of total startup and leaves Windows reporting the
+window as not responding for the whole load exactly as before. So that was a correctness fix and
+nothing more. Thirty candidate causes are excluded, each with the measurement that excluded it,
+and the ones still untested are listed so a later session resumes rather than restarts. See
 [`Documentation/Design/QT6_STARTUP_REGRESSION.md`](Documentation/Design/QT6_STARTUP_REGRESSION.md)
 — read it before re-testing anything, and note the `feat/qt6-migration-prep` branch remains a
 clean PyQt5 fallback that is unaffected.
