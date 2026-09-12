@@ -54,7 +54,7 @@ class AppWindow(QMainWindow):
 
     move_listener = pyqtSignal()
     login_check_invoker = pyqtSignal()
-    db_startup_invoker = pyqtSignal(list)
+    db_startup_invoker = pyqtSignal()
     duplicate_check_invoker = pyqtSignal(gallery.GalleryModel)
     admin_db_method_invoker = pyqtSignal(object)
     db_activity_checker = pyqtSignal()
@@ -74,6 +74,8 @@ class AppWindow(QMainWindow):
         self._db_startup_thread.start()
         self.db_startup.moveToThread(self._db_startup_thread)
         self.db_startup.DONE.connect(lambda: self.scan_for_new_galleries() if app_constants.LOOK_NEW_GALLERY_STARTUP else None)
+        self.db_startup.BATCH_READY.connect(self._insert_startup_batch)
+        self.db_startup.PAINT_LEVEL.connect(self._startup_paint_level)
         self.db_startup_invoker.connect(self.db_startup.startup)
         self.setAcceptDrops(True)
         self.initUI()
@@ -158,8 +160,7 @@ class AppWindow(QMainWindow):
             settings.save()
 
         def done(status=True):
-            self.db_startup_invoker.emit(gallery.MangaViews.manga_views)
-            #self.db_startup.startup()
+            self.db_startup_invoker.emit()
 
             if app_constants.FIRST_TIME_LEVEL != app_constants.INTERNAL_LEVEL:
                 normalize_first_time()
@@ -396,6 +397,23 @@ class AppWindow(QMainWindow):
             metadata_spinner.show()
         else:
             self.notif_bubble.update_text("Oops!", "Auto metadata fetcher is already running...")
+
+    def _insert_startup_batch(self, galleries):
+        """Puts one batch of galleries read at startup into the views that hold its kind.
+
+        A model may only be mutated from the thread that owns it, so a batch reaches the views
+        as a signal and the insert happens here. The row count is read at insert time rather
+        than travelling with the batch, so a batch waiting its turn cannot carry a stale one.
+        """
+        for view in gallery.MangaViews.manga_views:
+            view_galleries = [g for g in galleries if g.view == view.view_type]
+            view.gallery_model._gallery_to_add = view_galleries
+            view.gallery_model.insertRows(view.gallery_model.rowCount(), len(view_galleries))
+
+    def _startup_paint_level(self):
+        """Lets the grid draw one more layer of what a finished startup phase has loaded."""
+        for view in gallery.MangaViews.manga_views:
+            view.list_view.manga_delegate._increment_paint_level()
 
     def _prune_better_versions(self):
         """Drops review rows whose gallery has left the library.

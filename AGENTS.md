@@ -308,11 +308,13 @@ isolation, so it proves a button reaches a method **by name** but never what tha
 `misc/app_smoke.py` covers that: it constructs the real `AppWindow` and drives its own methods
 — the confirmation dialog, the worker thread, the notification, the metadata lock — with only
 the network stubbed, on `pewnet.EHen` itself so the `isinstance` checks in the pipeline still
-hold. It is the only gate on app-level assembly, which is where a method can reference a name
-that does not exist and stay green under both pytest and `gui_smoke`. Run it for anything
-touching an `AppWindow` method. `gui_smoke.py` stays the encoding gate — building the window
-loads the icon font, and qtawesome opens its charmap without an encoding, so
-`-W error::EncodingWarning` fails inside a dependency there.
+hold. It seeds its temporary database, so the database startup runs against a library rather
+than an empty table, and pins which thread the models are filled from. It is the only gate on
+app-level assembly, which is where a method can reference a name that does not exist and stay
+green under both pytest and `gui_smoke`. Run it for anything touching an `AppWindow` method.
+`gui_smoke.py` stays the encoding gate — building the window loads the icon font, and qtawesome
+opens its charmap without an encoding, so `-W error::EncodingWarning` fails inside a dependency
+there.
 
 Between them they still reach no other dialog, so anything touching one has to be exercised by
 launching the app.

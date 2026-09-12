@@ -2221,10 +2221,18 @@ class DatabaseStartup(QObject):
     Fetches and emits database records
     START: emitted when fetching from DB occurs
     DONE: emitted when the initial fetching from DB finishes
+    BATCH_READY: emitted with each batch of galleries read out of the database
+    PAINT_LEVEL: emitted when a phase has loaded something the grid can now draw
+
+    Reads the database and builds galleries, touching no model and no widget: it is meant to
+    live on a thread of its own, and the last two signals carry that work to the thread that
+    owns them.
     """
     START = pyqtSignal()
     DONE = pyqtSignal()
     PROGRESS = pyqtSignal(str)
+    BATCH_READY = pyqtSignal(list)
+    PAINT_LEVEL = pyqtSignal()
     _DB = database.db.DBBase()
 
     def __init__(self):
@@ -2237,7 +2245,7 @@ class DatabaseStartup(QObject):
         self._finished = False
         self._loaded_galleries = []
 
-    def startup(self, manga_views):
+    def startup(self):
         self.START.emit()
 
         with utils.Stopwatch('DatabaseStartup.startup (Loading galleries)', lambda msg: log_i(msg)):
@@ -2247,10 +2255,10 @@ class DatabaseStartup(QObject):
             while remaining > 0:
                 self.PROGRESS.emit("Loading galleries: {}".format(remaining))
                 fetch_limit = min(remaining, self._fetch_count) if self._fetch_count > 0 else self.count
-                self.fetch_galleries(self._offset, fetch_limit, manga_views)
+                self.fetch_galleries(self._offset, fetch_limit)
                 self._offset += fetch_limit
                 remaining = self.count - self._offset
-            [v.list_view.manga_delegate._increment_paint_level() for v in manga_views]
+            self.PAINT_LEVEL.emit()
 
         with utils.Stopwatch('DatabaseStartup.startup (Loading chapters)', lambda msg: log_i(msg)):
             self.PROGRESS.emit("Loading chapters...")
@@ -2259,7 +2267,7 @@ class DatabaseStartup(QObject):
         with utils.Stopwatch('DatabaseStartup.startup (Loading tags)', lambda msg: log_i(msg)):
             self.PROGRESS.emit("Loading tags...")
             self.fetch_tags()
-            [v.list_view.manga_delegate._increment_paint_level() for v in manga_views]
+            self.PAINT_LEVEL.emit()
 
         with utils.Stopwatch('DatabaseStartup.startup (Loading hashes)', lambda msg: log_i(msg)):
             self.PROGRESS.emit("Loading hashes...")
@@ -2268,7 +2276,7 @@ class DatabaseStartup(QObject):
         self._fetching = False
         self.DONE.emit()
 
-    def fetch_galleries(self, offset, limit, manga_views):
+    def fetch_galleries(self, offset, limit):
         # instead of "LIMIT 1, 2" you can also write "LIMIT 2 OFFSET 1"
         c = execute(self._DB.execute, False, '''SELECT * FROM series LIMIT {}, {}'''.format(offset, limit))
         if c:
@@ -2276,10 +2284,7 @@ class DatabaseStartup(QObject):
             gallery_list = execute(GalleryDB.gen_galleries, False, new_data, {"chapters":False, "tags":False, "hashes":False})
             if gallery_list:
                 self._loaded_galleries.extend(gallery_list)
-                for view in manga_views:
-                    view_galleries = [g for g in gallery_list if g.view == view.view_type]
-                    view.gallery_model._gallery_to_add = view_galleries
-                    view.gallery_model.insertRows(view.gallery_model.rowCount(), len(view_galleries))
+                self.BATCH_READY.emit(gallery_list)
 
     def fetch_chapters(self):
         # block by waiting for a return value

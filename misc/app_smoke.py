@@ -45,6 +45,7 @@ import app  # noqa: E402
 import app_constants  # noqa: E402
 import betterversions  # noqa: E402
 import fetch  # noqa: E402
+import gallery  # noqa: E402
 import gallerydb  # noqa: E402
 import misc  # noqa: E402
 import pewnet  # noqa: E402
@@ -105,6 +106,35 @@ app_constants.DEFAULT_EHEN_URL = 'https://e-hentai.org/'
 app_constants.GLOBAL_EHEN_LOCK = False
 
 database.db.DBBase._DB_CONN = database.db.init_db()
+
+# --- a library for the startup to load -----------------------------------------------------
+# Without rows in `series` the startup loop never runs a single iteration, so every assertion
+# about it would pass against code that never executed. Three galleries in the library and one
+# in the inbox, because the batch is split by the view each gallery belongs to.
+SEEDED = {app_constants.ViewType.Default: 3, app_constants.ViewType.Addition: 1}
+for view_type, count in SEEDED.items():
+    for n in range(count):
+        seed = gallerydb.Gallery()
+        seed.title = 'Seeded %s %d' % (view_type, n)
+        seed.path = WORKDIR
+        seed.view = view_type
+        seed.profile = os.path.join(WORKDIR, 'seed.jpg')  # or add_gallery goes off to make one
+        seed.chapters.create_chapter().path = WORKDIR  # a gallery with none is refused outright
+        gallerydb.execute(gallerydb.GalleryDB.add_gallery, False, seed)
+
+# The thread each insert really ran on, recorded from inside the model. Which thread mutates a
+# model is the whole point of this path and is invisible to every other assertion here.
+insert_threads = []
+_real_insert_rows = gallery.GalleryModel.insertRows
+
+
+def recording_insert_rows(self, position, rows, *args, **kwargs):
+    insert_threads.append(QThread.currentThread())
+    return _real_insert_rows(self, position, rows, *args, **kwargs)
+
+
+gallery.GalleryModel.insertRows = recording_insert_rows
+
 window = app.AppWindow(disable_excepthook=True)
 assert logins == ['checked'], logins
 say('step: the application window is up, with the network stubbed')
@@ -123,6 +153,29 @@ def pump_until(predicate, what, timeout_ms=20000):
             raise AssertionError('timed out waiting for %s' % what)
         qapp.processEvents()
     qapp.processEvents()
+
+
+# --- the startup filling the models ---------------------------------------------------------
+# The library is read on a thread of its own and the models belong to the GUI thread, so each
+# batch reaches them as a signal. Nothing else here reaches the startup at all: pytest builds
+# no window, and gui_smoke builds no gallery model.
+
+main_thread = QThread.currentThread()
+library_view = window.default_manga_view
+inbox_view = window.addition_tab.view
+
+pump_until(lambda: library_view.gallery_model.rowCount() == SEEDED[app_constants.ViewType.Default]
+           and inbox_view.gallery_model.rowCount() == SEEDED[app_constants.ViewType.Addition],
+           'the startup to fill both models')
+
+assert insert_threads, 'the startup inserted nothing at all'
+assert all(t is main_thread for t in insert_threads), insert_threads
+say('app: the startup reaches both views, and every insert runs on the gui thread')
+
+# The delegate draws nothing until the phase that loaded what it draws has finished, and it
+# calls update() on the view to say so, which is a widget call like any other.
+assert library_view.list_view.manga_delegate._paint_level > 0, 'the grid was never told to draw'
+say('app: the grid is let off its blank paint level once the galleries are in')
 
 
 # --- rechecking the better version list ----------------------------------------------------
