@@ -1,6 +1,6 @@
 # PyQt6 Startup Performance Regression
 
-**Version:** 1.4  
+**Version:** 1.5  
 **Date:** 2026-09-12  
 **Status:** In progress — S0–S6 complete and the batch-size fix has shipped; S7 open.  
 **Target:** PyQt6 6.11.0 / Qt 6.11.2 on Python 3.14.7 (baseline: PyQt5 5.15.11 / Qt 5.15.2)
@@ -423,6 +423,34 @@ deliverable is a named subsystem, which then justifies its own design work.
 3. **Is it specific to PyQt6 6.11.0 / Qt 6.11.2?** Answered by S4: no. It enters at 6.7.0 and
    worsens through 6.11, and 6.6.1 does not have it (§5).
 
+### How to measure a startup change
+
+Every figure in this document was produced this way. A change measured any other way is not
+comparable with them, and the noise here is wide enough to swallow a real effect.
+
+- **Three runs per configuration, minimum.** The run-to-run band is about 38–50s for the gallery
+  load at Qt 6.7.0 and about 14–18s at 6.6.3. One run proves nothing; a change worth shipping
+  moves the mean clear of the band.
+- **Turn off what competes.** Set `look new gallery startup = False` and `enable monitor = False`
+  in `settings.ini`, and back the file up first — it is untracked, so a lost edit is not
+  recoverable from git. Restore it when the phase ends.
+- **Interleave configurations; do not run them in blocks.** The machine drifts. Three variants
+  measured in sequence over one afternoon each came out slower than the one before, and
+  re-measuring the baseline at the end showed about 4% of that was drift rather than the change.
+  Alternate A/B/A/B, or re-baseline before trusting any block comparison.
+- **Compare ratios, never seconds.** Absolute figures depend on the machine and on the library,
+  and this library grew mid-investigation (§2).
+- **Instrument both sides identically, and gate it behind an environment variable.** One patched
+  build should serve every variant, so the instrumentation's own cost cancels instead of becoming
+  a variable. Revert all of it before committing; only `misc/qt_modelview_bench.py` ships.
+- **Read `happypanda.log`, not the exit code.** 127 means both a Qt abort and the user closing the
+  window, and the log rotates at 10 MB — a figure can end up in `happypanda.log.1` mid-phase.
+- **Kill the run once the line you need appears.** A full startup spends another ~90s loading tags
+  after the gallery phase, which is wasted unless that phase is what is being measured.
+- **Two different acceptance figures.** Throughput is the `TIMING galleries` line; responsiveness
+  is the hung-window probe below. A timer inside the application measures its own event-queue
+  backlog and answers neither.
+
 ### Rebuilding the harnesses
 
 Both were scratch scripts. To recreate:
@@ -661,6 +689,9 @@ single re-map at the end. The change was reverted and nothing of it ships.
   Suppressing the per-batch re-search was measured, found worse, and reverted. §12 carries it, and
   records that the window is already reported as not responding at the old default; phase S7 opened
   for the cross-thread model mutation that causes it.
+* **v1.5** - §8 gained the measurement protocol every figure here was produced under, which was
+  scattered across the result sections and nowhere stated, plus rebuild recipes for the
+  hung-window probe and the GUI-thread event profiler.
 
 ---
 
