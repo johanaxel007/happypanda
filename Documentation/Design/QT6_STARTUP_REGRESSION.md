@@ -1,6 +1,6 @@
 # PyQt6 Startup Performance Regression
 
-**Version:** 1.2  
+**Version:** 1.3  
 **Date:** 2026-09-12  
 **Status:** Proposed design — not implemented.  
 **Target:** PyQt6 6.11.0 / Qt 6.11.2 on Python 3.14.7 (baseline: PyQt5 5.15.11 / Qt 5.15.2)
@@ -14,16 +14,25 @@
 > **Bisecting the binding now names where it enters: Qt 6.7.** PyQt6 6.6.1 / Qt 6.6.3 loads the
 > same library in about 16s — within about 1.3× of the PyQt5 floor and not worth blocking a
 > migration over — while the very next release, 6.7.0, takes about 38s, and it worsens to about
-> 47s by 6.11 (§5). So the blocker on `feat/qt6-migration` is a *Qt version* choice, not a
-> PyQt5-versus-PyQt6 architectural difference.
+> 47s by 6.11 (§5). So this is not a PyQt5-versus-PyQt6 architectural difference.
 >
-> Sixteen candidate causes were ruled out by measurement (§4, §5), and every attempt to
+> Twenty-five candidate causes were ruled out by measurement (§4, §5, §11), and every attempt to
 > reproduce the cost outside the application fails — including a faithful model/view replica
 > whose Python callback counts come out **identical** between the two bindings. What changed
-> inside Qt 6.7 is still open, and black-box measurement is exhausted.
+> inside Qt 6.7 is **no longer** open at the granularity this project can reach: profiling the
+> GUI thread's own event delivery shows the cost is **queued meta-call delivery**. The application
+> issues the *same* number of them under both versions — 112 to the sort/filter proxy, 154 to
+> PyQt's lambda-proxy receivers — and each one costs **about twice as much** under 6.7 (§11).
+>
+> That makes pinning Qt 6.6 the fallback rather than the answer: **112 proxy invalidations per
+> library load is the application's own doing**, and cutting them helps under every Qt version.
+> Phase S6.
 
 **Audited:** 2026-09-10, at commit `7ba4813` (branch `feat/qt6-migration`).
 **Amended:** 2026-09-10 — phases S0–S3 executed; §5 and §7 rewritten around the result.
+**Amended:** 2026-09-12 — phase S5 executed: nine further subtractions from the running
+application, all null, and a GUI-thread event profile that names queued meta-call delivery as the
+mechanism. §11 carries it, with the candidates left untested.
 **Amended:** 2026-09-12 — phase S4 executed. The model/view harness rung was built and
 committed (`misc/qt_modelview_bench.py`) and does not reproduce; the binding was bisected across
 PyQt6 6.2–6.11 against the running application, three runs per release with the startup scan and
@@ -366,7 +375,8 @@ subtraction: start the real application with subsystems disabled until the ratio
 | **S2 — Disable the download manager** | `start_manager(0)` in place of 4 workers. Excluded it. | 🟢 | S0 | ✅ 2026-09-10 |
 | **S3 — Strip to the loader** | Skip the `manga_views` loop. **Found it** — see §5. | 🟡 | S1, S2 | ✅ 2026-09-10 |
 | **S4 — Narrow within the model/view** | Built the missing model/view harness rung — binding-neutral, so three more hypotheses fall — then bisected the binding. **Found the release**: it enters at Qt 6.7, and 6.6.1 is within ~1.3× of PyQt5. See §5. | 🔴 | S3 | ✅ 2026-09-12 |
-| **S5 — Name what changed in Qt 6.7** | A native profile of the Qt6 build under both 6.6.3 and 6.7.0, `py-spy record --native` first. Only worth doing if pinning 6.6 is rejected — otherwise the release name is enough to unblock Q4/Q5. | 🔴 | S4 | — |
+| **S5 — Name what changed in Qt 6.7** | Nine subtractions from the running application, all null, then a GUI-thread event profile applied identically to 6.6.3 and 6.7.0. **Found the mechanism**: queued meta-call delivery, same count, ~2× the cost per call. See §11. | 🔴 | S4 | ✅ 2026-09-12 |
+| **S6 — Cut the meta-calls** | The application invalidates the proxy 112 times during one load. Suppressing that for the duration of the load and invalidating once at the end would remove most of the GUI-thread work at any Qt version. Design work, not measurement — it changes what the user sees while the library loads. | 🟡 | S5 | — |
 
 Effort: 🟢 low (hours, localized) · 🟡 medium (days, several files) · 🔴 high (cross-cutting, or
 dominated by manual verification).
@@ -386,17 +396,20 @@ deliverable is a named subsystem, which then justifies its own design work.
 
 | Version | Extension |
 |---------|-----------|
-| **v2** | The decision S4 hands over: **pin PyQt6 6.6.1 / Qt 6.6.3** and unblock Q4/Q5, or stay on the newest Qt and accept the cost, or run S5 to name the mechanism and look for a fix. Pinning is the cheap one and is not currently rejected by anything measured. |
+| **v2** | The decision S5 hands over: **cut the meta-call count** (phase S6) so the Qt version stops mattering, or **pin PyQt6 6.6.1 / Qt 6.6.3** and unblock Q4/Q5 on the older Qt. S6 is the better outcome because it also speeds up 6.6, and because the cost it removes is the application's own. |
 | **v3+** | The unrelated startup cost `gen_galleries` carries — one SQL query per gallery through `ListDB.query_gallery`, which is most of the 3.7s Qt-free floor. Gets its own entry. |
 
 ---
 
 ## 8. Open questions
 
-1. **What changed in Qt 6.7?** S4 named the release; the mechanism inside it is open, and
-   black-box measurement is now exhausted — a faithful replica of the path is binding-neutral and
-   the Python callback counts are bit-identical (§5). A native profile of the two Qt builds is the
-   only direction left, which is phase S5. Also unexplained: why 6.6 is *faster* than 6.5.
+1. **Which Qt change made a queued meta-call twice as expensive?** S5 localised the cost to
+   meta-call delivery (§11) but not to a commit. Qt stopped shipping `dist/changes-*` files after
+   6.0, and the obvious item in the item-view history — passing the widget to
+   `QStyle::pixelMetric()` — was backported to 6.6, 6.5 and 6.2, so it cannot be the step.
+   Settling it needs either a Windows native profiler or a local build of qtbase bisected between
+   v6.6.3 and v6.7.0. Also unexplained: why 6.6 is *faster* than 6.5, and whether the further
+   slide from 6.7 to 6.11 shares this cause.
 2. **Does the ratio scale with library size?** Every measurement here is against one 19,974-gallery
    database. A smaller library might show it proportionally or not at all, which would itself be a
    clue. ⚠️ **Unverified** — untested in either direction.
@@ -440,6 +453,9 @@ Both were scratch scripts. To recreate:
 | **The download manager's four worker threads** | Started with 0 workers; 12.46s / 30.51s, no better. | 2026-09-10 |
 | **The QThread shape of the loader** | Harness extended to a `QObject` moved onto a `QThread` and invoked by signal, matching `app.py:71-75`: PyQt5 4.37s, PyQt6 4.27s. | 2026-09-10 |
 | **`setDynamicSortFilter` re-filtering on every insert** | Frozen for the whole load and invalidated once afterwards: 43.9s, unchanged. | 2026-09-10 |
+| **The view as the place the time goes** | Detaching both views from the proxy entirely recovers only about 15% (34.9s against a 42s baseline at Qt 6.7.0), while removing `insertRows` altogether took PyQt6 from 39s to 5.6s. | 2026-09-12 |
+| **The application-wide stylesheet, the blur effect, the spinner, the tooltip role, the view's layout mode and batch size, and the status-bar row callback** | Nine subtractions from the running application at Qt 6.7.0, every one inside the 38-50s run-to-run band; see §11. | 2026-09-12 |
+| **`py-spy --native` as the profiler** | py-spy 0.4.2 cannot read Python 3.14: `Failed to find python version from target process`. Profiling `QApplication::notify` replaced it. | 2026-09-12 |
 | **The model/view insert path as inherently slower under PyQt6** | A faithful replica — sorted proxy, Python filter, icon list view and table view, cross-thread batched inserts, 19,974 rows — measures 4.2s under both bindings with bit-identical callback counts. | 2026-09-12 |
 | **Per-call sip conversion overhead in `data()`** | The same replica sorting on the role that builds a `QDateTime` per comparison: 4.46s against 4.53s over more than a million round-trips. | 2026-09-12 |
 | **Attributing the step to Riverbank's layer or to Qt separately** | Both crossings fail to load: binding 6.6.1 on Qt 6.7.3 raises `ImportError` on `QtGui`, binding 6.7.1 on Qt 6.6.3 on `QtCore`. The two halves cannot be varied independently. | 2026-09-12 |
@@ -476,6 +492,83 @@ S4, whose value is a clean ratio between two bindings.
 
 ---
 
+## 11. What S5 found: the cost is queued meta-call delivery
+
+py-spy 0.4.2 cannot read Python 3.14's interpreter (`Failed to find python version from target
+process`), so the native profile the plan called for is unavailable without installing the Windows
+ADK. ✅ **Verified** by running it.
+
+The same question was answered at Qt's own granularity instead: subclass `QApplication`, time every
+`notify()`, and accumulate by event type and receiver class. The patch is identical under both Qt
+versions, so its own overhead cancels.
+
+| Receiver, `QEvent::MetaCall` (type 43) | Qt 6.6.3 | Qt 6.7.0 | calls |
+|----------------------------------------|---------:|---------:|-------|
+| `SortFilterModel` | 52.47s | 112.78s | **112 under both** |
+| plain `QObject` — PyQt's lambda-proxy receivers | 61.52s | 124.03s | 154 → 156 |
+| next largest, `NoTooltipModel` | 0.88s | 0.93s | 48 under both |
+| profiler total | 117.20s | 239.77s | 6,789 → 10,089 events |
+
+`Loading galleries` in these two runs: **17.63s under 6.6.3, 34.08s under 6.7.0.** ✅ **Verified**.
+
+**The application issues the same meta-calls and each one costs about twice as much**: 2.15× for
+the proxy, 2.02× for the lambda receivers, against an observed startup ratio of about 2.2× in the
+same pair of runs. Everything else on the GUI thread is under a second.
+
+The timing is inclusive and re-entrant — the totals exceed wall-clock time because a meta-call that
+runs a nested event loop counts its children — so the absolute seconds mean nothing. The *ratio
+between two identically instrumented runs* is the result, and the call counts are exact.
+
+**Where those 112 come from is the application's own doing.** `SortFilterModel.setup_search`
+connects `GallerySearch.FINISHED` to `invalidateFilter` and to a `ROWCOUNT_CHANGE` lambda
+(`gallery.py:209-210`), and `sourceModel().rowsInserted` to `refresh` (`gallery.py:216`). One
+library load therefore invalidates the proxy scores of times. That is why S6 is worth more than
+pinning: cutting the count helps under *every* Qt version, and the cost being cut is ours.
+
+### Excluded by subtraction from the running application
+
+Nine variants, each behind an environment switch on one patch so a single Qt install covered them
+all, measured at Qt 6.7.0 against a baseline of about 42s. The run-to-run band across the whole
+session was 38–50s; a mechanism worth 2.4× would have to drop the figure to about 17s, and none
+came close. ✅ **Verified**.
+
+| Subtraction | Result |
+|-------------|--------|
+| Application-wide stylesheet (`res/style.css`) not applied | 39.1s |
+| `QGraphicsBlurEffect` never installed on `AppWindow.center` | 46.3s |
+| Data-fetch spinner never shown | 48.7s |
+| `ToolTipRole` returns `None` | 38.5s |
+| `LayoutMode.SinglePass` instead of `Batched` | 45.4s |
+| `setBatchSize(30000)` | 42.5s |
+| Status-bar row callback not connected to `rowsInserted` | 36.1s |
+| **Both views detached from the proxy entirely** | **34.9s** |
+| Per-insert `refresh` not connected | 36.7s |
+
+The eighth row is the one that refines S3. **Detaching both views from the proxy recovers only
+about 15%**, while removing `insertRows` altogether took PyQt6 from 39s to 5.6s (§5). So "the model
+and view" is too broad: the view is not where the time goes.
+
+### Left untested
+
+Recorded so a later session resumes rather than restarts. Nothing below has been measured.
+
+1. **The second `MangaViews`.** The Inbox tab (`app.py:767`) builds its own model, proxy and two
+   views, and `fetch_galleries` loops over every registered view. Never subtracted.
+2. **`GridDelegate` replaced by a plain `QStyledItemDelegate`**, to price the Python `sizeHint`.
+3. **`DecorationRole` thumbnails**, returning nothing instead of a pixmap.
+4. **The proxy removed from the path entirely.** `HP_NO_SOURCE` was written and crashes:
+   `setup_search` reads `self.sourceModel()._data` (`gallery.py:211`), so an unsourced proxy needs
+   a larger patch than a one-line switch.
+5. **An exclusive-time event profiler.** The one used here is inclusive, so it ranks stacks rather
+   than self-time. Subtracting nested `notify()` durations would price the meta-call itself.
+6. **A Windows native profile** via the ADK's Windows Performance Recorder, py-spy being unable to
+   read Python 3.14.
+7. **A local qtbase build bisected between `v6.6.3` and `v6.7.0`**, which is the only thing that
+   names a commit. Expensive, and the definitive answer.
+8. **Whether the further slide from 6.7 to 6.11** (about 38s to about 47s) shares this cause.
+
+---
+
 ## Document History
 
 * **v1.0** - Initial report
@@ -487,8 +580,13 @@ S4, whose value is a clean ratio between two bindings.
   per-call sip conversion. Bisecting the binding names the release: the regression enters at Qt
   6.7.0 and 6.6.1 is within ~1.3x of PyQt5. Phase S5 opened for the native profile. §10 records the
   unrelated tab-switch cost.
+* **v1.3** - Phase S5 executed. py-spy cannot profile Python 3.14, so the GUI thread was profiled
+  at Qt granularity instead: the cost is queued meta-call delivery, the same 112 invalidations of
+  the sort/filter proxy under both Qt versions at about twice the cost each. Nine more subtractions
+  excluded, including the finding that detaching both views recovers only 15%. §11 carries the
+  result and the untested candidates; phase S6 opened to cut the meta-call count.
 
 ---
 
 **Last Updated:** 2026-09-12  
-**Next Review:** when the pin-6.6-or-profile decision is taken, or if the migration is reconsidered on other grounds
+**Next Review:** when S6 is scoped, or if the migration is reconsidered on other grounds
