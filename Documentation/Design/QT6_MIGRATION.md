@@ -1,7 +1,7 @@
 # Qt5 → Qt6 Migration Design
 
-**Version:** 1.3  
-**Date:** 2026-09-10  
+**Version:** 1.6  
+**Date:** 2026-09-12  
 **Status:** In progress — Q0–Q3 are complete and the app runs on PyQt6, but a startup performance regression blocks Q4/Q5. See [`./QT6_STARTUP_REGRESSION.md`](./QT6_STARTUP_REGRESSION.md).  
 **Target:** PyQt6 6.11 / Qt 6.11 on Python 3.14 (current: PyQt5 5.15.11 / Qt 5.15.2)
 
@@ -23,6 +23,10 @@
 > instance-level surface was **81 sites, not "~15 as a lower bound"**, and those are the ones no
 > class-name codemod can catch. `QPalette.Background` is a **tenth removed-API family** that §5
 > missed. All of it has now landed; §7 carries the phase statuses.
+
+**Amended:** 2026-09-12 — `qtawesome` pulls in `qtpy`, which patches the Qt5 spelling back onto
+PyQt6 at import. The app running is therefore not evidence that the conversion is complete, and
+§4 gained the subsection that says what still is.
 
 **Audited:** 2026-09-09, at commit `69b1ae0` (branch `feat/better-versions-scan`).
 **Re-audited:** 2026-09-10 during Q0–Q2, on branch `feat/qt6-migration-prep`.
@@ -121,10 +125,10 @@ began, most of them `QSizePolicy.Policy` in `gallerydialog.py`.
 
 | Gate | Covers | Verdict for this migration |
 |------|--------|----------------------------|
-| `pytest tests/ -q` | 344 pass, 4 pre-existing failures in `test_db.py::test_init_db`. ✅ **Verified** 2026-09-12; the 283 recorded at Q0 is stale, the suite has grown since. | **Was weak; no longer.** No test referenced Qt at all before Q0. `tests/test_qt_scoping.py` now resolves every scoped site against the installed binding and asserts no unscoped one is left, which is what turns a lazy paint-time AttributeError into a red suite. |
+| `pytest tests/ -q` | 344 pass, 4 pre-existing failures in `test_db.py::test_init_db`. ✅ **Verified** 2026-09-12; the 283 recorded at Q0 is stale, the suite has grown since. | **Was weak; no longer, and it is the only gate that can see this.** No test referenced Qt at all before Q0. `tests/test_qt_scoping.py` now resolves every scoped site against the installed binding and asserts no unscoped one is left. That source scan is the whole of the coverage: qtpy restores the Qt5 spelling at runtime, so a missed site does not raise when the widget paints either (§4). |
 | `misc/gui_smoke.py` | Settings dialog, gallery chooser, better-version review list, gallery edit dialog, crash regressions. | **Widgets in isolation.** Ported in Q1 and named PyQt6 in Q3, so it exercises the shipping binding. |
 | `misc/app_smoke.py` | The real `AppWindow` and its own methods: confirmation dialogs, the worker thread, the metadata lock. | **App-level assembly.** The only gate that builds the window, so a mis-scoped `StandardButton` in a confirmation surfaces here rather than in front of a user. Named PyQt6 with the rest in Q3. |
-| Launching the app | Everything else. | The real gate. Manual, and per CLAUDE.md expects a multi-minute library scan. |
+| Launching the app | Everything else. | The real gate for rendering, layout and the build. **Not** a gate for the enum conversion, for the reason in §4. Manual, and per CLAUDE.md expects a multi-minute library scan. |
 
 ---
 
@@ -245,7 +249,8 @@ Three things that look broken and are not, plus one that looks safe and is not. 
 - **`QContextMenuEvent.globalPos()` survives Qt6.** The 11 `menu.exec_(event.globalPos())` sites
   need only the `exec_` rename — not the `globalPosition().toPoint()` treatment that `QMouseEvent`
   and `QDropEvent` require. `QMouseEvent.pos()` also survives (deprecated);
-  `QMouseEvent.globalPos()` does not.
+  `QMouseEvent.globalPos()` does not — though the subsection below is why one such site ran for
+  the whole migration without anyone noticing.
 - **`Qt.ItemDataRole.UserRole + N` still yields a plain int.** All 69 custom-role arithmetic sites
   are safe once rescoped — they sit in `misc.py` (34), `gallery.py` (28), `io_misc.py` (4),
   `app.py` and `misc_db.py`.
@@ -255,12 +260,44 @@ Three things that look broken and are not, plus one that looks safe and is not. 
   fine flag-to-flag, but any code doing integer arithmetic or bitwise mixing on modifiers will
   break. No such site was found in this codebase, ⚠️ **Unverified** as exhaustive.
 
+### The runtime is not a gate: qtpy puts the Qt5 spelling back
+
+`app_constants` imports `qtawesome`, which imports `qtpy`, which **patches PyQt6 on import**. Two
+mechanisms, both ✅ **Verified** by calling the affected names before and after importing
+`app_constants` in one process:
+
+| What qtpy does | Effect on this codebase |
+|---|---|
+| `enums_compat.promote_enums` walks `QtCore`, `QtGui`, `QtWidgets` and `QtTest` and copies every scoped enum member onto its class as an **unscoped** attribute | `Qt.AlignLeft` and `QListView.IconMode` resolve again, so a site Q1/Q2 missed executes instead of raising |
+| removed Qt5 accessors are restored on `QSinglePointEvent`: `globalPos`, `globalX`, `globalY`, `localPos`, `posF` | `QMouseEvent.globalPos()` works, despite being absent from PyQt6 6.11 |
+
+**The concrete case.** `misc.py` called `ev.globalPos()` on a `QMouseEvent` from Q3 until it was
+rewritten, and right-clicking a tag never once raised — the table above is why. A review flagged
+it as a certain crash and a bare-PyQt6 probe agreed; both were wrong, because neither had the
+application's own imports loaded. ✅ **Verified** by driving the real handler with a synthesised
+right-click.
+
+**What this does not undermine.** `misc/check_qt_enums.py` imports PyQt6 and nothing else, so run
+on its own it sees the true Qt6 surface. ✅ **Verified** that `qtpy` and `qtawesome` are absent
+from `sys.modules` after importing it. Its output against the current tree is byte-identical with
+and without the shim loaded — ✅ **Verified**, though against a tree that has no unscoped site
+left that demonstrates the tree is clean rather than that the checker is shim-proof. A full
+`pytest tests/ -q` **does** have qtpy loaded, because an earlier test module imports
+`app_constants` and pytest shares one process. ✅ **Verified**. Whether a leftover Qt5 site would
+still be reported under those conditions is ⚠️ **Unverified**; the cheap way to settle it is to
+reintroduce one deliberately and run the suite.
+
+**The rule this leaves.** Probe with the application's own imports when asking what the *app*
+does, and with a bare binding when asking what *Qt6* provides. The two disagree in both
+directions, and picking the wrong one produces a confident answer that is exactly backwards.
+
 ### The failure mode this plan is designed around
 
 Rescoping errors fail **lazily** — `AttributeError` at the moment a widget paints or a menu opens,
 not at import. A run can start cleanly and die three dialogs deep. Landing the enum work on Qt5,
 where the app can actually be driven, is what converts that from a debugging problem into a
-testing problem.
+testing problem. With qtpy in the process they may not fail even then, which makes the source scan
+the gate rather than the run.
 
 ---
 
@@ -405,6 +442,11 @@ Nothing here has been confirmed by running Happypanda under Qt6. Before Q3:
    call, not a silent one.
 9. **Re-run the §4 back-test against whatever PyQt5 and PyQt6 versions are current then.** The
    517/0 result is pinned to PyQt5 5.15.11 and PyQt6 6.11.0.
+10. **Would a leftover Qt5 site still be reported with qtpy loaded?** A full `pytest tests/ -q`
+    runs with the shim in the process (§4), and the checker builds its Qt5-spelling universe from
+    `dir(cls)`, which promotion changes. ⚠️ **Unverified**: reintroduce one unscoped site
+    deliberately and confirm the suite goes red. Until that is done, the scan is trustworthy only
+    when run on its own.
 
 ### Reproducing the analysis
 
@@ -444,7 +486,13 @@ every edit after the first odd line out lands on the wrong line.
 
 ## Document History
 
-* **v1.0** - Initial draft
+* **v1.6** - qtpy, pulled in by qtawesome, patches the Qt5 spelling back onto PyQt6 at import:
+  every scoped enum member is copied onto its class unscoped, and the removed point accessors are
+  restored. So the app running is not evidence that the conversion is complete - one
+  `QMouseEvent.globalPos()` site survived from Q3 to now without ever raising. §4 gained the
+  subsection, §2's gate table now says which gate can actually see a missed site, and §8 gained
+  the open question of whether the scan still reports one with the shim in the process. The
+  header had also drifted to 1.3 while this list already ran to v1.5.
 * **v1.5** - Rebased onto `feat/qt6-migration-prep`. The two smoke harnesses the base branch had
   grown since Q3 named PyQt5 in their imports and now name PyQt6.
 * **v1.4** - Q3 shipped. §5 gained the three families v1.0 missed (`QPalette.Background`,
@@ -460,6 +508,7 @@ every edit after the first odd line out lands on the wrong line.
 * **v1.1** - Q0-Q2 implemented. Counts re-derived from the AST: 503 class-keyed sites (not 517)
   and 81 instance-level ones (not ~15). `QPalette.Background` added to §5 as a tenth removed-API
   family. §8's reproduction recipe corrected - it only ever worked on PyQt6.
+* **v1.0** - Initial draft
 
 ---
 
