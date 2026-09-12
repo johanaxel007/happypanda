@@ -191,13 +191,16 @@ missed — `Qt.Orientations`, a QFlags companion type Qt6 folded into its enum, 
 all green under it. `FORCE_HIGH_DPI_SUPPORT` still needs removing through all four settings
 places (Q4, Core Constraint 4), and the shakedown has not begun.
 
-**A blocker is open before any of that is worth finishing: startup is roughly four times slower
-under PyQt6** — about 26s against about 126s across the three startup phases on a
-19,974-gallery library. It is attributed to the binding by controlled measurement, and bisecting
-the running app localises the whole cost to the **model and view**: take
-`gallery_model.insertRows` out of the load loop and PyQt6 drops to PyQt5's floor. What inside that
-path is slow is still open — it is not the volume of Python callbacks, which PyQt6 makes fewer of.
-Fourteen candidate causes are excluded, each with the measurement that excluded it. See
+**A blocker is still open before any of that is worth finishing, but its shape has changed:
+startup is roughly four times slower under PyQt6** — about 26s against about 126s across the three
+startup phases on a 19,974-gallery library, localised to the **model and view**. **Bisecting the binding now names the
+release: it enters at Qt 6.7.** PyQt6 6.6.1 / Qt 6.6.3 loads the same library in about 16s, within
+about 1.3× of the PyQt5 floor, while 6.7.0 takes about 38s and 6.11 about 47s. So what is left to decide is
+which Qt to pin, not whether PyQt6 can work at all — and nothing has been pinned yet. What changed
+inside Qt 6.7 is still open, and black-box measurement is exhausted: a faithful model/view replica
+is binding-neutral with identical Python callback counts, and it ships as
+`misc/qt_modelview_bench.py`. Sixteen
+candidate causes are excluded, each with the measurement that excluded it. See
 [`Documentation/Design/QT6_STARTUP_REGRESSION.md`](Documentation/Design/QT6_STARTUP_REGRESSION.md)
 — read it before re-testing anything, and note the `feat/qt6-migration-prep` branch remains a
 clean PyQt5 fallback that is unaffected.
