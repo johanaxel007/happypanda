@@ -77,6 +77,7 @@ venv/Scripts/python.exe misc/app_smoke.py                          # drive the r
 venv/Scripts/python.exe misc/check_qt_enums.py --instance          # Qt enum sites left in the Qt5 spelling
 venv/Scripts/python.exe misc/qt_modelview_bench.py PyQt6           # time the startup insert path against a model/view
 venv/Scripts/python.exe misc/measure_startup.py shipped            # time a real startup and how long the window is frozen
+venv/Scripts/python.exe misc/measure_sorting.py run --db copy.db --out a.json  # time every sort on a library copy; `compare a.json b.json` diffs two runs
 ```
 
 The build reads its version string from `VS.txt`.
