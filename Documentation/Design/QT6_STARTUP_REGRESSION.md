@@ -1,6 +1,6 @@
 # PyQt6 Startup Performance Regression
 
-**Version:** 1.10  
+**Version:** 1.11  
 **Date:** 2026-09-13  
 **Status:** ✅ Resolved 2026-09-13 — S0–S9 complete. On the real library the Qt6 build now starts faster than the Qt5 one (§16). The optimisations still on the table are ROADMAP entries; §8's residue stays open and blocks nothing.  
 **Target:** PyQt6 6.11.0 / Qt 6.11.2 on Python 3.14.7 (baseline: PyQt5 5.15.11 / Qt 5.15.2)
@@ -48,7 +48,8 @@
 > `version/sortkeys.py`. Against the code before it, interleaved: the startup sorted by date added
 > goes from **133–146s with 112–124s hung to 13.1–13.8s with none**. On either tab of the
 > development library, every sort chosen and every re-sort a cleared search sets off completes in
-> under 2s, where a date sort took up to 160s (§15).
+> under 2s, where a date sort took up to 160s (§15) — though a sort taken straight after clearing a
+> search measures up to 3.5s (§16).
 
 **Audited:** 2026-09-10, at commit `7ba4813` (branch `feat/qt6-migration`).
 **Amended:** 2026-09-13 — closed. §16 records the real-library outcome from both builds' own logs
@@ -505,7 +506,7 @@ comparable with them, and the noise here is wide enough to swallow a real effect
 
 ### Rebuilding the harnesses
 
-The first two below are scratch scripts; the rest ship. To recreate the scratch ones:
+Three ship as `misc/` scripts; the rest are recipes for scratch probes, removed after use:
 
 - **Instrumentation** — in `gallerydb.DatabaseStartup`, wrap the four steps of `fetch_galleries`
   in `time.perf_counter()` accumulators on a class-level dict and log it once after the loop.
@@ -524,14 +525,15 @@ The first two below are scratch scripts; the rest ship. To recreate the scratch 
   the event-loop variant, run the workload on a thread and call `qapp.exec()` on the main thread.
 - **Hung-window probe and phase timings** — `misc/measure_startup.py`, committed. It launches the
   application, polls `IsHungAppWindow` from a second process over the windows `EnumWindows`
-  reports titled `Happypanda`, and reads the four phase timings back out of the log. Each run also
-  prints a timeline of when the window appeared, each phase ended and each hung stretch began and
-  ended, which is what places a freeze in a phase. That call is
+  reports titled `Happypanda`, and reads the four phase timings back out of the log. That call is
   the one Explorer uses to decide whether to paint "(Not Responding)", so it answers the question
   directly; a timer-lateness probe inside the application measures its own event-queue backlog
-  and is inflated by whatever instrumentation is attached. Each argument is a labelled
-  configuration with the environment that selects it, and it alternates them rather than running
-  them in blocks, so the protocol above is what it does by default.
+  and is inflated by whatever instrumentation is attached. Each run also prints a timeline of when
+  the window appeared, each phase ended and each hung stretch began and ended, which is what places
+  a freeze in a phase. Each argument is a labelled configuration with the environment that selects
+  it, and it alternates them rather than running them in blocks, so the protocol above is what it
+  does by default. The window is found by title, so it refuses to start while any Happypanda window
+  is open - including a build the user is running on the real library.
 - **GUI-thread event profiler** — subclass `QApplication`, wrap `notify()` in a `perf_counter`
   and accumulate by `(int(event.type()), type(receiver).__name__)`. Gate it behind an
   environment variable: it costs a Python call per event, so it must be off when the same build
@@ -540,6 +542,35 @@ The first two below are scratch scripts; the rest ship. To recreate the scratch 
 - **Stack sampler** — a daemon thread walking `sys._current_frames()` every 20 ms, counting
   `(thread, top frame)` pairs, dumping to a file every 2s. Dump periodically, not via `atexit`;
   the application is killed rather than exited and `atexit` never runs.
+- **Sort timing and order** — `misc/measure_sorting.py`, committed. `run` loads a copy of a
+  database through the real `AppWindow` offscreen and, for both tabs, times every `sortkeys` name
+  in both directions and the re-sort a cleared search sets off; `compare` diffs two runs by the
+  value each position sorted on, which is what tells a real reordering from tie order. `--repo`
+  runs another tree's code, so a change is measured against the commit before it. It sorts each
+  name straight after clearing the previous name's search, which makes its first sort per name
+  dearer than the same sort taken on its own (§16).
+- **A control tree for A/B runs** — `git worktree add --detach <path> HEAD`, then `mklink /J` its
+  `venv` and `db` to the main tree's and copy `settings.ini`; a copy of `measure_startup.py` inside
+  it drives the control, alternated with the main tree. Remove both junctions with `cmd /c rmdir`
+  **before** `git worktree remove --force`, so the removal cannot reach the real venv and database.
+  A PyQt5 baseline instead needs a worktree of the Qt5 code with its own venv and its own copy of
+  `db/`, since the database and `settings.ini` resolve against the working directory.
+- **GUI-thread CPU against wall time** (S8) — the `notify()` wrapper above, logging only top-level
+  dispatches over 0.5s with their duration, plus a once-a-second thread that reads
+  `GetThreadTimes` (`OpenThread` with `THREAD_QUERY_LIMITED_INFORMATION`) for every thread in
+  `sys._current_frames()` and logs its CPU percentage and top frame. CPU near wall time is a thread
+  computing; near zero is a thread waiting, the GIL included - a thread blocked taking the GIL
+  shows no CPU, which a two-thread script confirms in seconds. Gate it behind an environment
+  variable in `main.py` and remove it afterwards.
+- **What a Qt call asks the model for** (S9) — a `QAbstractListModel` over a few thousand random
+  integers whose `data()` counts calls per row for the sort role, behind a
+  `QSortFilterProxyModel`; wrap one operation at a time - `invalidateFilter`, an insert, a
+  `dataChanged` - and read the count. It settles synchronously, inside the call, and it is how
+  the ~19 requests per returning row and ~42 per inserted row in §15 were found.
+- **Pricing one Qt call per release** (§14) — throwaway venvs outside the repo with both halves
+  pinned (`PyQt6==6.6.1 PyQt6-Qt6==6.6.3`, `PyQt6==6.7.0 PyQt6-Qt6==6.7.0`), each timing 20,000
+  calls on values read from the database with `sqlite3` in read-only mode. No application code
+  and no launch, so a release costs a pip install rather than a startup series.
 
 ---
 
@@ -1032,6 +1063,13 @@ as to what fixing each would save; each is a ROADMAP entry with a measurement to
 
 - **Switching Library and Favorites re-runs the search over the whole tab** (§10). A cleared search
   measured 1.5–1.7s on a 13,198-gallery tab in §15, and the cost grows with the tab.
+- **The first sort after a cleared search costs about twice the same sort on its own.**
+  `misc/measure_sorting.py` sorts each name straight after clearing a search, and in three runs
+  the Inbox's 13,198 galleries took 3.17–3.50s for Artist ascending and 3.19–3.37s for Date Added
+  ascending, against 1.6–1.9s for the same sorts in §15, where no search came between them; the
+  sort after it is back in line. ✅ **Verified** as repeatable; ⚠️ **Unverified** why - the grid
+  still laying out the rows the search restored is the first thing to check. Under the 5s
+  not-responding bar, but a real user sorts after searching.
 - **Table view date cells** still build a `QDateTime` per painted cell, which is bounded by the rows
   on screen rather than by the library.
 - **The 6.7 → 6.11 slide** (§5) was measured before S6–S9 and never again; the date call itself is
@@ -1096,6 +1134,11 @@ as to what fixing each would save; each is a ROADMAP entry with a measurement to
   gap to S6 and S9 rather than to Qt6, and splits the remaining time into the per-gallery tag and
   gallery queries and the chapter phase's GIL wait. The optimisations and the smaller leftovers move
   to `ROADMAP.md`; §7's extension roadmap points there, and pinning Qt 6.6 is set aside.
+* **v1.11** - §8's rebuild list gained `misc/measure_sorting.py`, which the S9 harnesses became,
+  and recipes for the probes S8 and S9 used and did not keep: the control worktree, the GUI-thread
+  CPU sampler, the per-call model request count and per-release pricing of one Qt call. Its first
+  runs found that the first sort after a cleared search costs about twice the same sort on its own;
+  §16 and the summary carry it.
 
 ---
 

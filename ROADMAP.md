@@ -225,6 +225,9 @@ None of these blocks anything, and each is recorded in
 - **Switching between Library and Favorites re-runs the search over the whole tab** (§10 there).
   A cleared search measured 1.5-1.7s on a 13,198-gallery tab and the cost grows with the tab. The
   lever is caching the filter per view, or giving Favorites its own proxy over the same model.
+- **The first sort after clearing a search costs about twice the same sort on its own** - 3.2-3.5s
+  against 1.6-1.9s on a 13,198-gallery tab, in three runs of `misc/measure_sorting.py`. Why is
+  unmeasured; start by checking whether the grid is still laying out the rows the search restored.
 - **The table view's date cells build a `QDateTime` per painted cell.** Bounded by the rows on
   screen, so small - but it is the same call S8 found twelve times dearer under Qt6, and a plain
   formatted string would do.
