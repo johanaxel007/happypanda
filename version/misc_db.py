@@ -12,16 +12,16 @@
 import pickle
 import logging
 
-from PyQt5.QtWidgets import (QTreeWidget, QTreeWidgetItem, QWidget,
+from PyQt6.QtWidgets import (QTreeWidget, QTreeWidgetItem, QWidget,
                              QVBoxLayout, QTabWidget,
                              QSizePolicy, QMenu, QApplication,
                              QListWidget, QHBoxLayout, QPushButton, QStackedLayout,
                              QFrame, QSizePolicy, QListView, QFormLayout, QLineEdit,
                              QStyledItemDelegate,
                              QCheckBox, QButtonGroup, QPlainTextEdit)
-from PyQt5.QtCore import (Qt, pyqtSignal, QSize, QEasingCurve,
+from PyQt6.QtCore import (Qt, pyqtSignal, QSize, QEasingCurve,
                           QSortFilterProxyModel, QIdentityProxyModel, QObject)
-from PyQt5.QtGui import (QIcon, QFont)
+from PyQt6.QtGui import (QIcon, QFont)
 
 import gallerydb
 import app_constants
@@ -404,7 +404,7 @@ class GalleryLists(QListWidget):
             event.ignore()
 
     def dragMoveEvent(self, event):
-        item = self.itemAt(event.pos())
+        item = self.itemAt(event.position().toPoint())
         self.clearSelection()
         if item:
             item.setSelected(True)
@@ -415,7 +415,7 @@ class GalleryLists(QListWidget):
 
         galleries = pickle.loads(event.mimeData().data("list/gallery").data())
 
-        g_list_item = self.itemAt(event.pos())
+        g_list_item = self.itemAt(event.position().toPoint())
         if galleries and g_list_item:
             txt = "{} galleries".format(len(galleries)) if len(galleries) > 1 else galleries[0].title
             app_constants.NOTIF_BUBBLE.update_text(g_list_item.item.name, 'Added: {}!'.format(txt), 7)

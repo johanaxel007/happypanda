@@ -1,8 +1,8 @@
 ﻿import logging, uuid, os
 
 from concurrent import futures
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QImage, QPainter, QBrush, QPen
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage, QPainter, QBrush, QPen
 
 from database import db_constants
 import utils

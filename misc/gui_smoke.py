@@ -28,9 +28,9 @@ def say(msg):
     print(msg, flush=True)
 
 
-from PyQt5.QtWidgets import QApplication  # noqa: E402
-from PyQt5.QtCore import QPoint, QEvent, Qt  # noqa: E402
-from PyQt5.QtGui import QPixmap, QColor  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QListWidgetItem  # noqa: E402
+from PyQt6.QtCore import QPoint, QEvent, Qt  # noqa: E402
+from PyQt6.QtGui import QPixmap, QColor  # noqa: E402
 
 qapp = QApplication(sys.argv)
 
@@ -56,6 +56,10 @@ assert d.better_version_language.currentText() == app_constants.BETTER_VERSION_L
 # ini of its own. A near miss applied over your metadata is the failure with no undo, and the
 # score distribution is bimodal enough that a high bar costs few correct matches.
 assert d.fuzz_confidence_threshold.value() == 95, d.fuzz_confidence_threshold.value()
+# 0 is one batch for the whole library, and is also the "no limit" sentinel, so a widget that
+# failed to read it back would silently restore the batching this default exists to avoid.
+assert d.advanced_dbstartup_fetch_limit_spinbox.value() == 0, \
+    d.advanced_dbstartup_fetch_limit_spinbox.value()
 say('restore_options: filter=%s previews=%s better version=%s'
     % (d.filter_by_language.isChecked(), d.picker_previews.isChecked(),
        d.better_version_language.currentText()))
@@ -69,7 +73,10 @@ say('settings: the better version language offers only languages a candidate can
 d.filter_by_language.setChecked(False)
 d.picker_previews.setChecked(False)
 d.better_version_language.setCurrentText('Chinese')
+d.advanced_dbstartup_fetch_limit_spinbox.setValue(2500)
 d.accept()
+assert app_constants.DATABASE_STARTUP_FETCH_LIMIT == 2500, 'fetch limit did not survive accept()'
+assert settings.get(0, 'Application', 'db startup fetch limit', int) == 2500
 assert app_constants.FILTER_RESULTS_BY_LANGUAGE is False, 'filter did not survive accept()'
 assert app_constants.PICKER_PREVIEWS is False, 'previews did not survive accept()'
 assert app_constants.BETTER_VERSION_LANGUAGE == 'Chinese', 'language did not survive accept()'
@@ -81,7 +88,16 @@ d2 = settingsdialog.SettingsDialog()
 assert d2.filter_by_language.isChecked() is False
 assert d2.picker_previews.isChecked() is False
 assert d2.better_version_language.currentText() == 'Chinese', 'the language latched to its default'
-say('settings: all three round trip through accept() into a reopened dialog')
+assert d2.advanced_dbstartup_fetch_limit_spinbox.value() == 2500
+say('settings: all four round trip through accept() into a reopened dialog')
+
+# Back to 0, which is the default and also the sentinel: it has to be storable like any other
+# value rather than read as "never configured".
+d2.advanced_dbstartup_fetch_limit_spinbox.setValue(0)
+d2.accept()
+assert app_constants.DATABASE_STARTUP_FETCH_LIMIT == 0
+assert settingsdialog.SettingsDialog().advanced_dbstartup_fetch_limit_spinbox.value() == 0
+say('settings: a fetch limit of 0 stores and reloads rather than reverting')
 
 # A stored language the combo does not list still has to come back out of it, or the next Ok
 # silently writes whichever entry happened to be first instead.
@@ -91,6 +107,19 @@ assert d3.better_version_language.currentText() == 'Portuguese'
 d3.accept()
 assert app_constants.BETTER_VERSION_LANGUAGE == 'Portuguese', 'an unlisted language was lost'
 say('settings: a language the combo does not list survives a save rather than being replaced')
+
+# `stateChanged` hands its slot a plain int, never a `Qt.CheckState`, so a slot that compares
+# the two gates its widget on a condition that can never hold. Both directions are asserted,
+# because a slot that hardcodes either one of them satisfies a single direction.
+app_constants.ENABLE_NAMESPACE_MAP = True
+d4 = settingsdialog.SettingsDialog()
+assert d4.use_ns_map_checkbox.isChecked(), 'the box did not come back from settings'
+assert d4.ns_map_edit.isEnabled(), 'the editor is disabled with its box ticked'
+d4.use_ns_map_checkbox.setChecked(False)
+assert not d4.ns_map_edit.isEnabled(), 'unticking the box left the editor enabled'
+d4.use_ns_map_checkbox.setChecked(True)
+assert d4.ns_map_edit.isEnabled(), 'ticking the box left the editor disabled'
+say('settings: the namespace map editor follows its checkbox in both directions')
 
 # --- the ini is UTF-8 whatever the system locale is -----------------------------------------
 # A frozen build never enables UTF-8 mode however the environment is set, so without an
@@ -370,9 +399,9 @@ say('picker: closing the dialog takes the card with it')
 # --- a showcase whose receiver destroys it ---------------------------------------------------
 # The failed-galleries popup crashed here: mouseDoubleClickEvent touched the widget after
 # emitting, and the widget carries WA_DeleteOnClose, so by then it could already be gone.
-from PyQt5 import sip  # noqa: E402  (a bare `import sip` works only because PyQt5 aliases it)
-from PyQt5.QtCore import QEvent as _QEvent, QPointF  # noqa: E402
-from PyQt5.QtGui import QMouseEvent  # noqa: E402
+from PyQt6 import sip  # noqa: E402  (a bare `import sip` works only because PyQt6 aliases it)
+from PyQt6.QtCore import QEvent as _QEvent, QPointF  # noqa: E402
+from PyQt6.QtGui import QMouseEvent  # noqa: E402
 
 showcase = misc.GalleryShowcaseWidget()
 showcase.set_gallery(g, (100, 100))
@@ -401,7 +430,7 @@ say('views: the table view still has no hover window, which is what the tab swit
 # refuse are the whole safety of the feature, and a normal run reaches neither. Nothing here
 # answers Yes: the deletion itself would need the database thread.
 import string  # noqa: E402
-from PyQt5.QtWidgets import QMessageBox  # noqa: E402
+from PyQt6.QtWidgets import QMessageBox  # noqa: E402
 
 shown = []
 
@@ -1205,8 +1234,8 @@ say('context menu: "Scan selected for better versions" passes the selection and 
 # much is highlighted - so counting through it would silence the note exactly where it is
 # needed. The grid view itself cannot be built here (its delegate reads the database), so the
 # semantics are pinned on the widgets they come from.
-from PyQt5.QtWidgets import QAbstractItemView, QListView, QTableView  # noqa: E402
-from PyQt5.QtCore import QAbstractTableModel, QItemSelectionModel  # noqa: E402
+from PyQt6.QtWidgets import QAbstractItemView, QListView, QTableView  # noqa: E402
+from PyQt6.QtCore import QAbstractTableModel, QItemSelectionModel  # noqa: E402
 
 
 class _Cols(QAbstractTableModel):
@@ -1245,7 +1274,7 @@ say('context menu: the single-gallery entry scans just the gallery under the cur
 # Every repeatable background action used to leave its thread running for the life of the
 # process: a QThread's event loop exits only on quit(), and the finished -> deleteLater every
 # call site connects is caused by quit(), so neither ever happened.
-from PyQt5.QtCore import QObject, QThread, pyqtSignal  # noqa: E402
+from PyQt6.QtCore import QObject, QThread, pyqtSignal  # noqa: E402
 
 
 class _Worker(QObject):
@@ -1296,7 +1325,7 @@ say('threads: only the two session-long threads still build their own')
 # one gallery is edited, so a fallback to the default is written over the real language.
 import gallerydialog  # noqa: E402
 
-from PyQt5.QtWidgets import QWidget  # noqa: E402
+from PyQt6.QtWidgets import QWidget  # noqa: E402
 
 gd_parent = QWidget()
 # The dialog registers itself with its parent's group so a multi-gallery fetch can drive them
@@ -1355,6 +1384,23 @@ for _ in range(400):                      # let it finish and let deleteLater be
 assert gd._fetch_thread is None, 'the dialog still points at a thread that deletes itself'
 gd.delayed_close()                        # the call that asks _fetch_thread whether it is running
 say('gallery dialog: closing it after a finished fetch does not touch the deleted thread')
+
+# --- the gallery list chooser's check-all --------------------------------------------------
+# The only control over a list of galleries about to be added, and nothing else reaches it.
+
+g_list = misc.GalleryListView()
+rows = []
+for title in ('First', 'Second'):
+    row = QListWidgetItem(title)
+    row.setCheckState(Qt.CheckState.Checked)
+    g_list.view_list.addItem(row)
+    rows.append(row)
+
+g_list.check_all.setChecked(False)
+assert all(r.checkState() == Qt.CheckState.Unchecked for r in rows),     'unchecking check-all left rows checked: %s' % [r.checkState() for r in rows]
+g_list.check_all.setChecked(True)
+assert all(r.checkState() == Qt.CheckState.Checked for r in rows),     'checking check-all left rows unchecked: %s' % [r.checkState() for r in rows]
+say('gallery list: check-all drives every row, in both directions')
 
 say('')
 say('GUI SMOKE OK')

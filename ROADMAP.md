@@ -171,29 +171,64 @@ there is anything left to fix.
 
 ---
 
-## Migrate from Qt5 to Qt6
+## Load the library's tags in one query at startup
 
-PyQt5 5.15.11 / Qt 5.15.2 is the last supported Qt5. The full analysis, including the binding
-decision and a phased plan, is in
-[`Documentation/Design/QT6_MIGRATION.md`](Documentation/Design/QT6_MIGRATION.md) — read that
-before touching this, so a session does not repeat the measurement.
+The tag phase is the largest single cost left in a startup: **8.4s of 19.9s** on the real
+~20,000-gallery library under the Qt6 build. `DatabaseStartup.fetch_tags` makes one blocking round
+trip per gallery through the method queue to `TagDB.get_gallery_tags`, so about 20,000 joined
+`SELECT`s, each paying the thread hand-off twice.
 
-**Phases Q0–Q2 have shipped.** The whole tree is written in the Qt6 dialect and still runs on
-PyQt5: 503 class-keyed enum sites, 81 instance-level ones and 26 removed-API swaps, landed one
-module at a time. `misc/check_qt_enums.py` reports what is left — currently nothing — and
-`tests/test_qt_scoping.py` resolves every rescoped site against whichever binding is installed
-and fails if an unscoped spelling comes back.
+**What exists already.** The chapter phase is the template: `ChapterDB.get_chapters_for_galleries`
+reads the whole `chapters` table once and hands each gallery its rows. The same four-table join
+`get_gallery_tags` issues, without its `WHERE series_id=?`, returns every mapping in one pass.
 
-**What is left is Q3 onwards: the switch itself.** Roughly 11 edits that cannot run on both
-bindings at once — the `QAction`/`QActionGroup`/`QShortcut` import move, `QDropEvent.pos()`, the
-two high-DPI attributes, and the `sip` module name — plus `requirements.txt` and
-`HappyPanda.spec`. Then `FORCE_HIGH_DPI_SUPPORT` comes out through all four settings places
-(Core Constraint 4), and the shakedown begins.
+**The hard part is producing exactly the dict a gallery gets today.** `get_gallery_tags` builds
+each namespace's list in the order the join happens to return rows, with no `ORDER BY`, and a
+gallery with no tags ends up with `{}`. A whole-table read has to keep both, and the way to know it
+did is to compare the two results for every gallery in a copy of the real database - not a sample.
+It also moves the work from 20,000 short database calls into one long Python loop on the database
+thread, which is the shape that starved the GUI thread in S8, so measure the hung-window figure
+alongside the time.
 
-**The hard part is still that nothing can test the result.** The scoping gate catches a
-misspelled scope, and it cannot catch a scope that resolves and means something else, or a
-painter that lays out differently under Qt6's always-on scaling. That leaves 62 widget subclasses
-and 7 custom painters whose failures surface only when a user opens that particular dialog. The
-shakedown dominates the schedule, and per Core Constraint 1 it has to run against a copy of the
-database, because a mis-scoped button comparison inside a delete confirmation is silent data
-loss.
+**Sequencing note.** Measure with `misc/measure_startup.py` and the protocol in
+`Documentation/Design/QT6_STARTUP_REGRESSION.md` §8, against the phase figures in its §16. Do this
+before the gallery entry below: it is the bigger cost and the more self-contained change.
+
+---
+
+## Stop querying the database once per gallery while the library loads
+
+The gallery phase is **7.7s** of a startup on the real library. For every row
+`GalleryDB.gen_galleries` also runs `ListDB.query_gallery` - a `SELECT` against
+`series_list_map` - and `os.path.exists` on the gallery's path.
+
+**What exists already.** `series_list_map` can be read whole in one query and grouped by
+`series_id` before the loop, the same shape as the tag entry above.
+
+**The hard part is the path check, not the query.** `dead_link` is what the grid paints as
+"Cannot find gallery source!", so it is needed before the first paint, and its cost depends on the
+drive the library lives on rather than on the code. Measure how much of the phase is the check and
+how much the query before touching either; `utils.refresh_dead_links` already recomputes the flag
+for a set of galleries, if deferring it proves worth the visible delay.
+
+**Sequencing note.** After the tag entry. The chapter phase may improve with both: it is one query,
+yet takes 3.7s under Qt6 against 1.5s under Qt5, most likely waiting on the GIL while the GUI thread
+inserts and sorts - re-measure it once these two land before treating it as a third item.
+
+---
+
+## Smaller costs the Qt6 startup work left behind
+
+None of these blocks anything, and each is recorded in
+`Documentation/Design/QT6_STARTUP_REGRESSION.md` §16 with its evidence.
+
+- **Switching between Library and Favorites re-runs the search over the whole tab** (§10 there).
+  A cleared search measured 1.5-1.7s on a 13,198-gallery tab and the cost grows with the tab. The
+  lever is caching the filter per view, or giving Favorites its own proxy over the same model.
+- **The table view's date cells build a `QDateTime` per painted cell.** Bounded by the rows on
+  screen, so small - but it is the same call S8 found twelve times dearer under Qt6, and a plain
+  formatted string would do.
+- **`misc/qt_modelview_bench.py` prints its `TIMING` line before the sort it is meant to time.**
+  The design doc warns about it; the tool should either wait for the sort or say what it excludes.
+- **The Qt 6.7 to 6.11 slowdown was last measured before the startup fixes.** Re-measure only if a
+  PyQt6 upgrade is on the table.

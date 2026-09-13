@@ -40,7 +40,7 @@ from PIL import Image, ImageChops
 # pages is worse than the memory a single decode costs.
 Image.MAX_IMAGE_PIXELS = 400_000_000
 
-from PyQt5.QtGui import QImage, qRgba
+from PyQt6.QtGui import QImage, qRgba
 
 import app_constants
 import database

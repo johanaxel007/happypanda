@@ -26,7 +26,7 @@ import sqlite3
 import threading
 from dataclasses import dataclass
 
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal
 from thefuzz import fuzz
 
 import app_constants
@@ -756,10 +756,11 @@ class BetterVersionScan(QObject):
                     log_e('Source refused the search, stopping the scan')
                     self.aborted = True
                     # The searches behind these are already spent, so classify them rather than
-                    # pay for them again next run.
-                    if pending:
-                        found += self._classify(hen, store, pending, target)
-                    pending = []
+                    # pay for them again next run. Handed over before the call, so a lookup that
+                    # raises partway cannot be re-run over batches it already paid for.
+                    batch, pending = pending, []
+                    if batch:
+                        found += self._classify(hen, store, batch, target)
                     return found
 
                 hits = results.get(query, []) if results else []
@@ -777,12 +778,12 @@ class BetterVersionScan(QObject):
                 pending.append((gallery, candidates))
                 pending_urls += len(candidates)
                 if pending_urls >= pewnet.EHen.MAX_GDATA_URLS:
-                    found += self._classify(hen, store, pending, target)
-                    pending, pending_urls = [], 0
+                    batch, pending, pending_urls = pending, [], 0
+                    found += self._classify(hen, store, batch, target)
 
-            if pending:
-                found += self._classify(hen, store, pending, target)
-                pending = []
+            batch, pending = pending, []
+            if batch:
+                found += self._classify(hen, store, batch, target)
         finally:
             # The searches behind these are spent whatever went wrong, and the source bans on
             # request volume, so one lookup costs less than searching again. Guarded, so a

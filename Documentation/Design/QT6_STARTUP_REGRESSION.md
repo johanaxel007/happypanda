@@ -1,0 +1,1103 @@
+# PyQt6 Startup Performance Regression
+
+**Version:** 1.10  
+**Date:** 2026-09-13  
+**Status:** ✅ Resolved 2026-09-13 — S0–S9 complete. On the real library the Qt6 build now starts faster than the Qt5 one (§16). The optimisations still on the table are ROADMAP entries; §8's residue stays open and blocks nothing.  
+**Target:** PyQt6 6.11.0 / Qt 6.11.2 on Python 3.14.7 (baseline: PyQt5 5.15.11 / Qt 5.15.2)
+
+> Switching the binding to PyQt6 makes database startup **roughly four times slower** — 12.1s
+> against 39–52s for the gallery load alone, and about 26s against about 126s across all three
+> startup phases on a 19,974-gallery library. **The cost lands entirely in Qt-free Python running
+> on worker threads, not in any Qt call**: the one Qt call in the loop, `insertRows`, is 0.01s
+> under both bindings.
+>
+> **Bisecting the binding now names where it enters: Qt 6.7.** PyQt6 6.6.1 / Qt 6.6.3 loads the
+> same library in about 16s — within about 1.3× of the PyQt5 floor and not worth blocking a
+> migration over — while the very next release, 6.7.0, takes about 38s, and it worsens to about
+> 47s by 6.11 (§5). So this is not a PyQt5-versus-PyQt6 architectural difference.
+>
+> Twenty-eight candidate causes were ruled out by measurement (§4, §5, §11, §12), and every attempt to
+> reproduce the cost outside the application fails — including a faithful model/view replica
+> whose Python callback counts come out **identical** between the two bindings. What changed
+> inside Qt 6.7 is **no longer** open at the granularity this project can reach: profiling the
+> GUI thread's own event delivery shows the cost is **queued meta-call delivery**. The application
+> issues the *same* number of them under both versions — 112 to the sort/filter proxy, 154 to
+> PyQt's lambda-proxy receivers — and each one costs **about twice as much** under 6.7 (§11).
+>
+> That makes pinning Qt 6.6 the fallback rather than the answer: **112 proxy invalidations per
+> library load is the application's own doing**, and cutting them helps under every Qt version.
+> **S6 cut them to 8 by reading the library in one batch** — the gallery load drops from about 38s
+> to about 5s and the whole startup from about 135s to about 104s, on *any* Qt 6 (§12).
+>
+> **What none of it fixes is responsiveness, and S7 establishes that the cross-thread model
+> mutation was not the reason.** The models are now filled from the GUI thread, which is what Qt
+> requires, and it costs **0.6% of total startup** and leaves the window reported as not
+> responding for the **whole** load either way (§13).
+>
+> **S8 names the freeze and proves it by removal: `QDateTime.fromString` in the proxy's sort key.**
+> The shipped sort role re-parses a date string on every comparison, and under Qt 6.11 one parse
+> costs **188 µs against 15 µs under Qt 5.15** on this library's own values. The GUI thread spends
+> the whole ~113s freeze at 100% CPU inside that branch of `GalleryModel.data`, while the database
+> thread sits at 0% waiting for the GIL, which is why the chapter phase looks long. Returning an
+> integer key instead takes the window from **112.8s hung to 0.0s** and the startup from **128.3s to
+> 13.2s**, faster than PyQt5's 25s. The model/view bench reproduces it too, 7.9×, once it is timed
+> by the wall clock rather than by its own `TIMING` line, which prints before the sort runs (§14).
+>
+> **S9 fixes it, and the two sort paths it found beside it.** Every sort — the menu's, a table
+> header's, the startup's — now compares a plain `str` or `int` from one vocabulary in
+> `version/sortkeys.py`. Against the code before it, interleaved: the startup sorted by date added
+> goes from **133–146s with 112–124s hung to 13.1–13.8s with none**. On either tab of the
+> development library, every sort chosen and every re-sort a cleared search sets off completes in
+> under 2s, where a date sort took up to 160s (§15).
+
+**Audited:** 2026-09-10, at commit `7ba4813` (branch `feat/qt6-migration`).
+**Amended:** 2026-09-13 — closed. §16 records the real-library outcome from both builds' own logs
+and where the remaining startup time goes; §7's extension roadmap moves to `ROADMAP.md`.
+**Amended:** 2026-09-13 — phase S9 executed. One sort vocabulary for the menu, the headers and the
+saved sort; the date sorts, header clicks, menu sync and undated placement fixed. §15 carries it.
+**Amended:** 2026-09-13 — the date parse priced under Qt 6.6.3 and 6.7.0: it carries the 6.7 step
+itself (§14).
+**Amended:** 2026-09-13 — phase S8 executed. A timeline, a PyQt5 baseline, a GUI-thread trace and
+one subtraction name the freeze as the sort key's per-comparison `QDateTime.fromString`, and
+overturn §5's "does not reproduce". §14 carries it, §5 and §9 are corrected in place, S9 is opened.
+**Amended:** 2026-09-12 — phase S7 executed. The startup no longer mutates a model or a widget
+off the GUI thread, which measures free; the freeze it was opened to fix is unchanged, so §13
+carries the result, §9 the detach that was tried and dropped, and S8 replaces the claim.
+**Amended:** 2026-09-10 — phases S0–S3 executed; §5 and §7 rewritten around the result.
+**Amended:** 2026-09-12 — phase S6 executed: the startup batch size is the lever, and it is
+binary. §12 carries the measurements, including the finding that the window is already reported
+as not responding at the shipped default. Phase S7 opened for that.
+**Amended:** 2026-09-12 — phase S5 executed: nine further subtractions from the running
+application, all null, and a GUI-thread event profile that names queued meta-call delivery as the
+mechanism. §11 carries it, with the candidates left untested.
+**Amended:** 2026-09-12 — phase S4 executed. The model/view harness rung was built and
+committed (`misc/qt_modelview_bench.py`) and does not reproduce; the binding was bisected across
+PyQt6 6.2–6.11 against the running application, three runs per release with the startup scan and
+the watchdog monitor disabled. §5 gained the harness result and the bisection curve, §10 the
+adjacent tab-switch finding.
+Findings come from instrumenting `version/gallerydb.py` (`fetch_galleries`, split into four
+timers) and `version/gallery.py` (`GridDelegate.paint`, call counter), applying the identical
+patch to both `feat/qt6-migration` and `feat/qt6-migration-prep`, and running the real application
+against the same database under each binding. Supporting probes: a stack sampler over
+`sys._current_frames()`, two standalone harnesses replicating the startup architecture with and
+without a Qt event loop, and direct `sqlite3`, `NtQueryTimerResolution` and `devicePixelRatio`
+measurements. All instrumentation was reverted. The one artefact that ships is
+`misc/qt_modelview_bench.py`, the model/view harness S4 built.
+
+**Relationship to other documents:**
+
+- [`../../ROADMAP.md`](../../ROADMAP.md) — carries the startup optimisations §16 hands on, each
+  pointing back here for the measurement protocol.
+- [`./QT6_MIGRATION.md`](./QT6_MIGRATION.md) — the migration this blocked; its §7 phase Q3 is what
+  introduced the regression, and its §8 item 1 asked whether the app runs under Qt6 at all.
+- [`../../CLAUDE.md`](../../CLAUDE.md) — the Core Constraints checked in §6.
+
+---
+
+## 1. Goals & non-goals
+
+### Goals
+
+1. **Preserve the measurement** — the attribution cost a dozen application runs across two
+   branches and two bindings, and is expensive to redo.
+2. **Record what is already excluded** so a later session does not re-test a dead hypothesis.
+3. **Name the next experiment** precisely enough that it can be run without re-deriving the setup.
+
+### Non-goals (v1)
+
+- **Fixing the regression.** No cause is identified yet; a fix cannot be designed against an
+  unknown mechanism.
+- **Deciding whether to ship Qt6 regardless.** That is a judgement for after the cause is known —
+  the size of the regression may or may not survive the explanation.
+- **Optimising startup generally.** `gen_galleries` issues one SQL query per gallery through
+  `ListDB.query_gallery`, which is why the Qt-free baseline is 3.7s rather than 0.5s. Worth its
+  own entry; unrelated to this regression, which is a *ratio* between bindings.
+
+---
+
+## 2. Current state (what is measured)
+
+**Claim legend, used throughout this document:**
+
+| Tag | Meaning |
+|-----|---------|
+| ✅ **Verified** | Reproduced by executing code. The method is named inline. |
+| ⚠️ **Unverified** | Static reading, grep, or reasoning. Plausible, not executed. Treat as a lead. |
+
+### The library under test
+
+| Area | State |
+|------|-------|
+| Galleries | 19,974 rows in `series` when §4 and §5 were measured; **20,447 by the time §12 was**, the development library having grown in between. ✅ **Verified** by `SELECT COUNT(*)` at both points. Compare figures across sections as ratios, not seconds. |
+| Chapters | 19,999 rows. ✅ **Verified** the same way. |
+| Tag mappings | 123,077 rows in `series_tags_map`. ✅ **Verified**. |
+| Gallery lists | **0** rows in both `list` and `series_list_map`, so `ListDB.query_gallery`'s loop body never executes — but it still issues its per-gallery `SELECT`. ✅ **Verified**. |
+| Database file | 20.0 MB. ✅ **Verified** by `os.path.getsize`. |
+
+### Startup timings, whole phases
+
+From `utils.Stopwatch` lines already in `gallerydb.DatabaseStartup.startup`. ✅ **Verified** — read
+out of `happypanda.log` and its two rotated predecessors.
+
+| Phase | PyQt5 | PyQt6 |
+|-------|-------|-------|
+| Loading galleries | 11.3, 11.5, 11.5, 11.8, 12.9s | 45.2, 48.4s |
+| Loading chapters | 1.8, 2.1, 2.8, 3.0, 3.4s | 11.5, 14.5s |
+| Loading tags | 8.7, 11.6, 12.0, 14.0, 15.3s | 62.8s |
+
+### Startup timings, split within `fetch_galleries`
+
+The same instrumentation patch on both branches, same database, same machine. ✅ **Verified**.
+
+| Run | Binding | `select` | `fetchall` | `gen_galleries` | `insertRows` | total |
+|-----|---------|---------:|-----------:|----------------:|-------------:|------:|
+| 20:55 | PyQt5 | 0.27s | 2.99s | 8.78s | 0.02s | 12.10s |
+| 20:57 | PyQt5 | 0.24s | 2.34s | 7.41s | 0.01s | 10.04s |
+| 20:47 | PyQt6 | 0.31s | 13.55s | 25.16s | 0.01s | 39.07s |
+| 20:58 | PyQt6 | 0.33s | 17.07s | 25.23s | 0.01s | 42.69s |
+| 20:50 | PyQt6 | 0.31s | 18.66s | 33.80s | 0.01s | 52.83s |
+
+The 20:50 row ran under the stack sampler, which adds its own overhead; it is listed for
+completeness and should not be read as the PyQt6 baseline.
+
+**The shape of the result is the finding.** `select` is a queued call onto the database thread and
+is unchanged. `insertRows` — the only Qt API call in the loop — is 0.01s under both. The entire
+difference sits in `c.fetchall()` and `gen_galleries`, which are plain Python and `sqlite3`.
+
+### Gates
+
+| Gate | Verdict for this investigation |
+|------|-------------------------------|
+| `pytest tests/ -q` | 344 pass, 4 pre-existing `test_init_db` failures. ✅ **Verified** 2026-09-12; the 289 recorded in v1.1 is stale, the suite has grown since. Says nothing about startup cost — no test loads the library. |
+| `misc/gui_smoke.py` | `GUI SMOKE OK` under PyQt6. ✅ **Verified**. Builds no gallery model and loads no galleries, so it cannot see this at all. |
+| Launching the app | The only gate that observes it, and the timings above come from `happypanda.log`. |
+
+---
+
+## 3. Decision: is the regression caused by the binding?
+
+Pivotal because it decides whether this blocks the migration or is an artefact of the machine, and
+because the first four measurements were taken across a window in which other things changed.
+
+### Option A — an environmental difference, not the binding (rejected)
+
+- ✅ **Genuinely plausible at first.** The initial PyQt6 numbers were taken minutes after
+  installing 78 MB of Qt6 DLLs, on a machine that had been running test suites all session, and
+  the first PyQt6 run performed a full library scan concurrently while an earlier PyQt5 run had
+  not. Any of those could inflate a startup measurement.
+- ❌ **Refuted by controlled re-measurement.** The identical instrumentation patch was applied to
+  both branches and run back to back against the same database on the same machine within four
+  minutes: 12.10s and 10.04s under PyQt5, 39.07s and 42.69s under PyQt6. ✅ **Verified**.
+- ❌ **The scan confound was checked directly** — the 45.2s run logged **zero** "already exists or
+  ignored" lines, so nothing was competing with it. ✅ **Verified**.
+
+### Option B — the binding ✅ **CHOSEN**
+
+The ratio survives every control available: same commit-for-commit code path, same database, same
+machine, same instrumentation, interleaved in time. The only variable left is which binding is
+imported.
+
+What that does **not** establish is a mechanism. §4 is the list of mechanisms already excluded,
+and §5 is the reproduction that ought to have exhibited it and does not.
+
+---
+
+## 4. Hypotheses excluded, with the measurement that excluded each
+
+Every row is ✅ **Verified** — each was executed, not reasoned about. This is the section that
+saves a later session the most time.
+
+| # | Hypothesis | Measurement | Result |
+|---|------------|-------------|--------|
+| 1 | A concurrent library scan competed for the database thread | Counted scan lines in the 45.2s run's log window | **0 lines** — nothing competing |
+| 2 | Filesystem: `gen_galleries` stats every gallery path | Timed `os.path.exists` over all 19,974 paths | **0.38s** |
+| 3 | `sqlite3` itself, or the database being large | Ran the identical 20 batched `SELECT`+`fetchall` with plain `sqlite3` | **0.30s** (0.10s unbatched) |
+| 4 | Debug logging — `DBBase.execute` calls `log_d('DB Query: {}'.format(args))` per query | Grepped all three log files for `DB Query` | **0 lines**; level is INFO, and the `-d` flag was not used |
+| 5 | Qt6's always-on high-DPI scaling enlarges what is painted | Queried `devicePixelRatio` and `logicalDotsPerInch` per screen | **1.0 and 96 DPI** on both monitors |
+| 6 | The grid delegate paints far more under Qt6 | Counted `GridDelegate.paint` calls during the phase, both bindings | PyQt5 **240**, PyQt6 **80** and **0** — fewer paints, still 4× slower |
+| 7 | The Qt model insert is the cost | Timed `gallery_model.insertRows` separately | **0.01s** under both |
+| 8 | GIL preemption granularity | `sys.setswitchinterval(0.1)` for a whole run | **40.94s** — unchanged |
+| 9 | Windows timer resolution differs (affects thread waits, not painting) | `NtQueryTimerResolution` before and after creating a `QApplication`, both bindings | **0.997 ms** in all four cases |
+| 10 | Merely having a `QApplication` slows threaded Python | Ran the Qt-free workload with one created | **3.65s** (PyQt6), **3.69s** (PyQt5), **3.68s** (no Qt) |
+
+Hypothesis 6 is worth singling out: PyQt6 painted *fewer* delegate items than PyQt5 in every run,
+and one PyQt6 run painted none at all while still taking 40.94s. Any explanation resting on
+rendering cost is contradicted by that.
+
+---
+
+## 5. The reproduction that fails to reproduce
+
+Two standalone harnesses replicate the startup architecture with no application code. Both are
+scratch scripts and were not committed; §8 records how to rebuild them. A third, the model/view
+rung S4 added, is committed as `misc/qt_modelview_bench.py`.
+
+The architecture under test, which is what `DatabaseStartup` does per 1000-gallery batch:
+
+```
+  loader thread                 method queue              database thread
+  ─────────────                 ────────────              ───────────────
+  call(SELECT …)      ─────────────▶ put ──────────────▶  conn.execute()
+  c.fetchall()   ◀── cursor returned across the thread boundary
+  call(gen_galleries) ─────────────▶ put ──────────────▶  per row: one SELECT
+                                                          + os.path.exists()
+```
+
+| Harness | What it adds | PyQt5 | PyQt6 |
+|---------|--------------|------:|------:|
+| Queue + worker thread, no Qt imported | the architecture alone | — | — (3.68s with no binding) |
+| …plus a `QApplication` | the binding loaded and initialised | 3.69s | 3.65s |
+| …plus a running event loop, workload moved onto a worker thread | the last structural difference from the app | **3.67s** | **3.69s** |
+
+The third row is the closest reproduction available and the two bindings are indistinguishable in
+it. ✅ **Verified**. So the trigger requires something the real application does that a
+`QApplication`, a running event loop and a worker thread doing this exact workload do not.
+
+### What the stack sampler showed
+
+Sampling `sys._current_frames()` every 20 ms during a PyQt6 startup. ✅ **Verified**:
+
+- the loader thread's hottest frame is `gallerydb.py` at the `c.fetchall()` line
+- the database thread is simultaneously hot in `database/db.py` inside `DBBase.execute`
+- the GUI thread sits in `main.py` inside `start_main_window`, i.e. below Python in Qt C++
+- the remaining threads — watchdog monitor, download-manager workers — are in `threading.wait`
+  or `read_directory_changes`
+
+Two Python threads being hot at once on a connection they share is consistent with contention, but
+the harnesses above contend identically and do not slow down. ⚠️ **Unverified** as an explanation.
+
+### The harness was later extended to the app's actual threading shape
+
+`DatabaseStartup` does not run on a plain thread: `app.py:71-75` creates a `QThread`, moves the
+object onto it and invokes `startup` through a queued signal. The harness was extended to match — a
+`QObject` moved to a `QThread`, started via `thread.started`. ✅ **Verified**: PyQt5 4.37s, PyQt6
+4.27s. The QThread shape is not the trigger either.
+
+### What the bisection found
+
+Subtracting subsystems from the running application (§7) localised it in three runs.
+
+| Configuration | `fetchall` | `gen_galleries` | Verdict |
+|---------------|-----------:|----------------:|---------|
+| PyQt6 baseline | 13.30s | 25.64s | — |
+| PyQt6, watchdog monitor disabled | 16.96s | 30.96s | monitor excluded |
+| PyQt6, download manager given 0 workers | 12.46s | 30.51s | download manager excluded |
+| **PyQt6, view loop skipped** | **0.14s** | **5.25s** | **the cost is here** |
+| PyQt5, view loop skipped | 0.12s | 5.74s | identical floor |
+
+✅ **Verified**, all five. Removing `view.gallery_model.insertRows(...)` from the batch loop takes
+PyQt6 from about 39s to about 5.6s, and PyQt5's floor for the same configuration is about 6.1s —
+**the two bindings are indistinguishable once the view is out of the loop.** So the model/view
+insert path costs roughly 6s under PyQt5 and roughly 34s under PyQt6.
+
+The trap in reading this: `insertRows` itself measures 0.01s in every run. The expense is not the
+call, it is what the call schedules — the proxy-model and view work that follows on the GUI
+thread, which then starves the loader and database threads.
+
+### Excluded *inside* the view path
+
+| Hypothesis | Measurement | Result |
+|------------|-------------|--------|
+| PyQt6 runs the Python filter callback more often | Counted `SortFilterModel.filterAcceptsRow` calls | PyQt5 **55,684**, PyQt6 **16,791** — fewer, still slower |
+| PyQt6 paints delegate items more often | Counted `GridDelegate.paint` calls | PyQt5 **240**, PyQt6 **80**, and **0** on one run |
+| `setDynamicSortFilter(True)` re-filters on every insert | Froze it for the load, re-enabled and `invalidate()`d after | **43.9s** — no improvement |
+
+⚠️ **Unverified** as an explanation, but the shape is consistent across all five: PyQt6 makes
+*fewer* transitions into Python than PyQt5 and is still several times slower, so the additional
+time is being spent inside Qt6's own model-view machinery rather than in this project's callbacks.
+
+### The rung the ladder was missing
+
+The harness ladder above went queue, then `QApplication`, then a running event loop, then a
+`QThread` — and never added a model or a view, which is the one subsystem the bisection then
+blamed. `misc/qt_modelview_bench.py` is that rung, committed rather than thrown away this time: a
+table model with the same columns and roles, a sorted proxy with a Python `filterAcceptsRow`, an
+icon-mode `QListView` and a `QTableView` both attached to that one proxy, and a loader object on
+its own `QThread` issuing `insertRows` across the thread boundary while the GUI thread runs the
+event loop. 19,974 rows in batches of 1000, no database and no application code.
+
+> **Corrected by S8 (§14): the bench does reproduce it.** Its `TIMING` line is printed before the
+> GUI thread has sorted what the loader inserted, so the `loader work` and `settle` columns below
+> never contained the cost. Timed by the wall clock, the same bench runs 36.7s under PyQt5 and
+> 289.6s under PyQt6 at one batch. The callback counts below stand; the conclusion drawn from the
+> timings does not.
+
+What the bench's own timers reported, and the callback counts, which come out all but identical.
+✅ **Verified**, one counted run per configuration — counting is off by default because it runs
+in the two hottest callbacks and would tax the thing being measured:
+
+| Proxy sort role | Binding | loader work | `insertRows` | settle | `filterAcceptsRow` | `data()` |
+|-----------------|---------|------------:|-------------:|-------:|-------------------:|---------:|
+| title (a `str`) | PyQt5 | 4.55s | 0.01s | 0.01s | 249,922 | 1,627,920 |
+| title (a `str`) | PyQt6 | 5.38s | 0.01s | 0.35s | 249,922 | 1,627,920 |
+| date added (a `QDateTime`) | PyQt5 | 4.16s | 0.01s | 0.01s | 249,922 | 2,015,166 |
+| date added (a `QDateTime`) | PyQt6 | 4.36s | 0.01s | 0.00s | 249,922 | 2,015,250 |
+
+`filterAcceptsRow` matches exactly in all four, and `data()` matches exactly on the title role and
+to within 84 calls in two million on the date role. Uncounted repeats of the `TIMING` line spread
+4.1–5.6s under PyQt5 and 4.2–5.5s under PyQt6, which is noise in a figure that excludes the sort.
+
+The second pair matters most. The application does **not** sort on `DisplayRole`: `current sort`
+ships as `date_added`, so the proxy's comparator reads `GalleryModel.DATE_ADDED_ROLE`, whose
+branch re-formats the stored date and re-parses it with `QDateTime.fromString` on **every**
+comparison (`gallery.py:576-577`). That is the path §14 finds the freeze in. ✅ **Verified**
+— counted in the application as well: one PyQt6 startup made 977,269 `data()` calls, 557,856 of
+them on that role and **0** on `DisplayRole`.
+
+### What the harness still excludes
+
+| Hypothesis | Measurement | Result |
+|------------|-------------|--------|
+| PyQt6 reads the model more often | `data()` and `filterAcceptsRow` counted in the replica | **Identical**, 1,627,920 and 249,922 either way |
+
+The two rows this table used to carry — the insert path being slower under PyQt6, and per-call
+conversion overhead on the date role — rested on the `TIMING` line and are withdrawn (§14).
+
+### Where the regression enters: Qt 6.7
+
+Black-box measurement inside the path being exhausted, the remaining cheap question was *which
+release*. Each row is the running application against the same 19,974-gallery database, three
+launches, with the startup scan and the watchdog monitor disabled so nothing competes.
+✅ **Verified**.
+
+| Binding / Qt runtime | `Loading galleries`, three runs | mean |
+|----------------------|---------------------------------|-----:|
+| PyQt5 5.15.11 / Qt 5.15.2 | 11.3, 11.5, 11.5, 11.8, 12.9s (§2) | ~11.8s |
+| PyQt6 6.5.3 / Qt 6.5.3 | 26.68, 24.85, 24.70s | 25.4s |
+| **PyQt6 6.6.1 / Qt 6.6.3** | **17.17, 16.10, 14.56s** | **15.9s** |
+| PyQt6 6.7.0 / Qt 6.7.0 | 36.95, 41.70, 36.25s | 38.3s |
+| PyQt6 6.7.1 / Qt 6.7.3 | 36.19, 30.43, 30.83s | 32.5s |
+| PyQt6 6.9.1 / Qt 6.9.2 | 45.00, 49.81, 48.51s | 47.8s |
+| PyQt6 6.11.0 / Qt 6.11.2 | 49.07, 43.52, 47.55s | 46.7s |
+
+The curve is not monotonic: **6.6 is the floor of the Qt6 range and 6.5 is worse than it**, so
+something improved in 6.6 and something else regressed hard in 6.7. The step at 6.6 → 6.7 is
+2.4× and lands on the *first* 6.7 release, not a later patch.
+
+**6.6.1 is within about 1.3× of PyQt5.** That is an ordinary version-to-version difference, not
+the fourfold blocker, which turns the open question from "can this migration ship at all" into
+"which Qt does it pin".
+
+Three practical limits found while doing it, all ✅ **Verified**:
+
+- **PyQt6 6.0 and 6.1 cannot be installed here at all.** Neither has a `win_amd64` wheel on PyPI,
+  only an sdist needing a local Qt build — so the range is 6.2 upward, not the 6.0–6.11 v1.1
+  assumed. Confirmed with `pip download --no-deps`.
+- **The application will not run below 6.5.** 6.2.3 and 6.3.1 die at
+  `AttributeError: 'QAction' object has no attribute 'setMenu'` (`app.py:636`), and 6.4.2 exits
+  139 with nothing logged at all.
+- **Binding and Qt runtime cannot be varied independently**, so the step cannot be attributed to
+  Riverbank's layer or to Qt's separately. Every 6.2–6.8 wheel declares `PyQt6-Qt6` with no upper
+  bound, so a bare pin silently pulls the newest Qt against an old binding; and forcing a crossing
+  with `--no-deps` fails to load in both directions — binding 6.6.1 on Qt 6.7.3 raises
+  `ImportError: DLL load failed while importing QtGui`, and binding 6.7.1 on Qt 6.6.3 fails on
+  `QtCore`. **Pin both halves explicitly on every rung.**
+
+---
+
+## 6. Constraint compliance checklist
+
+| Core constraint (`CLAUDE.md`) | How this investigation complies |
+|-------------------------------|--------------------------------|
+| **1. Writes to the user's real library** | Not touched. Every measurement is a read: startup loads galleries and never renames, moves or trashes a file. The instrumentation added timers and a counter, no behaviour. |
+| **2. Gallery database is the only copy** | Read-only throughout. No schema change, no write outside `gallerydb`, and the standalone harnesses open the database with `sqlite3` for `SELECT` only. The measured 20 MB file is the repository's development database, not a user library. |
+| **3. e-hentai request budget** | Not touched. No phase of this work issues a network request; the `temp banned` line in the logs is pre-existing account state observed at startup, not caused here. |
+| **4. Settings plumbed through four places** | No setting added, removed or renamed. `DATABASE_STARTUP_FETCH_LIMIT` (default 1000) was read to understand batching and left alone. |
+
+---
+
+## 7. Phased plan — bisect downward from the application
+
+Building the reproduction upward stopped short of the failure (§5), so the remaining approach is
+subtraction: start the real application with subsystems disabled until the ratio collapses.
+
+| Phase | Scope | Effort | Depends on | Status |
+|-------|-------|:------:|------------|--------|
+| **S0 — Re-establish the harness** | Four-timer instrumentation on `fetch_galleries`, applied identically to both branches. | 🟢 | — | ✅ 2026-09-10 |
+| **S1 — Disable the monitor** | `enable monitor = False` in `settings.ini`; no code change needed. Excluded it. | 🟢 | S0 | ✅ 2026-09-10 |
+| **S2 — Disable the download manager** | `start_manager(0)` in place of 4 workers. Excluded it. | 🟢 | S0 | ✅ 2026-09-10 |
+| **S3 — Strip to the loader** | Skip the `manga_views` loop. **Found it** — see §5. | 🟡 | S1, S2 | ✅ 2026-09-10 |
+| **S4 — Narrow within the model/view** | Built the missing model/view harness rung — binding-neutral, so three more hypotheses fall — then bisected the binding. **Found the release**: it enters at Qt 6.7, and 6.6.1 is within ~1.3× of PyQt5. See §5. | 🔴 | S3 | ✅ 2026-09-12 |
+| **S5 — Name what changed in Qt 6.7** | Nine subtractions from the running application, all null, then a GUI-thread event profile applied identically to 6.6.3 and 6.7.0. **Found the mechanism**: queued meta-call delivery, same count, ~2× the cost per call. See §11. | 🔴 | S4 | ✅ 2026-09-12 |
+| **S6 — Cut the meta-calls** | Not by suppressing the re-search, which measured *worse*, but by reading the library in one batch: `DATABASE_STARTUP_FETCH_LIMIT` now defaults to 0. 112 proxy meta-calls become 8, the gallery load about 38s becomes about 5s. See §12. | 🟡 | S5 | ✅ 2026-09-12 |
+| **S7 — Stop mutating the models off the GUI thread** | Each batch, and the delegate's paint level, now reach the GUI thread as a signal. `DatabaseStartup` holds no reference to a widget at all. **It is free and it does not fix the freeze**: 128.8s against 128.0s over four runs each, with the window unresponsive for the whole load either way. See §13. | 🟡 | S6 | ✅ 2026-09-12 |
+| **S8 — Find what actually freezes the window** | A phase timeline puts the freeze exactly over the chapter phase, not the tag phase; a GUI-thread trace finds the GUI thread at 100% CPU in `GalleryModel.data`'s `DATE_ADDED_ROLE` branch and the database thread at 0% waiting on the GIL. **Found it**: `QDateTime.fromString` costs 12× more under Qt 6.11, and an integer sort key takes the hung window from 112.8s to 0.0s. See §14. | 🔴 | S7 | ✅ 2026-09-13 |
+| **S9 — Stop parsing a date per comparison** | Widened from the date roles once a probe of the real window showed the table header was a second, half-connected sort path with the same parse behind it. One sort-key role answered from `sortkeys`, header clicks routed through the same sort as the menu, the menu and indicator following every sort, undated galleries last. Startup 133–146s → 13.1–13.8s, hung 112–124s → 0. See §15. | 🟡 | S8 | ✅ 2026-09-13 |
+
+Effort: 🟢 low (hours, localized) · 🟡 medium (days, several files) · 🔴 high (cross-cutting, or
+dominated by manual verification).
+
+Status: `—` not started · `In progress` · `✅ YYYY-MM-DD` complete · `⏸️ YYYY-MM-DD` deliberately
+not implemented · `⛔ Superseded YYYY-MM-DD — <by what>`.
+
+**Every phase's gate is the same:** the `TIMING galleries` line in `happypanda.log`, compared
+against the S0 baseline. S1–S3 needed PyQt6 runs only, since the question was whether the number
+collapses toward the known PyQt5 figure rather than what PyQt5 does. `pytest` and `misc/gui_smoke.py` cannot observe any of
+this — neither loads a library — so they serve only to confirm the instrumentation broke nothing.
+
+Each phase is disposable: the instrumentation is reverted at the end and nothing ships. The
+deliverable is a named subsystem, which then justifies its own design work.
+
+### Extension roadmap (post-S3, in intended order)
+
+| Version | Extension |
+|---------|-----------|
+| **v2** | S6 took the first of those: the meta-call count is cut and nothing is pinned. After S9 the Qt6 build starts faster than the Qt5 one (§16), so pinning 6.6.1 has nothing left to buy. ⏸️ 2026-09-13 |
+| **v3+** | Moved to `ROADMAP.md` with the rest of §16's list: the per-gallery queries `gen_galleries` and the tag phase issue at startup. |
+
+---
+
+## 8. Open questions
+
+1. **Which Qt change made a queued meta-call twice as expensive?** S5 localised the cost to
+   meta-call delivery (§11) but not to a commit. Qt stopped shipping `dist/changes-*` files after
+   6.0, and the obvious item in the item-view history — passing the widget to
+   `QStyle::pixelMetric()` — was backported to 6.6, 6.5 and 6.2, so it cannot be the step.
+   Settling it needs either a Windows native profiler or a local build of qtbase bisected between
+   v6.6.3 and v6.7.0. Also unexplained: why 6.6 is *faster* than 6.5, and whether the further
+   slide from 6.7 to 6.11 shares this cause. **S8 narrows it (§14):** the work inside those
+   meta-calls is a sort whose key calls `QDateTime.fromString`, which is 12× slower under 6.11 than
+   5.15. **Priced under 6.6.3 and 6.7.0, it is the 6.7 step**: 2.5× on the call, with
+   `toMSecsSinceEpoch` on a local-time value jumping 10× at the same release (§14). Which commit
+   inside Qt did it is still open, and the 6.7 → 6.11 slide is not this call, which is flat there.
+2. **Does the ratio scale with library size?** Every measurement here is against one 19,974-gallery
+   database. A smaller library might show it proportionally or not at all, which would itself be a
+   clue. ⚠️ **Unverified** — untested in either direction.
+3. **Is it specific to PyQt6 6.11.0 / Qt 6.11.2?** Answered by S4: no. It enters at 6.7.0 and
+   worsens through 6.11, and 6.6.1 does not have it (§5).
+
+### How to measure a startup change
+
+Every figure in this document was produced this way. A change measured any other way is not
+comparable with them, and the noise here is wide enough to swallow a real effect.
+
+- **Three runs per configuration, minimum.** The run-to-run band is about 38–50s for the gallery
+  load at Qt 6.7.0 and about 14–18s at 6.6.3. One run proves nothing; a change worth shipping
+  moves the mean clear of the band.
+- **Turn off what competes.** Set `look new gallery startup = False` and `enable monitor = False`
+  in `settings.ini`, and back the file up first — it is untracked, so a lost edit is not
+  recoverable from git. Restore it when the phase ends.
+- **Interleave configurations; do not run them in blocks.** The machine drifts. Three variants
+  measured in sequence over one afternoon each came out slower than the one before, and
+  re-measuring the baseline at the end showed about 4% of that was drift rather than the change.
+  Alternate A/B/A/B, or re-baseline before trusting any block comparison.
+- **Compare ratios, never seconds.** Absolute figures depend on the machine and on the library,
+  and this library grew mid-investigation (§2).
+- **Instrument both sides identically, and gate it behind an environment variable.** One patched
+  build should serve every variant, so the instrumentation's own cost cancels instead of becoming
+  a variable. Revert all of it before committing; only `misc/qt_modelview_bench.py` ships.
+- **Read `happypanda.log`, not the exit code.** 127 means both a Qt abort and the user closing the
+  window, and the log rotates at 10 MB — a figure can end up in `happypanda.log.1` mid-phase.
+- **Kill the run once the line you need appears.** A full startup spends another ~90s loading tags
+  after the gallery phase, which is wasted unless that phase is what is being measured.
+- **Two different acceptance figures.** Throughput is the four phase lines **summed** — one of
+  them alone stopped being comparable at S7 (§13) — and responsiveness is the hung-window probe
+  below. A timer inside the application measures its own event-queue backlog and answers neither.
+- **The A/B control has to be the code as it stands.** Gating the change behind an environment
+  variable only holds while the gated-off branch is still the original. Editing the body both
+  branches share turns the control into a third variant, silently: one series here measured the
+  change at 1.6× slower, and what it had actually measured was a proxy being detached and
+  re-attached from the loader thread. Re-run the control after every edit that touches it.
+- **`venv/Scripts/python.exe` is a launcher.** The process it starts owns the window, so the pid
+  `Popen` reports never matches it. Find the window by title and end the run with
+  `taskkill /T /F`, or the application outlives the probe and loads the same database underneath
+  the next run — which is enough on its own to invalidate a whole series.
+
+### Rebuilding the harnesses
+
+The first two below are scratch scripts; the rest ship. To recreate the scratch ones:
+
+- **Instrumentation** — in `gallerydb.DatabaseStartup`, wrap the four steps of `fetch_galleries`
+  in `time.perf_counter()` accumulators on a class-level dict and log it once after the loop.
+  Apply the *same* patch to both branches; the file differs between them only by its Qt import.
+- **Model/view harness** — `misc/qt_modelview_bench.py`, committed. Takes the binding as its
+  first argument and carries a switch per element of the insert fan-out (`--no-view`, `--no-table`,
+  `--no-sort`, `--no-refilter`, `--sort-role`, `--count-data`), so the subtraction S3 performed on
+  the application can be repeated in seconds. **Time it from outside the process**: its own `TIMING`
+  line prints before the GUI thread has sorted what was inserted, so it never contains the cost
+  (§14).
+- **Architecture harness** — a `queue.Queue` pair, one worker thread owning a
+  `sqlite3.connect(..., check_same_thread=False)`, and a caller that blocks on the return queue.
+  Per batch: `SELECT * FROM series LIMIT n, 1000` on the worker, `fetchall()` on the caller, then a
+  per-row `SELECT list_id FROM series_list_map WHERE series_id=?` plus `os.path.exists` back on the
+  worker. Take the binding as `sys.argv[1]` and create the `QApplication` before connecting; for
+  the event-loop variant, run the workload on a thread and call `qapp.exec()` on the main thread.
+- **Hung-window probe and phase timings** — `misc/measure_startup.py`, committed. It launches the
+  application, polls `IsHungAppWindow` from a second process over the windows `EnumWindows`
+  reports titled `Happypanda`, and reads the four phase timings back out of the log. Each run also
+  prints a timeline of when the window appeared, each phase ended and each hung stretch began and
+  ended, which is what places a freeze in a phase. That call is
+  the one Explorer uses to decide whether to paint "(Not Responding)", so it answers the question
+  directly; a timer-lateness probe inside the application measures its own event-queue backlog
+  and is inflated by whatever instrumentation is attached. Each argument is a labelled
+  configuration with the environment that selects it, and it alternates them rather than running
+  them in blocks, so the protocol above is what it does by default.
+- **GUI-thread event profiler** — subclass `QApplication`, wrap `notify()` in a `perf_counter`
+  and accumulate by `(int(event.type()), type(receiver).__name__)`. Gate it behind an
+  environment variable: it costs a Python call per event, so it must be off when the same build
+  is used to measure anything else. Timing is inclusive and re-entrant, so compare two
+  identically instrumented runs rather than reading the seconds.
+- **Stack sampler** — a daemon thread walking `sys._current_frames()` every 20 ms, counting
+  `(thread, top frame)` pairs, dumping to a file every 2s. Dump periodically, not via `atexit`;
+  the application is killed rather than exited and `atexit` never runs.
+
+---
+
+## 9. Rejected alternatives
+
+| Alternative | Why rejected | Date |
+|-------------|--------------|------|
+| **Attributing the slowdown to the environment** | Refuted by interleaved back-to-back runs of the same instrumentation on both branches: 12.10s / 10.04s against 39.07s / 42.69s. | 2026-09-10 |
+| **Blaming Qt6's always-on high-DPI scaling** | Both monitors report `devicePixelRatio` 1.0 at 96 DPI, so no additional scaling is in force. | 2026-09-10 |
+| **Blaming delegate painting** | PyQt6 painted 240 → 80 fewer items than PyQt5, and one 40.94s run painted **zero**. | 2026-09-10 |
+| **Raising `sys.setswitchinterval`** | Tried as both diagnosis and candidate workaround at 0.1s; run took 40.94s, unchanged. | 2026-09-10 |
+| **Windows timer resolution as the mechanism** | `NtQueryTimerResolution` returns 0.997 ms with and without a `QApplication`, under both bindings. | 2026-09-10 |
+| **Building the reproduction upward** | Reached a running event loop with the workload on a worker thread and still measured 3.67s vs 3.69s. Subtraction from the application (§7) replaces it. | 2026-09-10 |
+| **The watchdog monitor as the cause** | Disabled via `enable monitor = False`; 16.96s / 30.96s, no better than baseline. | 2026-09-10 |
+| **The download manager's four worker threads** | Started with 0 workers; 12.46s / 30.51s, no better. | 2026-09-10 |
+| **The QThread shape of the loader** | Harness extended to a `QObject` moved onto a `QThread` and invoked by signal, matching `app.py:71-75`: PyQt5 4.37s, PyQt6 4.27s. | 2026-09-10 |
+| **`setDynamicSortFilter` re-filtering on every insert** | Frozen for the whole load and invalidated once afterwards: 43.9s, unchanged. | 2026-09-10 |
+| **Suppressing the per-batch re-search during startup** | Implemented and measured at both batch sizes: gallery load 54.5s / 56.6s against 39.3s / 36.1s at limit 1000, and 5.8s / 5.9s against 4.8s / 5.0s at limit 0. Worse on both. Reverted. | 2026-09-12 |
+| **An intermediate startup batch size** | Five batches measure like twenty (40.5s against 37.7s), because the sorted proxy re-maps what it already holds on every insert. Only one batch avoids the cost. | 2026-09-12 |
+| **The startup batch size as a responsiveness lever** | `IsHungAppWindow` reports the window not responding for 100.2s at the old default and 136.4s at the new one. No value clears the bar, because every batch size still sorts the whole library through the date parse §14 names. | 2026-09-12 |
+| **The view as the place the time goes** | Detaching both views from the proxy entirely recovers only about 15% (34.9s against a 42s baseline at Qt 6.7.0), while removing `insertRows` altogether took PyQt6 from 39s to 5.6s. | 2026-09-12 |
+| **The application-wide stylesheet, the blur effect, the spinner, the tooltip role, the view's layout mode and batch size, and the status-bar row callback** | Nine subtractions from the running application at Qt 6.7.0, every one inside the 38-50s run-to-run band; see §11. | 2026-09-12 |
+| **`py-spy --native` as the profiler** | py-spy 0.4.2 cannot read Python 3.14: `Failed to find python version from target process`. Profiling `QApplication::notify` replaced it. | 2026-09-12 |
+| ~~**The model/view insert path as inherently slower under PyQt6**~~ | ⛔ Withdrawn 2026-09-13. The 4.2s was the bench's `TIMING` line, printed before the GUI thread sorts; by the wall clock the replica takes 36.7s under PyQt5 and 289.6s under PyQt6 (§14). | 2026-09-12 |
+| ~~**Per-call sip conversion overhead in `data()`**~~ | ⛔ Withdrawn 2026-09-13 on the same grounds. The per-call cost is real and it is Qt's, not the binding's: `QDateTime.fromString` itself is 12× slower (§14). | 2026-09-12 |
+| **Attributing the step to Riverbank's layer or to Qt separately** | Both crossings fail to load: binding 6.6.1 on Qt 6.7.3 raises `ImportError` on `QtGui`, binding 6.7.1 on Qt 6.6.3 on `QtCore`. The two halves cannot be varied independently. | 2026-09-12 |
+| **Bisecting from PyQt6 6.0** | 6.0 and 6.1 have no `win_amd64` wheel on PyPI, and the application itself will not run below 6.5 (`QAction.setMenu` absent in 6.2/6.3, hard exit in 6.4). | 2026-09-12 |
+| **The cross-thread model mutation as the cause of the freeze** | Moving every insert onto the GUI thread changes the window's unresponsive stretch from about 116s to about 113s, on a load of about 128s. The arithmetic said so before the run did: the gallery phase is 5.4s, and it was never long enough to account for a freeze that lasts the whole startup. | 2026-09-12 |
+| **Detaching the sort/filter proxy for the duration of the insert** | The proxy keeps its mapping sorted, so filling the model with it detached and building the mapping once looked like the cheaper shape. Measured against the plain GUI-thread insert in the same interleaved series: **130.6s against 131.9s**, a difference several times smaller than that series' own run-to-run band. Dropped rather than shipped. | 2026-09-12 |
+| **Keeping both bindings installed for A/B convenience** | `misc/check_qt_enums.py` and `tests/test_qt_scoping.py` resolve PyQt5 first, so a venv holding both silently gates the Qt6 branch against Qt5. Install the second binding only for the duration of a comparison. | 2026-09-10 |
+
+---
+
+## 10. Adjacent finding: switching tabs re-filters the whole library
+
+Not this regression — it is present under PyQt5 too — but it was found while reading the insert
+path and it shares that path's two real costs. Recorded here rather than acted on.
+
+Library and Favorites are **one** `MangaViews`. `ToolbarTabManager.addTab` (`misc_db.py:86`) builds
+a new view only when `library_btn` is already set, and it is `None` while both of the first two tabs
+are created, so both buttons point at `default_manga_view`. Clicking either runs `fav_view()` or
+`catalog_view()` (`app.py:747-749`), which is `GallerySearch._filter` over every loaded gallery on
+`GENERAL_THREAD`, then `invalidateFilter` and a full proxy re-map on the GUI thread. Inbox is a
+separate `MangaViews`, so that switch instead hides one view and shows the other
+(`misc_db.py:72-73`) and swaps the layout (`app.py:677`) — and showing a list view holding 19,974
+rows lays out all of them. ✅ **Verified** by reading those paths.
+
+**A virtualised canvas would not help.** `QListView` is already virtual where it counts: it paints
+only the items intersecting the viewport, which is why §4's delegate-paint counts are 240 and 80
+rather than 20,000. What is *not* virtual is the proxy's row mapping, which materialises one entry
+per accepted row, and `doItemsLayout`, which positions every item — `setUniformItemSizes(True)` and
+`LayoutMode.Batched` (`gallery.py:1133,1138`) are the mitigations already applied. A hand-written
+canvas would replace the part that is already virtual and keep both parts that are not.
+
+The lever that would help is not re-filtering and re-laying-out the whole model on every tab click:
+cache the filter result per view, or give Favorites its own proxy over the same source rather than
+re-running the search. ⚠️ **Unverified** as a design — not prototyped, and deliberately kept out of
+S4, whose value is a clean ratio between two bindings.
+
+---
+
+## 11. What S5 found: the cost is queued meta-call delivery
+
+py-spy 0.4.2 cannot read Python 3.14's interpreter (`Failed to find python version from target
+process`), so the native profile the plan called for is unavailable without installing the Windows
+ADK. ✅ **Verified** by running it.
+
+The same question was answered at Qt's own granularity instead: subclass `QApplication`, time every
+`notify()`, and accumulate by event type and receiver class. The patch is identical under both Qt
+versions, so its own overhead cancels.
+
+| Receiver, `QEvent::MetaCall` (type 43) | Qt 6.6.3 | Qt 6.7.0 | calls |
+|----------------------------------------|---------:|---------:|-------|
+| `SortFilterModel` | 52.47s | 112.78s | **112 under both** |
+| plain `QObject` — PyQt's lambda-proxy receivers | 61.52s | 124.03s | 154 → 156 |
+| next largest, `NoTooltipModel` | 0.88s | 0.93s | 48 under both |
+| profiler total | 117.20s | 239.77s | 6,789 → 10,089 events |
+
+`Loading galleries` in these two runs: **17.63s under 6.6.3, 34.08s under 6.7.0.** ✅ **Verified**.
+
+**The application issues the same meta-calls and each one costs about twice as much**: 2.15× for
+the proxy, 2.02× for the lambda receivers, against an observed startup ratio of about 2.2× in the
+same pair of runs. Everything else on the GUI thread is under a second.
+
+The timing is inclusive and re-entrant — the totals exceed wall-clock time because a meta-call that
+runs a nested event loop counts its children — so the absolute seconds mean nothing. The *ratio
+between two identically instrumented runs* is the result, and the call counts are exact.
+
+**Where those 112 come from is the application's own doing.** `SortFilterModel.setup_search`
+connects `GallerySearch.FINISHED` to `invalidateFilter` and to a `ROWCOUNT_CHANGE` lambda
+(`gallery.py:209-210`), and `sourceModel().rowsInserted` to `refresh` (`gallery.py:216`). One
+library load therefore invalidates the proxy scores of times. That is why S6 is worth more than
+pinning: cutting the count helps under *every* Qt version, and the cost being cut is ours.
+
+### Excluded by subtraction from the running application
+
+Nine variants, each behind an environment switch on one patch so a single Qt install covered them
+all, measured at Qt 6.7.0 against a baseline of about 42s. The run-to-run band across the whole
+session was 38–50s; a mechanism worth 2.4× would have to drop the figure to about 17s, and none
+came close. ✅ **Verified**.
+
+| Subtraction | Result |
+|-------------|--------|
+| Application-wide stylesheet (`res/style.css`) not applied | 39.1s |
+| `QGraphicsBlurEffect` never installed on `AppWindow.center` | 46.3s |
+| Data-fetch spinner never shown | 48.7s |
+| `ToolTipRole` returns `None` | 38.5s |
+| `LayoutMode.SinglePass` instead of `Batched` | 45.4s |
+| `setBatchSize(30000)` | 42.5s |
+| Status-bar row callback not connected to `rowsInserted` | 36.1s |
+| **Both views detached from the proxy entirely** | **34.9s** |
+| Per-insert `refresh` not connected | 36.7s |
+
+The eighth row is the one that refines S3. **Detaching both views from the proxy recovers only
+about 15%**, while removing `insertRows` altogether took PyQt6 from 39s to 5.6s (§5). So "the model
+and view" is too broad: the view is not where the time goes.
+
+### Left untested
+
+Recorded so a later session resumes rather than restarts. Nothing below has been measured.
+
+1. **The second `MangaViews`.** The Inbox tab (`app.py:767`) builds its own model, proxy and two
+   views, and `fetch_galleries` loops over every registered view. Never subtracted.
+2. **`GridDelegate` replaced by a plain `QStyledItemDelegate`**, to price the Python `sizeHint`.
+3. **`DecorationRole` thumbnails**, returning nothing instead of a pixmap.
+4. **The proxy removed from the path entirely.** `HP_NO_SOURCE` was written and crashes:
+   `setup_search` reads `self.sourceModel()._data` (`gallery.py:211`), so an unsourced proxy needs
+   a larger patch than a one-line switch.
+5. **An exclusive-time event profiler.** The one used here is inclusive, so it ranks stacks rather
+   than self-time. Subtracting nested `notify()` durations would price the meta-call itself.
+6. **A Windows native profile** via the ADK's Windows Performance Recorder, py-spy being unable to
+   read Python 3.14.
+7. **A local qtbase build bisected between `v6.6.3` and `v6.7.0`**, which is the only thing that
+   names a commit. Expensive, and the definitive answer.
+8. **Whether the further slide from 6.7 to 6.11** (about 38s to about 47s) shares this cause.
+
+---
+
+## 12. What S6 changed: one batch instead of twenty
+
+`DATABASE_STARTUP_FETCH_LIMIT` (`app_constants.py:229`) was already a fully wired setting with a
+spinbox, a `restore_options` read and an `accept` write. S6 changed its **default from 1000 to 0**,
+which means one batch for the whole library. Nothing else ships.
+
+All figures below are the running application on Qt 6.11.2 against the development database, with
+the startup scan and the watchdog monitor disabled. ✅ **Verified**.
+
+| Fetch limit | Gallery load | Whole startup | Proxy meta-calls | Window hung, total | Longest unbroken |
+|-------------|-------------:|--------------:|-----------------:|-------------------:|-----------------:|
+| 1000 (was the default) | 37.7s | ~135s | 112 | 100.2s | 55.4s |
+| 5000 | 40.5s | 136.2s | — | 116.8s | 58.5s |
+| **0, one batch (now the default)** | **4.9s** | **~104s** | **8** | 136.4s | 91.5s |
+
+**The lever is binary, which is the part worth remembering.** Five batches behave like twenty; only
+one batch wins. `QSortFilterProxyModel` keeps its mapping sorted, so every insert after the first
+re-maps the rows already present — the cost is a function of what is already loaded, and the last
+batch dominates however many there are. Splitting the work does not divide it.
+
+The hung figures come from `IsHungAppWindow`, the function Explorer itself uses to decide whether
+to paint "(Not Responding)", polled from a second process while the application starts.
+✅ **Verified**. **The window is already reported as not responding at the shipped default** — for
+100 seconds, with one unbroken 55-second stretch. One batch trades that for a longer single freeze
+in exchange for 31 seconds off the total. Neither value clears the bar, because the cause is not
+the batch size: it is the per-comparison date parse in the sort key (§14).
+
+A `misc/gui_smoke.py` assertion now covers the new default and its round trip, including that 0
+stores and reloads rather than being read back as "never configured" — it is both the default and
+the no-limit sentinel, so a widget that failed to restore it would silently re-batch.
+
+### Measured and rejected: suppressing the re-search
+
+The obvious companion change was to skip the per-batch re-search during startup, gating
+`SortFilterModel.refresh` on a startup flag and searching every view once when it ends. It was
+implemented and measured, and it is **worse** at both batch sizes. ✅ **Verified**:
+
+| Configuration | Gallery load, two runs |
+|---------------|------------------------|
+| limit 1000, unchanged | 39.3s, 36.1s |
+| limit 1000, re-search suppressed | 54.5s, 56.6s |
+| limit 0, unchanged | 4.8s, 5.0s |
+| limit 0, re-search suppressed | 5.8s, 5.9s |
+
+⚠️ **Unverified** as an explanation, but the shape suggests the incremental invalidations are
+doing useful work: a proxy that is never invalidated during the load faces a larger, costlier
+single re-map at the end. The change was reverted and nothing of it ships.
+
+---
+
+## 13. What S7 changed: the models are filled from the thread that owns them
+
+`fetch_galleries` called `insertRows` on every registered view from the `DatabaseStartup` thread,
+and `startup` called `_increment_paint_level`, which calls `update()` on a widget, from the same
+place. Qt allows neither. `DatabaseStartup` now emits `BATCH_READY` and `PAINT_LEVEL`, `AppWindow`
+receives both, and `gallerydb` holds no reference to a view, a model or a widget.
+
+### It costs nothing, and it fixes nothing
+
+Four runs of each, alternating, on the development database with the startup scan and the
+watchdog monitor disabled. ✅ **Verified**.
+
+| Filled from | Startup, four phases summed | Window not responding |
+|-------------|----------------------------:|----------------------:|
+| the loader thread (as it was) | 127.2, 126.9, 128.3, 129.8s — **mean 128.0s** | 114.8, 115.2, 115.5, 118.2s |
+| the GUI thread (as it is) | 129.3, 128.4, 129.0, 128.4s — **mean 128.8s** | 113.8, 113.0, 113.5, 113.0s |
+
+**0.6% apart on a band under 3s wide**, and the freeze is unbroken from end to end under both.
+Correctness was the whole of what this bought.
+
+The claim S7 was opened on — that the cross-thread mutation is why the window hangs — does not
+survive its own arithmetic, which was available before any of this ran: §12 measured the gallery
+phase at 4.9s and the unbroken freeze at 91.5s, and model mutation happens nowhere else.
+
+### The gallery phase's timing line is no longer the gate
+
+The loader now emits the batch and returns, so the `Loading galleries` stopwatch stops before the
+GUI thread has inserted anything. That work does not disappear, it lands in whichever phase is
+running when the event is delivered:
+
+| Filled from | galleries | chapters | tags |
+|-------------|----------:|---------:|-----:|
+| the loader thread | ~5.3s | 6.9–10.1s | 112.9–117.4s |
+| the GUI thread | ~5.4s | 89.8–102.2s | 20.7–33.7s |
+
+Identical totals, and the model work moves from the tag phase to the chapter phase. **Compare the
+sum of the four phases across this change, never one line.** §7's "every phase's gate is the
+`TIMING galleries` line" holds only for the phases that ran before S7.
+
+### What now covers it
+
+`misc/app_smoke.py` seeds its temporary database with galleries in two views and records the
+thread each `insertRows` really ran on. Before S7 there was no coverage of `DatabaseStartup` of
+any kind: nothing imports it, and the harness built its window against an empty database, so the
+batch loop never ran a single iteration. The assertion fails against the old arrangement, naming
+the loader thread, which is the only reason it is worth having.
+
+---
+
+## 14. What S8 found: the sort key parses a date on every comparison
+
+Every figure below is the running application on Qt 6.11.2 against the development database, with
+the startup scan and the watchdog monitor off and `db startup fetch limit = 0` pinned, measured
+with `misc/measure_startup.py`. ✅ **Verified** unless tagged otherwise.
+
+### The freeze is the chapter phase, exactly
+
+`measure_startup.py` now prints a timeline per run. Three shipped runs agree to within a second:
+
+```
+2.0 window | 6.8 galleries done | hung 11.8-124.2 | 124.5 chapters done | 129.2 tags done | 129.2 hashes done
+```
+
+The window is reported hung five seconds after the gallery phase ends — `IsHungAppWindow`'s own
+threshold — and recovers at the moment the chapter line lands. The tag phase takes 5s and sits
+wholly outside it. The S8 entry's first lead, the tag phase's 20,447 round trips, described the
+arrangement before S7.
+
+### It is a Qt6 regression, and PyQt5 carries a small version of it
+
+The prep branch in a git worktree with its own PyQt5 venv, a copy of the same database, thumbnails
+and settings, alternated with the shipped build:
+
+| Binding | Total | Hung total | Longest stretch |
+|---------|------:|-----------:|----------------:|
+| PyQt5 5.15.11 / Qt 5.15.2 | 23.5–25.9s | 9.2–10.5s | 6.8–8.2s |
+| PyQt6 6.11.0 / Qt 6.11.2 | 126.5–130.2s | 111.5–115.0s | 111.5–115.0s |
+
+PyQt5 also crosses the not-responding line, for about seven seconds inside its tag phase, which is
+where the prep branch's cross-thread insert lands.
+
+### The GUI thread is computing, and the database thread is waiting for it
+
+A `QApplication.notify` wrapper and a once-a-second sampler reading `GetThreadTimes` per thread,
+behind an environment switch, reverted afterwards. The traced run was 113.8s hung, inside the band.
+
+- **GUI thread: 96–102% CPU for the whole freeze**, its top Python frame `gallery.py:576` or `:577`
+  — the `DATE_ADDED_ROLE` branch of `GalleryModel.data`, `QDateTime.fromString` and its return.
+- **Method Queue Thread: 0% CPU for the whole freeze**, parked on `gallerydb.py:640`,
+  `cursor.fetchall()` over the chapters. `sqlite3` releases the GIL while it steps and needs it
+  back per row, so the thread cannot finish while the GUI thread holds it. The chapter phase is a
+  victim of the freeze, not its cause.
+- One top-level dispatch covers the whole load: a queued meta-call to a plain `QObject` — PyQt's
+  lambda-proxy receiver — lasting 129.1s with 119.7s of GUI-thread CPU and 5,149 nested events.
+
+That a thread waiting on the GIL shows no CPU time was checked rather than assumed: a thread
+releasing and retaking the GIL in a loop runs at 99% alone and at 1% beside one CPU-bound thread,
+completing 440× fewer cycles.
+
+### The per-call price
+
+On this library's own `date_added` strings, 20,000 calls, no application code:
+
+| Call | Qt 5.15.2 | Qt 6.11.2 | Ratio |
+|------|----------:|----------:|------:|
+| `QDateTime.fromString(s, 'yyyy-MM-dd HH:mm:ss')` | 15.3 µs | **188.2 µs** | 12.3× |
+| `QDateTime.toMSecsSinceEpoch()` | 0.46 µs | 4.56 µs | 9.9× |
+| `QDateTime <` | 0.19 µs | 0.20 µs | — |
+
+The price does not depend on a `QApplication` existing, nor on the real dates against the bench's
+synthetic ones: 182–189 µs in all four combinations. At 557,856 calls per startup (§5), 188 µs is
+about 105s and 15 µs about 8.5s — the Qt6 freeze and PyQt5's tag-phase hang respectively.
+### The call's own bisection lands on Qt 6.7
+
+The same measurement under each runtime, both halves pinned in throwaway venvs (PyQt6 6.6.1 on Qt
+6.6.3, PyQt6 6.7.0 on Qt 6.7.0), three repeats interleaved, 5.15.2 and 6.11.2 re-measured
+alongside as controls:
+
+| Qt runtime | `fromString` | step | `toMSecsSinceEpoch` |
+|------------|-------------:|-----:|--------------------:|
+| 5.15.2 | 15.8–18.9 µs | — | 0.45 µs |
+| 6.6.3 | 77.4–85.8 µs | ~4.7× | 0.44 µs |
+| **6.7.0** | **200.3–202.0 µs** | **~2.5×** | **4.5 µs** |
+| 6.11.2 | 194.7–204.5 µs | flat | 4.5–4.7 µs |
+
+**The 6.6 → 6.7 step is 2.5× on this one call**, against 2.4× on the gallery load (§5) and about
+2.1× per proxy meta-call (§11). `toMSecsSinceEpoch` on a local-time value jumps 10× at exactly the
+same release and not before it. So the Qt 6.7 regression and the freeze are one mechanism: the
+date parse inside the sort key. Two things it does **not** explain: the call is flat from 6.7 to
+6.11, so the application's further slide over that range (about 38s to about 47s, §5) has another
+cause; and Qt 6.6.3 already pays about 5× the Qt5 price.
+
+⚠️ **Unverified** as an attribution inside Qt: the parsed values carry `TimeSpec.LocalTime`, and the
+conversion to epoch time jumping 10× at the same release points at local-time zone resolution, but
+no Qt source or changelog was read. ⚠️ **Unverified** too: at about 82 µs, Qt 6.6.3 would still
+spend roughly 45s of GUI thread in the sort, so pinning 6.6 would very likely not clear the
+not-responding bar. The application was not launched under it in S8.
+
+### Proven by removal
+
+`DATE_ADDED_ROLE` answering an integer built from the stored `datetime`'s fields — the same order,
+no `QDateTime` — alternated with the shipped build, three runs each:
+
+| Configuration | Total | Hung total | Longest stretch |
+|---------------|------:|-----------:|----------------:|
+| shipped | 128.3s | 112.8s | 112.8s |
+| **integer sort key** | **13.2s** | **0.0s** | **0.0s** |
+
+The chapter phase falls from about 118s to 3.6s and nothing else moves. The sort is the only
+reader of that role, so the variant changed nothing but the key's cost. This was a measurement
+patch, not the fix: S9 designs that, and the other two date roles use the same pattern.
+
+### Why §5's bench said otherwise
+
+`misc/qt_modelview_bench.py` prints its `TIMING` line from a `QTimer.singleShot(0)` queued when the
+loader finishes, which runs before the GUI thread has worked through the sort the inserts
+scheduled. Timed from outside the process:
+
+| Bench, 19,974 rows | PyQt5 | PyQt6 |
+|--------------------|------:|------:|
+| one batch | 36.7s | 289.6s |
+| batch 1000 | 44.3s | 343.0s |
+
+All four printed a `TIMING` loop of 4.3–5.9s. The bench reproduces the regression at about 8×;
+what it cannot do is report it. ⚠️ **Unverified** why its date role costs roughly three times the
+application's in absolute terms — it issues 1.5–1.8 million date-role calls to the application's
+0.56 million, which accounts for most of it.
+
+---
+
+## 15. What S9 changed: one sort, whoever asks for it
+
+### Two sort paths on one proxy
+
+Each tab's grid and table views share a single `SortFilterModel`. Probed in the running
+`AppWindow` on Qt 6.11.2 before any change, with three galleries given distinct values.
+✅ **Verified**:
+
+- **The sort menu** set a role per sort and sorted column 0. Every date role parsed a `QDateTime`.
+- **A table header click** went through Qt's own `setSortingEnabled` path, which keeps the proxy's
+  current role and changes only the column and direction. Under the shipped date sort, clicking
+  `Title` sorted by date; under the title sort, clicking `Date Added` or `Published` sorted on the
+  column's display value — a `QDateTime` built with `fromString` per comparison, which is S8's
+  freeze again, and `Published` compared the `'No date set'` string against dates.
+- A header click changed neither the saved sort, nor the menu's check or text; `Asc/Desc` reset the
+  column to 0 behind a stale indicator; the indicator disagreed with the proxy from startup on.
+- A `None` sort value sorts after every dated row ascending and before them descending, identically
+  under Qt 5.15.2 and 6.11.2 — not a regression, but it opened `Date Published` and `Last Read`,
+  newest first, on thousands of undated galleries.
+
+### The shape of the fix
+
+| Piece | What it does |
+|-------|--------------|
+| `version/sortkeys.py` | The vocabulary: fifteen names, each a label, a value getter, a starting direction and whether it reads chapters or tags loaded after the startup sort. Qt-free; `tests/test_sort_keys.py` covers it. |
+| `GalleryModel.SORT_KEY_ROLE` | Answers the active sort's value — a `str` or an `int`, so Qt's own locale-aware string comparison is unchanged. A missing date is an order-aware sentinel that sorts last. The six sort-only roles are gone. |
+| `SortFilterModel.set_sort` | The only way to choose a sort. |
+| `GalleryModel.hold_sort_values` | Works each gallery's value out once for the length of one call that sorts, and drops it after, so an edited gallery never compares as it was. Held by `set_sort`, by the search's re-filter and by `insertRows`, which between them are every re-sort the application sets off; holds nest. |
+| `MangaViews` | Routes a header click to `list_view.sort`, moves the indicator on `SORT_CHANGED`, and relays that signal to the window. |
+| `AppWindow.SORT_CHANGED` | The relay the sort menu listens to, so a view created after the toolbar moves it too; the connections end with the window. |
+| `AppWindow._remember_sort` | Stores the sort and its direction together under `General / current sort` and `current sort order`, or neither for a sort reading chapters or tags; `sortkeys.saved_descending` reads the pair back. |
+
+Two Qt behaviours the fix is shaped around, both ✅ **Verified** by assertions that fail when the
+workaround is removed: `QSortFilterProxyModel.sort` returns early on an unchanged column and order,
+which is all a change of sort name looks like; and resetting with `sort(-1)` to get past that
+reorders galleries that compare equal into database order, where the old code kept the order they
+were already shown in. `set_sort` therefore sorts the other way round first — two stable passes.
+
+### Measured
+
+**Order**, on both tabs of a copy of the development database through the real window, every menu
+sort in both directions, compared by value at every position against the code before S9: identical
+for every sort. The only change is the one chosen — 7,017 and 13,196 undated `Last Read` galleries
+and 13,121 undated `Date Published` ones now last, where descending had put them first.
+
+**Speed of one sort**, same harness:
+
+| Sort | Before, library (7,093) | Before, inbox (13,198) | After, either |
+|------|------------------------:|-----------------------:|--------------:|
+| `date_added` | 34.7–80.1s | 77.7–159.7s | 0.60–1.63s |
+| `pub_date` | 13.7–60.3s | 3.5–7.8s | 0.25–0.82s |
+| `title` | 0.00–0.27s | 0.00–0.68s | 0.26–1.17s |
+| `tags` | not a sort before | not a sort before | 0.37–1.03s |
+| slowest of all 60, two runs | — | — | 1.74s, 1.91s |
+
+**A cleared search**, which is Qt placing every returning gallery by comparing rather than a sort
+anyone chose, and so was not covered by the table above until a review asked. A proxy probe puts it
+at about 19 value requests per returning row, and an insert at about 42 per inserted row, both
+inside the one call. A search matching nothing, then cleared, same harness:
+
+| Sort | Library, before the holds | Library, after | Inbox, before | Inbox, after |
+|------|--------------------------:|---------------:|--------------:|-------------:|
+| `tags` | **3.10s** | 1.17s | 1.45s | 1.06s |
+| `page_count` | 1.11s | 0.97s | **2.15s** | 1.74s |
+| `date_added` | 0.90s | 0.76s | 1.72s | 1.53s |
+| `title` | 1.05s | 0.97s | 1.89s | 1.73s |
+
+Most of what remains is the re-filter's own per-gallery Python, not sort values. ⚠️ **Unverified**
+past 13,198 rows: no tab of the development library is larger, and that cost grows with the tab.
+
+**Startup**, interleaved against a worktree at the previous commit, three runs each:
+
+| Saved sort | Before: total / hung | After: total / hung |
+|------------|---------------------:|--------------------:|
+| `date_added` | 133.1–145.6s / 111.8–123.5s | **13.1–13.8s / 0.0s** |
+| `title` | 19.9–20.1s / 0.0s | 14.0–14.4s / 0.0s |
+
+⚠️ **Unverified** why the control tree's gallery and tag phases each ran about 3s longer in both
+series. The sort is not on those phases' threads, so the `title` row is read as "not slower" rather
+than as a gain.
+
+### What covers it
+
+`misc/app_smoke.py` drives the menu's real actions and real mouse clicks on the header, and asserts
+the order, the menu's check and text, the indicator and the saved sort after each; that a gallery
+with no date is last in both directions; that galleries comparing equal keep their order; that the
+Duplicate view is untouched; and that no sort parses a single `QDateTime`, counted from inside the
+gallery module. It also asserts that a cleared search and an inserted gallery each work out every
+sort value once; that a header clicked twice is stored as that sort descending while a tags sort is
+not stored; and that a view created after the toolbar still moves the menu. Ten deliberate breaks —
+the date parse restored, the early return unhandled, Qt's header sorting re-enabled, the empty-date
+sentinel dropped, a reset to database order, either hold removed, the direction or the late-data
+check left out of the save, and the menu wired only to the views present when it was built — are
+each caught by the assertion written for them.
+
+---
+
+## 16. Closing: the real library, and what is left
+
+### Outcome on the real library
+
+PyInstaller builds of both branches, run by the user against the real ~20,000-gallery library
+through one shared database, on 2026-09-13. The phase lines are ✅ **Verified** — read out of each
+build's own `happypanda.log`. The whole-startup figures are the user's own timing and are not in
+any log.
+
+| Build | galleries | chapters | tags | hashes | phases summed | whole startup |
+|-------|----------:|---------:|-----:|-------:|--------------:|--------------:|
+| `feat/qt6-migration-prep`, PyQt5 | 7.4s | 1.5s | 20.8s | 0.1s | 29.8s | about 39s |
+| `feat/qt6-migration`, PyQt6 | 7.7s | 3.7s | 8.4s | 0.1s | **19.9s** | **about 20s** |
+
+The Qt6 lead is not Qt6 being quicker. The Qt5 build pays its sort — one `QDateTime.fromString` per
+comparison at about 15 µs, inserted from the loader into the tag phase — while S6 and S9 removed
+that work from the Qt6 build altogether. Both fixes are binding-neutral.
+
+### Where the remaining twenty seconds go
+
+What is left is Python and SQLite, and would cost the same under either binding. ⚠️ **Unverified**
+as to what fixing each would save; each is a ROADMAP entry with a measurement to take first.
+
+1. **Tags, 8.4s.** `DatabaseStartup.fetch_tags` makes one blocking round trip per gallery through
+   the method queue to `TagDB.get_gallery_tags` — about 20,000 of them. Chapters already load with
+   a single query over the whole table.
+2. **Galleries, 7.7s.** `GalleryDB.gen_galleries` runs `ListDB.query_gallery` — a `SELECT` per
+   gallery against `series_list_map`, which held no rows in the development database (§2) — and
+   `os.path.exists` on every path.
+3. **Chapters, 3.7s against 1.5s under Qt5.** One query, so the gap is most likely the S8 pattern at
+   small scale: the database thread waiting on the GIL while the GUI thread inserts and sorts. It
+   may shrink on its own once 1 and 2 are gone.
+
+### Left open, blocking nothing
+
+- **Switching Library and Favorites re-runs the search over the whole tab** (§10). A cleared search
+  measured 1.5–1.7s on a 13,198-gallery tab in §15, and the cost grows with the tab.
+- **Table view date cells** still build a `QDateTime` per painted cell, which is bounded by the rows
+  on screen rather than by the library.
+- **The 6.7 → 6.11 slide** (§5) was measured before S6–S9 and never again; the date call itself is
+  flat across that range (§14).
+- **`misc/qt_modelview_bench.py`'s `TIMING` line** still prints before the sort it is meant to time
+  (§14); the doc warns, the tool does not.
+- **§8 question 1**, the commit inside Qt 6.7 — of interest, no longer needed.
+
+---
+
+## Document History
+
+* **v1.0** - Initial report
+* **v1.1** - Phases S0-S3 executed. The regression is localised to the model/view insert path:
+  removing it drops PyQt6 to the PyQt5 floor. Monitor, download manager, QThread shape, Python
+  callback volume and dynamic sort/filter all excluded. Phase S4 opened.
+* **v1.2** - Phase S4 executed. The missing model/view harness rung was built and committed, and is
+  binding-neutral with bit-identical callback counts, which excludes the insert path itself and
+  per-call sip conversion. Bisecting the binding names the release: the regression enters at Qt
+  6.7.0 and 6.6.1 is within ~1.3x of PyQt5. Phase S5 opened for the native profile. §10 records the
+  unrelated tab-switch cost.
+* **v1.3** - Phase S5 executed. py-spy cannot profile Python 3.14, so the GUI thread was profiled
+  at Qt granularity instead: the cost is queued meta-call delivery, the same 112 invalidations of
+  the sort/filter proxy under both Qt versions at about twice the cost each. Nine more subtractions
+  excluded, including the finding that detaching both views recovers only 15%. §11 carries the
+  result and the untested candidates; phase S6 opened to cut the meta-call count.
+* **v1.4** - Phase S6 executed. The startup fetch limit now defaults to one batch: 112 proxy
+  meta-calls become 8, the gallery load about 38s becomes about 5s and the whole startup about 135s
+  becomes about 104s, on any Qt 6. The lever is binary - five batches behave like twenty.
+  Suppressing the per-batch re-search was measured, found worse, and reverted. §12 carries it, and
+  records that the window is already reported as not responding at the old default; phase S7 opened
+  for the cross-thread model mutation that causes it.
+* **v1.5** - §8 gained the measurement protocol every figure here was produced under, which was
+  scattered across the result sections and nowhere stated, plus rebuild recipes for the
+  hung-window probe and the GUI-thread event profiler.
+* **v1.6** - Phase S7 executed. The startup fills the models from the GUI thread and `gallerydb`
+  no longer references a widget, which measures free - 128.8s against 128.0s - and leaves the
+  window unresponsive for the whole load exactly as before, so the freeze this phase was opened
+  on has no named cause and S8 replaces it. Detaching the proxy for the insert was measured and
+  dropped. §13 carries it; §8 gained the three traps that cost this session its first two
+  measurement series, and the first automated coverage `DatabaseStartup` has ever had.
+* **v1.7** - Phase S8 executed. A phase timeline puts the freeze exactly over the chapter phase; a
+  PyQt5 baseline shows it is a Qt6 regression (about 10s hung against 113s); a GUI-thread trace
+  finds the GUI thread computing in the `DATE_ADDED_ROLE` sort key while the database thread waits
+  on the GIL; `QDateTime.fromString` measures 12× slower under Qt 6.11; and an integer sort key
+  takes the window from 112.8s hung to none and the startup from 128s to 13s. The model/view
+  bench's "does not reproduce" is withdrawn — its `TIMING` line prints before the sort, and by the
+  wall clock it reproduces at about 8×. §14 carries it; §5, §9 and §12 are corrected; S9 opened.
+* **v1.8** - `QDateTime.fromString` priced under Qt 6.6.3 and 6.7.0: a 2.5× step at 6.7.0, the
+  release the application's own bisection named, with local-time epoch conversion jumping 10× at
+  the same release, and flat from there to 6.11. The Qt 6.7 regression and the freeze are one
+  mechanism; §14 and §8 carry it.
+* **v1.9** - Phase S9 executed, widened from the date roles after a probe of the real window found
+  the table header sorting by the previous sort's role and able to trigger the same parse. One sort
+  vocabulary for the menu, the headers and the saved sort; startup sorted by date added from
+  133–146s with 112–124s hung to about 13s with none; every chosen sort and cleared search under 2s,
+  the latter held after a review found Qt's own re-sorts outside the cache; the direction remembered
+  with the sort; the menu following views made after it; order identical by
+  value except undated galleries now last. §15 carries it.
+* **v1.10** - Closed as resolved. §16 records both branches' PyInstaller builds on the real library
+  from their own logs — 19.9s of load phases under PyQt6 against 29.8s under PyQt5 — attributes the
+  gap to S6 and S9 rather than to Qt6, and splits the remaining time into the per-gallery tag and
+  gallery queries and the chapter phase's GIL wait. The optimisations and the smaller leftovers move
+  to `ROADMAP.md`; §7's extension roadmap points there, and pinning Qt 6.6 is set aside.
+
+---
+
+**Last Updated:** 2026-09-13  
+**Next Review:** when a startup optimisation from `ROADMAP.md` is picked up — §8's protocol and §16's phase figures are its baseline

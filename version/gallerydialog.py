@@ -2,11 +2,11 @@ import os, threading, logging
 from datetime import datetime
 from typing import Any
 
-from PyQt5.QtWidgets import (QFrame, QGridLayout, QLayout, QStyle, QWidget, QVBoxLayout, QGroupBox,
+from PyQt6.QtWidgets import (QFrame, QGridLayout, QLayout, QStyle, QWidget, QVBoxLayout, QGroupBox,
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, QProgressBar, QTextEdit, QComboBox,
                              QDateEdit, QFileDialog, QMessageBox, QCheckBox, QSizePolicy, QSpinBox)
-from PyQt5.QtCore import (QPoint, QRect, Qt, QDate, QThread, QTimer, QObject)
-from PyQt5.QtGui import QShowEvent
+from PyQt6.QtCore import (QPoint, QRect, Qt, QDate, QThread, QTimer, QObject)
+from PyQt6.QtGui import QShowEvent
 
 import app
 import app_constants

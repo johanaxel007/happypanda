@@ -54,6 +54,19 @@ QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
     min-height: 7em;
 }
 
+/* These surfaces are the colour of the default handle above, which reads there as empty space. */
+ArrowWindow QScrollBar::handle, BasePopup QScrollBar::handle {
+    background: #7A818A;
+}
+
+ArrowWindow QScrollBar::handle:hover, BasePopup QScrollBar::handle:hover {
+    background: #9AA1AA;
+}
+
+ArrowWindow QScrollBar::handle:pressed, BasePopup QScrollBar::handle:pressed {
+    background: #d64933;
+}
+
 QScrollBar::add-line:vertical {
     background: #2A2D31;
     height: 0px;

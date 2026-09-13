@@ -19,12 +19,12 @@ import requests
 import traceback
 import time
 
-from PyQt5.QtCore import Qt, QSize, pyqtSignal, QThread, QTimer, QObject
-from PyQt5.QtGui import QIcon, QKeySequence
-from PyQt5.QtWidgets import (QMainWindow, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
-                             QToolBar, QSizePolicy, QMenu, QAction, QLineEdit,
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QThread, QTimer, QObject
+from PyQt6.QtGui import QIcon, QKeySequence, QAction, QShortcut
+from PyQt6.QtWidgets import (QMainWindow, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
+                             QToolBar, QSizePolicy, QMenu, QLineEdit,
                              QMessageBox, QFileDialog, QCompleter, QToolButton,
-                             QSystemTrayIcon, QShortcut, QGraphicsBlurEffect,
+                             QSystemTrayIcon, QGraphicsBlurEffect,
                              QTableWidget, QTableWidgetItem)
 
 import app_constants
@@ -41,6 +41,7 @@ import utils
 import misc_db
 import database
 import betterversions
+import sortkeys
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -54,10 +55,12 @@ class AppWindow(QMainWindow):
 
     move_listener = pyqtSignal()
     login_check_invoker = pyqtSignal()
-    db_startup_invoker = pyqtSignal(list)
+    db_startup_invoker = pyqtSignal()
     duplicate_check_invoker = pyqtSignal(gallery.GalleryModel)
     admin_db_method_invoker = pyqtSignal(object)
     db_activity_checker = pyqtSignal()
+    # every gallery view's sort, relayed so a listener also hears views created after it connected
+    SORT_CHANGED = pyqtSignal(str, bool)
     graphics_blur = QGraphicsBlurEffect()
 
     def __init__(self, disable_excepthook=False):
@@ -74,6 +77,8 @@ class AppWindow(QMainWindow):
         self._db_startup_thread.start()
         self.db_startup.moveToThread(self._db_startup_thread)
         self.db_startup.DONE.connect(lambda: self.scan_for_new_galleries() if app_constants.LOOK_NEW_GALLERY_STARTUP else None)
+        self.db_startup.BATCH_READY.connect(self._insert_startup_batch)
+        self.db_startup.PAINT_LEVEL.connect(self._startup_paint_level)
         self.db_startup_invoker.connect(self.db_startup.startup)
         self.setAcceptDrops(True)
         self.initUI()
@@ -158,8 +163,7 @@ class AppWindow(QMainWindow):
             settings.save()
 
         def done(status=True):
-            self.db_startup_invoker.emit(gallery.MangaViews.manga_views)
-            #self.db_startup.startup()
+            self.db_startup_invoker.emit()
 
             if app_constants.FIRST_TIME_LEVEL != app_constants.INTERNAL_LEVEL:
                 normalize_first_time()
@@ -396,6 +400,23 @@ class AppWindow(QMainWindow):
             metadata_spinner.show()
         else:
             self.notif_bubble.update_text("Oops!", "Auto metadata fetcher is already running...")
+
+    def _insert_startup_batch(self, galleries):
+        """Puts one batch of galleries read at startup into the views that hold its kind.
+
+        A model may only be mutated from the thread that owns it, so a batch reaches the views
+        as a signal and the insert happens here. The row count is read at insert time rather
+        than travelling with the batch, so a batch waiting its turn cannot carry a stale one.
+        """
+        for view in gallery.MangaViews.manga_views:
+            view_galleries = [g for g in galleries if g.view == view.view_type]
+            view.gallery_model._gallery_to_add = view_galleries
+            view.gallery_model.insertRows(view.gallery_model.rowCount(), len(view_galleries))
+
+    def _startup_paint_level(self):
+        """Lets the grid draw one more layer of what a finished startup phase has loaded."""
+        for view in gallery.MangaViews.manga_views:
+            view.list_view.manga_delegate._increment_paint_level()
 
     def _prune_better_versions(self):
         """Drops review rows whose gallery has left the library.
@@ -914,9 +935,10 @@ class AppWindow(QMainWindow):
         self.toolbar.addWidget(sort_action)
 
         def set_new_sort(s):
-            sort_menu.set_toolbutton_text()
             self.current_manga_view.list_view.sort(s)
         sort_menu.new_sort.connect(set_new_sort)
+        # a header click sorts too, so the menu follows the sort itself rather than its own picks
+        self.SORT_CHANGED.connect(lambda *_: sort_menu.update_toolbutton_text())
 
         spacer_tool4 = QWidget() 
         spacer_tool4.setFixedSize(QSize(5, 1))
@@ -1341,6 +1363,20 @@ class AppWindow(QMainWindow):
     def showEvent(self, event):
         return super().showEvent(event)
 
+    def _remember_sort(self):
+        """Stores the library's sort and its direction for the next start, together or not at all.
+
+        A sort reading chapters or tags is left out: the next startup would sort by it before
+        either is loaded.
+        """
+        name = self.manga_list_view.current_sort
+        if sortkeys.KEYS[name].late:
+            return
+        order = 'desc' if self.manga_list_view.sort_model.sortOrder() == Qt.SortOrder.DescendingOrder else 'asc'
+        app_constants.CURRENT_SORT, app_constants.CURRENT_SORT_ORDER = name, order
+        settings.set(name, 'General', 'current sort')
+        settings.set(order, 'General', 'current sort order')
+
     def cleanup_exit(self):
         self.system_tray.hide()
         # watchers
@@ -1350,8 +1386,7 @@ class AppWindow(QMainWindow):
             pass
 
         # settings
-        if self.manga_list_view.current_sort != 'page_count':
-            settings.set(self.manga_list_view.current_sort, 'General', 'current sort')
+        self._remember_sort()
         settings.set(app_constants.IGNORE_PATHS, 'Application', 'ignore paths')
         if not self.isMaximized():
             settings.win_save(self, 'AppWindow')

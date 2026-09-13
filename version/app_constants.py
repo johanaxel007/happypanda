@@ -75,7 +75,6 @@ user_stylesheet_path = ""
 INTERNAL_LEVEL = 8
 FIRST_TIME_LEVEL = get(INTERNAL_LEVEL, 'Application', 'first time level', int)
 UPDATE_VERSION = get('0.30', 'Application', 'version', str)
-FORCE_HIGH_DPI_SUPPORT = get(False, 'Advanced', 'force high dpi support', bool)
 
 # sizes
 MAIN_W = 1061 # main window
@@ -226,7 +225,9 @@ SEND_FILES_TO_TRASH = get(True, 'Application', 'send files to trash', bool)
 SHOW_SIDEBAR_WIDGET = get(False, 'Application', 'show sidebar widget', bool)
 ENABLE_NOTIFICATIONS = get(True, 'Application', 'enable notifications', bool)
 ALWAYS_DROP_TO_INBOX = get(False, 'Application', 'always send to inbox', bool)
-DATABASE_STARTUP_FETCH_LIMIT = get(1000, 'Application', 'db startup fetch limit', int)
+# 0 is one batch for the whole library. The sorted proxy re-maps the rows it already holds on
+# every insert, so a second batch pays for the first and splitting the work does not divide it.
+DATABASE_STARTUP_FETCH_LIMIT = get(0, 'Application', 'db startup fetch limit', int)
 
 # ADVANCED
 GALLERY_DATA_FIX_REGEX = get("", 'Advanced', 'gallery data fix regex', str)
@@ -299,6 +300,7 @@ POPUP_HEIGHT = get(300, 'Visual', 'popup.h', int)
 KEEP_ADDED_GALLERIES = get(True, 'Application', 'keep added galleries', bool)
 GALLERY_METAFILE_KEYWORDS = ('info.json', 'info.txt')
 CURRENT_SORT = get('title', 'General', 'current sort')
+CURRENT_SORT_ORDER = get('', 'General', 'current sort order')  # 'asc' or 'desc'; see sortkeys.saved_descending
 HIGH_QUALITY_THUMBS = get(False, 'Visual', 'high quality thumbs', bool)
 DISPLAY_RATING = get(True, 'Visual', 'display gallery rating', bool)
 DISPLAY_GALLERY_TYPE = get(False, 'Visual', 'display gallery type', bool) if not sys.platform.startswith('darwin') else False
