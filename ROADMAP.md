@@ -201,12 +201,12 @@ batch cuts them from 112 to 8 — the gallery load drops from about 38s to about
 startup from about 135s to about 104s, on any Qt 6. That has shipped: the startup fetch limit now
 defaults to no limit. Nothing is pinned.
 
-What is left is **responsiveness**, and it now has no named cause. The models were being filled
-from a worker thread while the GUI thread owned them; they are filled from the GUI thread now,
-which is what Qt requires, and it costs 0.6% of total startup and leaves Windows reporting the
-window as not responding for the whole load exactly as before. So that was a correctness fix and
-nothing more. Thirty candidate causes are excluded, each with the measurement that excluded it,
-and the ones still untested are listed so a later session resumes rather than restarts. See
+What is left is **responsiveness**, and it now has a named and proven cause. The proxy sorts the
+library on the date it was added, and its sort key re-parses that date with
+`QDateTime.fromString` on every comparison — a call that costs **12× more under Qt 6.11 than under
+Qt 5.15**. The GUI thread spends the whole ~113s freeze inside it. Swapping in an integer key as a
+measurement took the window from 112.8s reported not responding to none, and the startup from
+128s to 13s, faster than PyQt5. The fix is its own phase and has not shipped. See
 [`Documentation/Design/QT6_STARTUP_REGRESSION.md`](Documentation/Design/QT6_STARTUP_REGRESSION.md)
 — read it before re-testing anything, and note the `feat/qt6-migration-prep` branch remains a
 clean PyQt5 fallback that is unaffected.
