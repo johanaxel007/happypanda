@@ -1,6 +1,6 @@
 # PyQt6 Startup Performance Regression
 
-**Version:** 1.7  
+**Version:** 1.8  
 **Date:** 2026-09-13  
 **Status:** In progress — S0–S8 complete; the freeze is named and proven, and S9 is open to fix it.  
 **Target:** PyQt6 6.11.0 / Qt 6.11.2 on Python 3.14.7 (baseline: PyQt5 5.15.11 / Qt 5.15.2)
@@ -44,6 +44,8 @@
 > by the wall clock rather than by its own `TIMING` line, which prints before the sort runs (§14).
 
 **Audited:** 2026-09-10, at commit `7ba4813` (branch `feat/qt6-migration`).
+**Amended:** 2026-09-13 — the date parse priced under Qt 6.6.3 and 6.7.0: it carries the 6.7 step
+itself (§14).
 **Amended:** 2026-09-13 — phase S8 executed. A timeline, a PyQt5 baseline, a GUI-thread trace and
 one subtraction name the freeze as the sort key's per-comparison `QDateTime.fromString`, and
 overturn §5's "does not reproduce". §14 carries it, §5 and §9 are corrected in place, S9 is opened.
@@ -443,8 +445,9 @@ deliverable is a named subsystem, which then justifies its own design work.
    v6.6.3 and v6.7.0. Also unexplained: why 6.6 is *faster* than 6.5, and whether the further
    slide from 6.7 to 6.11 shares this cause. **S8 narrows it (§14):** the work inside those
    meta-calls is a sort whose key calls `QDateTime.fromString`, which is 12× slower under 6.11 than
-   5.15. Pricing that one call under 6.5.3, 6.6.3 and 6.7.0 needs no application launch and would
-   say whether it is the 6.7 step. ⚠️ **Unverified** — not yet run.
+   5.15. **Priced under 6.6.3 and 6.7.0, it is the 6.7 step**: 2.5× on the call, with
+   `toMSecsSinceEpoch` on a local-time value jumping 10× at the same release (§14). Which commit
+   inside Qt did it is still open, and the 6.7 → 6.11 slide is not this call, which is flat there.
 2. **Does the ratio scale with library size?** Every measurement here is against one 19,974-gallery
    database. A smaller library might show it proportionally or not at all, which would itself be a
    clue. ⚠️ **Unverified** — untested in either direction.
@@ -825,8 +828,31 @@ On this library's own `date_added` strings, 20,000 calls, no application code:
 The price does not depend on a `QApplication` existing, nor on the real dates against the bench's
 synthetic ones: 182–189 µs in all four combinations. At 557,856 calls per startup (§5), 188 µs is
 about 105s and 15 µs about 8.5s — the Qt6 freeze and PyQt5's tag-phase hang respectively.
-⚠️ **Unverified** as an attribution: the parsed values carry `TimeSpec.LocalTime`, and the size of
-the cost suggests local-time zone resolution, but no Qt source or changelog was read.
+### The call's own bisection lands on Qt 6.7
+
+The same measurement under each runtime, both halves pinned in throwaway venvs (PyQt6 6.6.1 on Qt
+6.6.3, PyQt6 6.7.0 on Qt 6.7.0), three repeats interleaved, 5.15.2 and 6.11.2 re-measured
+alongside as controls:
+
+| Qt runtime | `fromString` | step | `toMSecsSinceEpoch` |
+|------------|-------------:|-----:|--------------------:|
+| 5.15.2 | 15.8–18.9 µs | — | 0.45 µs |
+| 6.6.3 | 77.4–85.8 µs | ~4.7× | 0.44 µs |
+| **6.7.0** | **200.3–202.0 µs** | **~2.5×** | **4.5 µs** |
+| 6.11.2 | 194.7–204.5 µs | flat | 4.5–4.7 µs |
+
+**The 6.6 → 6.7 step is 2.5× on this one call**, against 2.4× on the gallery load (§5) and about
+2.1× per proxy meta-call (§11). `toMSecsSinceEpoch` on a local-time value jumps 10× at exactly the
+same release and not before it. So the Qt 6.7 regression and the freeze are one mechanism: the
+date parse inside the sort key. Two things it does **not** explain: the call is flat from 6.7 to
+6.11, so the application's further slide over that range (about 38s to about 47s, §5) has another
+cause; and Qt 6.6.3 already pays about 5× the Qt5 price.
+
+⚠️ **Unverified** as an attribution inside Qt: the parsed values carry `TimeSpec.LocalTime`, and the
+conversion to epoch time jumping 10× at the same release points at local-time zone resolution, but
+no Qt source or changelog was read. ⚠️ **Unverified** too: at about 82 µs, Qt 6.6.3 would still
+spend roughly 45s of GUI thread in the sort, so pinning 6.6 would very likely not clear the
+not-responding bar. The application was not launched under it in S8.
 
 ### Proven by removal
 
@@ -898,6 +924,10 @@ application's in absolute terms — it issues 1.5–1.8 million date-role calls 
   takes the window from 112.8s hung to none and the startup from 128s to 13s. The model/view
   bench's "does not reproduce" is withdrawn — its `TIMING` line prints before the sort, and by the
   wall clock it reproduces at about 8×. §14 carries it; §5, §9 and §12 are corrected; S9 opened.
+* **v1.8** - `QDateTime.fromString` priced under Qt 6.6.3 and 6.7.0: a 2.5× step at 6.7.0, the
+  release the application's own bisection named, with local-time epoch conversion jumping 10× at
+  the same release, and flat from there to 6.11. The Qt 6.7 regression and the freeze are one
+  mechanism; §14 and §8 carry it.
 
 ---
 
