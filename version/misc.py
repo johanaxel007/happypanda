@@ -36,6 +36,7 @@ import app_constants
 import gallerydb
 import settings
 import betterversions
+import sortkeys
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -255,78 +256,45 @@ class SortMenu(QMenu):
         self.sort_actions = QActionGroup(self)
         asc_desc_act = QAction("Asc/Desc", self)
         asc_desc_act.triggered.connect(self.asc_desc)
-        s_title = self.sort_actions.addAction(QAction("Title", self.sort_actions, checkable=True))
-        s_title.triggered.connect(functools.partial(self.new_sort.emit, 'title'))
-        s_artist = self.sort_actions.addAction(QAction("Author", self.sort_actions, checkable=True))
-        s_artist.triggered.connect(functools.partial(self.new_sort.emit, 'artist'))
-        s_date = self.sort_actions.addAction(QAction("Date Added", self.sort_actions, checkable=True))
-        s_date.triggered.connect(functools.partial(self.new_sort.emit, 'date_added'))
-        s_pub_d = self.sort_actions.addAction(QAction("Date Published", self.sort_actions, checkable=True))
-        s_pub_d.triggered.connect(functools.partial(self.new_sort.emit, 'pub_date'))
-        s_times_read = self.sort_actions.addAction(QAction("Read Count", self.sort_actions, checkable=True))
-        s_times_read.triggered.connect(functools.partial(self.new_sort.emit, 'times_read'))
-        s_last_read = self.sort_actions.addAction(QAction("Last Read", self.sort_actions, checkable=True))
-        s_last_read.triggered.connect(functools.partial(self.new_sort.emit, 'last_read'))
-        s_rating = self.sort_actions.addAction(QAction("Rating", self.sort_actions, checkable=True))
-        s_rating.triggered.connect(functools.partial(self.new_sort.emit, 'rating'))
-        s_page_count = self.sort_actions.addAction(QAction("Page Count", self.sort_actions, checkable=True))
-        s_page_count.triggered.connect(functools.partial(self.new_sort.emit, 'page_count'))
-
         self.addAction(asc_desc_act)
         self.addSeparator()
-        self.addAction(s_artist)
-        self.addAction(s_date)
-        self.addAction(s_pub_d)
-        self.addAction(s_last_read)
-        self.addAction(s_title)
-        self.addAction(s_rating)
-        self.addAction(s_times_read)
-        self.addAction(s_page_count)
+        for name in sortkeys.MENU_SORTS:
+            act = self.sort_actions.addAction(QAction(sortkeys.KEYS[name].label, self.sort_actions, checkable=True))
+            act.setData(name)
+            act.triggered.connect(functools.partial(self.new_sort.emit, name))
+            self.addAction(act)
 
         self.set_current_sort()
 
     def update_toolbutton_text(self):
         self.set_current_sort()
-        self.set_toolbutton_text()
 
     def set_toolbutton_text(self):
-        act = self.sort_actions.checkedAction()
-        if self.toolbutton:
-            self.toolbutton.setText(act.text())
+        """Names the current view's sort on the toolbutton, and shows its direction as the icon."""
+        if not self.toolbutton:
+            return
+        view = self.parent_widget.current_manga_view
+        key = sortkeys.KEYS.get(view.list_view.current_sort)
+        self.toolbutton.setText(key.label if key else '')
+        descending = view.sort_model.sortOrder() == Qt.SortOrder.DescendingOrder
+        self.toolbutton.setIcon(app_constants.SORT_ICON_DESC if descending else app_constants.SORT_ICON_ASC)
 
     def set_current_sort(self):
-        def check_key(act, key):
-            if self.parent_widget.current_manga_view.list_view.current_sort == key:
-                act.setChecked(True)
-
+        """Checks the current view's sort, or nothing when that sort is not one of the menu's choices."""
+        current = self.parent_widget.current_manga_view.list_view.current_sort
         for act in self.sort_actions.actions():
-            if act.text() == 'Title':
-                check_key(act, 'title')
-            elif act.text() == 'Author':
-                check_key(act, 'artist')
-            elif act.text() == 'Date Added':
-                check_key(act, 'date_added')
-            elif act.text() == 'Date Published':
-                check_key(act, 'pub_date')
-            elif act.text() == 'Read Count':
-                check_key(act, 'times_read')
-            elif act.text() == 'Last Read':
-                check_key(act, 'last_read')
-            elif act.text() == 'Rating':
-                check_key(act, 'rating')
-            elif act.text() == 'Page Count':
-                check_key(act, 'page_count')
+            act.setChecked(act.data() == current)
         self.set_toolbutton_text()
 
     def asc_desc(self):
-        if self.parent_widget.current_manga_view.sort_model.sortOrder() == Qt.SortOrder.AscendingOrder:
-            if self.toolbutton:
-                self.toolbutton.setIcon(app_constants.SORT_ICON_DESC)
-            self.parent_widget.current_manga_view.sort_model.sort(0, Qt.SortOrder.DescendingOrder)
+        view = self.parent_widget.current_manga_view
+        ascending = view.sort_model.sortOrder() == Qt.SortOrder.AscendingOrder
+        order = Qt.SortOrder.DescendingOrder if ascending else Qt.SortOrder.AscendingOrder
+        if view.view_type == app_constants.ViewType.Duplicate:
+            view.sort_model.sort(0, order)  # it has no named sort, only the order galleries were found in
+            self.set_toolbutton_text()
         else:
-            if self.toolbutton:
-                self.toolbutton.setIcon(app_constants.SORT_ICON_ASC)
-            self.parent_widget.current_manga_view.sort_model.sort(0, Qt.SortOrder.AscendingOrder)
+            view.list_view.sort(view.list_view.current_sort, order)
 
     def showEvent(self, event):
         self.set_current_sort()

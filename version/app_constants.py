@@ -300,6 +300,7 @@ POPUP_HEIGHT = get(300, 'Visual', 'popup.h', int)
 KEEP_ADDED_GALLERIES = get(True, 'Application', 'keep added galleries', bool)
 GALLERY_METAFILE_KEYWORDS = ('info.json', 'info.txt')
 CURRENT_SORT = get('title', 'General', 'current sort')
+CURRENT_SORT_ORDER = get('', 'General', 'current sort order')  # 'asc' or 'desc'; see sortkeys.saved_descending
 HIGH_QUALITY_THUMBS = get(False, 'Visual', 'high quality thumbs', bool)
 DISPLAY_RATING = get(True, 'Visual', 'display gallery rating', bool)
 DISPLAY_GALLERY_TYPE = get(False, 'Visual', 'display gallery type', bool) if not sys.platform.startswith('darwin') else False

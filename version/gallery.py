@@ -36,6 +36,7 @@ import gallerydb
 import app_constants
 import misc
 import gallerydialog
+import sortkeys
 import utils
 
 log = logging.getLogger(__name__)
@@ -142,7 +143,11 @@ class GallerySearch(QObject):
             self.result[gallery.id] = allow
 
 class SortFilterModel(QSortFilterProxyModel):
+    """
+    SORT_CHANGED: emitted with the sort's name and whether it is descending, once it has sorted
+    """
     ROWCOUNT_CHANGE = pyqtSignal()
+    SORT_CHANGED = pyqtSignal(str, bool)
     _DO_SEARCH = pyqtSignal(str, object)
     _CHANGE_SEARCH_DATA = pyqtSignal(list)
     _CHANGE_FAV = pyqtSignal(bool)
@@ -206,7 +211,7 @@ class SortFilterModel(QSortFilterProxyModel):
     def setup_search(self):
         if not self._search_ready:
             self.gallery_search = GallerySearch(self.sourceModel()._data)
-            self.gallery_search.FINISHED.connect(self.invalidateFilter)
+            self.gallery_search.FINISHED.connect(self._apply_search)
             self.gallery_search.FINISHED.connect(lambda: self.ROWCOUNT_CHANGE.emit())
             self.gallery_search.moveToThread(app_constants.GENERAL_THREAD)
             self._DO_SEARCH.connect(self.gallery_search.search)
@@ -218,6 +223,43 @@ class SortFilterModel(QSortFilterProxyModel):
 
     def refresh(self):
         self._DO_SEARCH.emit(self.current_term, self.current_args)
+
+    def _apply_search(self):
+        """Re-filters by the finished search's result.
+
+        Every gallery the search lets back in is placed by sorting, inside invalidateFilter, so
+        the sort values are held for the length of that call.
+        """
+        model = self.sourceModel()
+        model.hold_sort_values(True)
+        try:
+            self.invalidateFilter()
+        finally:
+            model.hold_sort_values(False)
+
+    def set_sort(self, name: str, order: Qt.SortOrder):
+        """Sorts by the `sortkeys` sort `name` in `order`, whatever the proxy was sorted by before.
+
+        The source model answers SORT_KEY_ROLE for whichever sort it was last told about, so it is
+        told before sorting.
+        """
+        descending = order == Qt.SortOrder.DescendingOrder
+        model = self.sourceModel()
+        model.set_sort_key(name, descending)
+        model.hold_sort_values(True)
+        try:
+            if self.sortRole() != GalleryModel.SORT_KEY_ROLE:
+                self.setSortRole(GalleryModel.SORT_KEY_ROLE)
+            if self.sortColumn() == 0 and self.sortOrder() == order:
+                # sort() does nothing for an unchanged column and order, which is all a new sort
+                # name looks like, so it goes round the other way first. Each pass is stable, so
+                # galleries that compare equal keep the order they were already shown in.
+                reverse = Qt.SortOrder.AscendingOrder if descending else Qt.SortOrder.DescendingOrder
+                super().sort(0, reverse)
+            super().sort(0, order)
+        finally:
+            model.hold_sort_values(False)
+        self.SORT_CHANGED.emit(name, descending)
 
     def init_search(self, term: str, args: list[app_constants.Search] = None, history: bool = True):
         """
@@ -412,14 +454,10 @@ class GalleryModel(QAbstractTableModel):
     GALLERY_ROLE = Qt.ItemDataRole.UserRole + 1
     ARTIST_ROLE = Qt.ItemDataRole.UserRole + 2
     FAV_ROLE = Qt.ItemDataRole.UserRole + 3
-    DATE_ADDED_ROLE = Qt.ItemDataRole.UserRole + 4
-    PUB_DATE_ROLE = Qt.ItemDataRole.UserRole + 5
-    TIMES_READ_ROLE = Qt.ItemDataRole.UserRole + 6
-    LAST_READ_ROLE = Qt.ItemDataRole.UserRole + 7
     TIME_ROLE = Qt.ItemDataRole.UserRole + 8
     RATING_ROLE = Qt.ItemDataRole.UserRole + 9
-    RATING_COUNT = Qt.ItemDataRole.UserRole + 10
-    PAGE_COUNT = Qt.ItemDataRole.UserRole + 11
+    # what the gallery compares as under the current sort; see set_sort_key
+    SORT_KEY_ROLE = Qt.ItemDataRole.UserRole + 12
 
     ROWCOUNT_CHANGE = pyqtSignal()
     STATUSBAR_MSG = pyqtSignal(str)
@@ -451,9 +489,36 @@ class GalleryModel(QAbstractTableModel):
         self._data_count = 0 # number of items added to model
         self._gallery_to_add = []
         self._gallery_to_remove = []
+        self._sort_name = 'title'
+        self._sort_descending = False
+        self._sort_values = None
+        self._sort_holds = 0
 
     def status_b_msg(self, msg):
         self.STATUSBAR_MSG.emit(msg)
+
+    def set_sort_key(self, name: str, descending: bool):
+        """Makes SORT_KEY_ROLE answer for the `sortkeys` sort `name` in that direction.
+
+        The direction is part of the value because a gallery with no date has to compare as
+        whichever extreme puts it last.
+        """
+        self._sort_name = name
+        self._sort_descending = descending
+        self._sort_values = {} if self._sort_holds else None
+
+    def hold_sort_values(self, hold: bool):
+        """While held, SORT_KEY_ROLE works out each gallery's value once and answers from that.
+
+        Held only around a single call that sorts: a value is asked for twice per comparison, and
+        the tags text is costly to build, but a gallery edited afterwards must not compare as it
+        was. Holds nest, and the values are dropped when the outermost one is released.
+        """
+        self._sort_holds += 1 if hold else -1
+        if hold and self._sort_values is None:
+            self._sort_values = {}
+        elif not self._sort_holds:
+            self._sort_values = None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
@@ -465,6 +530,17 @@ class GalleryModel(QAbstractTableModel):
         current_row = index.row() 
         current_gallery = self._data[current_row]
         current_column = index.column()
+
+        # first, because a sort asks for it twice per comparison
+        if role == self.SORT_KEY_ROLE:
+            values = self._sort_values
+            if values is None:
+                return sortkeys.sort_value(self._sort_name, current_gallery, self._sort_descending)
+            value = values.get(id(current_gallery), values)  # the dict itself stands for "not yet"
+            if value is values:
+                value = values[id(current_gallery)] = sortkeys.sort_value(
+                    self._sort_name, current_gallery, self._sort_descending)
+            return value
 
         # TODO: name all these roles and put them in app_constants...
         if role == Qt.ItemDataRole.DisplayRole:
@@ -571,37 +647,11 @@ class GalleryModel(QAbstractTableModel):
         elif role == self.FAV_ROLE:
             return current_gallery.fav
 
-        elif role == self.DATE_ADDED_ROLE:
-            date_added = "{}".format(current_gallery.date_added)
-            qdate_added = QDateTime.fromString(date_added, "yyyy-MM-dd HH:mm:ss")
-            return qdate_added
-        
-        elif role == self.PUB_DATE_ROLE:
-            if current_gallery.pub_date:
-                pub_date = "{}".format(current_gallery.pub_date)
-                qpub_date = QDateTime.fromString(pub_date, "yyyy-MM-dd HH:mm:ss")
-                return qpub_date
-
-        elif role == self.TIMES_READ_ROLE:
-            return current_gallery.times_read
-
-        elif role == self.LAST_READ_ROLE:
-            if current_gallery.last_read:
-                last_read = "{}".format(current_gallery.last_read)
-                qlast_read = QDateTime.fromString(last_read, "yyyy-MM-dd HH:mm:ss")
-                return qlast_read
-
         elif role == self.TIME_ROLE:
             return current_gallery.qtime
 
         elif role == self.RATING_ROLE:
             return StarRating(current_gallery.rating)
-
-        elif role == self.RATING_COUNT:
-            return current_gallery.rating
-
-        elif role == self.PAGE_COUNT:
-            return current_gallery.chapters.pages()
 
         return None
 
@@ -651,7 +701,11 @@ class GalleryModel(QAbstractTableModel):
         self.beginInsertRows(QModelIndex(), position, position + rows - 1)
         for r in range(rows):
             self._data.insert(position, self._gallery_to_add.pop())
-        self.endInsertRows()
+        self.hold_sort_values(True)  # the proxy places every new row by sorting, inside this call
+        try:
+            self.endInsertRows()
+        finally:
+            self.hold_sort_values(False)
         return True
 
     def replaceRows(self, list_of_gallery, position, rows=1, index=QModelIndex()):
@@ -1165,7 +1219,8 @@ class MangaView(QListView):
         if self.view_type == app_constants.ViewType.Duplicate:
             self.sort_model.setSortRole(GalleryModel.TIME_ROLE)
         else:
-            self.sort(self.current_sort)
+            descending = sortkeys.saved_descending(self.current_sort, app_constants.CURRENT_SORT_ORDER)
+            self.sort(self.current_sort, Qt.SortOrder.DescendingOrder if descending else Qt.SortOrder.AscendingOrder)
         if app_constants.DEBUG:
             def debug_print(a):
                 g = a.data(Qt.ItemDataRole.UserRole + 1)
@@ -1306,40 +1361,20 @@ class MangaView(QListView):
                 self.gallery_model.replaceRows([gallery], index.row())
                 gallerydb.execute(gallerydb.ChapterDB.del_chapter, True, gallery.id, chap_numb)
 
-    def sort(self, name):
-        if not self.view_type == app_constants.ViewType.Duplicate:
-            if name == 'title':
-                self.sort_model.setSortRole(Qt.ItemDataRole.DisplayRole)
-                self.sort_model.sort(0, Qt.SortOrder.AscendingOrder)
-                self.current_sort = 'title'
-            elif name == 'artist':
-                self.sort_model.setSortRole(GalleryModel.ARTIST_ROLE)
-                self.sort_model.sort(0, Qt.SortOrder.AscendingOrder)
-                self.current_sort = 'artist'
-            elif name == 'date_added':
-                self.sort_model.setSortRole(GalleryModel.DATE_ADDED_ROLE)
-                self.sort_model.sort(0, Qt.SortOrder.DescendingOrder)
-                self.current_sort = 'date_added'
-            elif name == 'pub_date':
-                self.sort_model.setSortRole(GalleryModel.PUB_DATE_ROLE)
-                self.sort_model.sort(0, Qt.SortOrder.DescendingOrder)
-                self.current_sort = 'pub_date'
-            elif name == 'times_read':
-                self.sort_model.setSortRole(GalleryModel.TIMES_READ_ROLE)
-                self.sort_model.sort(0, Qt.SortOrder.DescendingOrder)
-                self.current_sort = 'times_read'
-            elif name == 'last_read':
-                self.sort_model.setSortRole(GalleryModel.LAST_READ_ROLE)
-                self.sort_model.sort(0, Qt.SortOrder.DescendingOrder)
-                self.current_sort = 'last_read'
-            elif name == 'rating':
-                self.sort_model.setSortRole(GalleryModel.RATING_COUNT)
-                self.sort_model.sort(0, Qt.SortOrder.DescendingOrder)
-                self.current_sort = 'rating'
-            elif name == 'page_count':
-                self.sort_model.setSortRole(GalleryModel.PAGE_COUNT)
-                self.sort_model.sort(0, Qt.SortOrder.DescendingOrder)
-                self.current_sort = 'page_count'
+    def sort(self, name: str, order: Qt.SortOrder = None):
+        """Sorts by the `sortkeys` sort `name`, in `order` or else that sort's own starting direction.
+
+        The Duplicate view keeps the order galleries were found in. A name this version does not
+        know, such as one saved by another, sorts by title.
+        """
+        if self.view_type == app_constants.ViewType.Duplicate:
+            return
+        if name not in sortkeys.KEYS:
+            name = 'title'
+        if order is None:
+            order = Qt.SortOrder.DescendingOrder if sortkeys.KEYS[name].descending else Qt.SortOrder.AscendingOrder
+        self.current_sort = name
+        self.sort_model.set_sort(name, order)
 
     def contextMenuEvent(self, event):
         CommonView.contextMenuEvent(self, event)
@@ -1366,8 +1401,10 @@ class MangaTableView(QTableView):
         self.setSelectionBehavior(self.SelectionBehavior.SelectRows)
         self.setSelectionMode(self.SelectionMode.ExtendedSelection)
         self.setShowGrid(True)
-        self.setSortingEnabled(True)
+        # Not setSortingEnabled: Qt's own header sorting keeps the proxy's sort role and changes
+        # only the column, so a click would sort by the previous sort's value, not its column.
         h_header = self.horizontalHeader()
+        h_header.setSectionsClickable(True)
         h_header.setSortIndicatorShown(True)
         v_header = self.verticalHeader()
         v_header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
@@ -1684,6 +1721,22 @@ class CommonView:
         dialog = gallerydialog.GalleryDialog(app_inst, gallery, new_gallery)
         dialog.show()
 
+COLUMN_SORTS = {
+    app_constants.TITLE: 'title',
+    app_constants.ARTIST: 'artist',
+    app_constants.DESCR: 'description',
+    app_constants.TAGS: 'tags',
+    app_constants.TYPE: 'type',
+    app_constants.FAV: 'fav',
+    app_constants.CHAPTERS: 'chapters',
+    app_constants.LANGUAGE: 'language',
+    app_constants.LINK: 'link',
+    app_constants.PUB_DATE: 'pub_date',
+    app_constants.DATE_ADDED: 'date_added',
+}
+"""The `sortkeys` sort each table column sorts by when its header is clicked."""
+
+
 class MangaViews:
 
     manga_views = []
@@ -1733,8 +1786,34 @@ class MangaViews:
         self.current_view = self.View.List
         self.manga_views.append(self)
 
+        header = self.table_view.horizontalHeader()
+        if v_type == app_constants.ViewType.Duplicate:
+            header.setSectionsClickable(False)
+            header.setSortIndicatorShown(False)
+        else:
+            header.sectionClicked.connect(self._sort_by_column)
+            self.sort_model.SORT_CHANGED.connect(self._show_sort)
+            self.sort_model.SORT_CHANGED.connect(parent.SORT_CHANGED)
+            self._show_sort(self.list_view.current_sort,
+                            self.sort_model.sortOrder() == Qt.SortOrder.DescendingOrder)
+
         if v_type in (app_constants.ViewType.Default, app_constants.ViewType.Addition):
             self.sort_model.enable_drag = True
+
+    def _sort_by_column(self, column: int):
+        """Sorts by the clicked header's column, flipping the direction when it is already the sort."""
+        name = COLUMN_SORTS[column]
+        order = None
+        if name == self.list_view.current_sort:
+            ascending = self.sort_model.sortOrder() == Qt.SortOrder.AscendingOrder
+            order = Qt.SortOrder.DescendingOrder if ascending else Qt.SortOrder.AscendingOrder
+        self.list_view.sort(name, order)
+
+    def _show_sort(self, name: str, descending: bool):
+        """Puts the header's sort indicator on the sort's column, or shows none for a sort without one."""
+        column = next((c for c, n in COLUMN_SORTS.items() if n == name), -1)
+        order = Qt.SortOrder.DescendingOrder if descending else Qt.SortOrder.AscendingOrder
+        self.table_view.horizontalHeader().setSortIndicator(column, order)
 
     def _delegate_delete(self):
         if self._delete_proxy_model:

@@ -41,6 +41,7 @@ import utils
 import misc_db
 import database
 import betterversions
+import sortkeys
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -58,6 +59,8 @@ class AppWindow(QMainWindow):
     duplicate_check_invoker = pyqtSignal(gallery.GalleryModel)
     admin_db_method_invoker = pyqtSignal(object)
     db_activity_checker = pyqtSignal()
+    # every gallery view's sort, relayed so a listener also hears views created after it connected
+    SORT_CHANGED = pyqtSignal(str, bool)
     graphics_blur = QGraphicsBlurEffect()
 
     def __init__(self, disable_excepthook=False):
@@ -932,9 +935,10 @@ class AppWindow(QMainWindow):
         self.toolbar.addWidget(sort_action)
 
         def set_new_sort(s):
-            sort_menu.set_toolbutton_text()
             self.current_manga_view.list_view.sort(s)
         sort_menu.new_sort.connect(set_new_sort)
+        # a header click sorts too, so the menu follows the sort itself rather than its own picks
+        self.SORT_CHANGED.connect(lambda *_: sort_menu.update_toolbutton_text())
 
         spacer_tool4 = QWidget() 
         spacer_tool4.setFixedSize(QSize(5, 1))
@@ -1359,6 +1363,20 @@ class AppWindow(QMainWindow):
     def showEvent(self, event):
         return super().showEvent(event)
 
+    def _remember_sort(self):
+        """Stores the library's sort and its direction for the next start, together or not at all.
+
+        A sort reading chapters or tags is left out: the next startup would sort by it before
+        either is loaded.
+        """
+        name = self.manga_list_view.current_sort
+        if sortkeys.KEYS[name].late:
+            return
+        order = 'desc' if self.manga_list_view.sort_model.sortOrder() == Qt.SortOrder.DescendingOrder else 'asc'
+        app_constants.CURRENT_SORT, app_constants.CURRENT_SORT_ORDER = name, order
+        settings.set(name, 'General', 'current sort')
+        settings.set(order, 'General', 'current sort order')
+
     def cleanup_exit(self):
         self.system_tray.hide()
         # watchers
@@ -1368,8 +1386,7 @@ class AppWindow(QMainWindow):
             pass
 
         # settings
-        if self.manga_list_view.current_sort != 'page_count':
-            settings.set(self.manga_list_view.current_sort, 'General', 'current sort')
+        self._remember_sort()
         settings.set(app_constants.IGNORE_PATHS, 'Application', 'ignore paths')
         if not self.isMaximized():
             settings.win_save(self, 'AppWindow')

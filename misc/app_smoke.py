@@ -178,6 +178,192 @@ assert library_view.list_view.manga_delegate._paint_level > 0, 'the grid was nev
 say('app: the grid is let off its blank paint level once the galleries are in')
 
 
+# --- sorting, from the menu and from the table headers --------------------------------------
+# Both reach one proxy, so each has to leave the other, the indicator and the saved sort agreeing.
+# A sort building a Qt date per comparison orders correctly and still freezes a real library, so
+# every date parse the gallery module makes is counted too.
+
+import datetime  # noqa: E402
+from PyQt6.QtCore import QDateTime, QPoint  # noqa: E402
+from PyQt6.QtTest import QTest  # noqa: E402
+import sortkeys  # noqa: E402
+
+date_parses = []
+
+
+class CountingQDateTime(QDateTime):
+    @staticmethod
+    def fromString(*args):
+        date_parses.append(args)
+        return QDateTime.fromString(*args)
+
+
+gallery.QDateTime = CountingQDateTime
+
+grid, table, proxy = library_view.list_view, library_view.table_view, library_view.sort_model
+header = table.horizontalHeader()
+sort_menu = window.toolbar.findChild(misc.SortMenu)
+assert sort_menu is not None and sort_menu.toolbutton is not None, 'the toolbar has no sort menu'
+
+# Titles end in 0, 1, 2. Each date sort orders them differently, and 0 lacks every optional date.
+seeded = {g.title[-1]: g for g in library_view.gallery_model._data}
+seeded['0'].date_added, seeded['0'].pub_date, seeded['0'].last_read = datetime.datetime(2020, 1, 1), None, None
+seeded['1'].date_added, seeded['1'].pub_date, seeded['1'].last_read = datetime.datetime(2022, 1, 1), datetime.datetime(2018, 5, 5), datetime.datetime(2021, 6, 1)
+seeded['2'].date_added, seeded['2'].pub_date, seeded['2'].last_read = datetime.datetime(2021, 1, 1), datetime.datetime(2019, 5, 5), None
+seeded['0'].tags, seeded['1'].tags, seeded['2'].tags = {'default': ['c']}, {'default': ['a']}, {'default': ['b']}
+
+
+def shown():
+    return ''.join(proxy.index(r, 0).data(Qt.ItemDataRole.UserRole + 1).title[-1] for r in range(proxy.rowCount()))
+
+
+def pick(name):
+    act = next(a for a in sort_menu.sort_actions.actions() if a.data() == name)
+    act.trigger()
+
+
+def click_header(column):
+    QTest.mouseClick(header.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(header.sectionViewportPosition(column) + 5, 5))
+
+
+def agrees(name, label, column, descending):
+    """The view's saved sort, the menu's check and text and the header indicator all say the same."""
+    order = Qt.SortOrder.DescendingOrder if descending else Qt.SortOrder.AscendingOrder
+    checked = sort_menu.sort_actions.checkedAction()
+    state = (grid.current_sort, proxy.sortOrder(), checked.data() if checked else None,
+             sort_menu.toolbutton.text(), header.sortIndicatorSection(), header.sortIndicatorOrder() if column >= 0 else order)
+    expected = (name, order, name if name in sortkeys.MENU_SORTS else None, label, column, order)
+    assert state == expected, (state, expected)
+
+
+header.resize(2000, 30)  # the sections have to be laid out for a click to land on one
+header.resizeSection(app_constants.TITLE, 200)
+assert not table.isSortingEnabled(), "Qt's own header sorting is on, and keeps the previous sort's role"
+
+pick('date_added')
+assert shown() == '120', shown()
+agrees('date_added', 'Date Added', app_constants.DATE_ADDED, True)
+
+pick('pub_date')  # same column and direction as the sort before it, only the name differs
+assert shown() == '210', shown()
+agrees('pub_date', 'Date Published', app_constants.PUB_DATE, True)
+sort_menu.asc_desc()
+assert shown() == '120', 'a gallery with no date has to stay last ascending too: %s' % shown()
+agrees('pub_date', 'Date Published', app_constants.PUB_DATE, False)
+
+pick('last_read')
+assert shown()[0] == '1' and sorted(shown()[1:]) == ['0', '2'], shown()
+agrees('last_read', 'Last Read', -1, True)
+say('app: the menu sorts by what it names, and a gallery with no date sorts last either way')
+
+click_header(app_constants.TITLE)
+assert shown() == '012', 'clicking Title has to sort by title: %s' % shown()
+agrees('title', 'Title', app_constants.TITLE, False)
+click_header(app_constants.TITLE)
+assert shown() == '210', shown()
+agrees('title', 'Title', app_constants.TITLE, True)
+
+pick('rating')  # every seeded gallery is rated 0, and the direction stays descending
+assert shown() == '210', 'galleries that compare equal have to keep the order shown before: %s' % shown()
+agrees('rating', 'Rating', -1, True)
+
+click_header(app_constants.DATE_ADDED)
+assert shown() == '120', shown()
+agrees('date_added', 'Date Added', app_constants.DATE_ADDED, True)
+
+click_header(app_constants.TAGS)
+assert shown() == '120', 'tags a, b, c: %s' % shown()
+agrees('tags', 'Tags', app_constants.TAGS, False)
+sort_menu.asc_desc()
+assert shown() == '021', shown()
+agrees('tags', 'Tags', app_constants.TAGS, True)
+say('app: a header click sorts by its column, and the menu and indicator follow it')
+
+assert not date_parses, 'a sort parsed %d Qt dates' % len(date_parses)
+say('app: no sort parsed a Qt date')
+
+# Qt also sorts on its own: every gallery a cleared search lets back in, and every inserted one,
+# is placed by comparing. Under the Tags sort a value costs a string build, so each gallery's has
+# to be worked out once per such call, not once per comparison.
+value_asks = []
+_real_sort_value = sortkeys.sort_value
+
+
+def counting_sort_value(name, g, descending):
+    value_asks.append(id(g))
+    return _real_sort_value(name, g, descending)
+
+
+def asked_once_each(what, action, until):
+    value_asks.clear()
+    sortkeys.sort_value = counting_sort_value
+    try:
+        action()
+        pump_until(until, what)
+    finally:
+        sortkeys.sort_value = _real_sort_value
+    assert value_asks, 'no sort value was asked for while %s' % what
+    repeats = max(value_asks.count(i) for i in value_asks)
+    assert repeats == 1, "a gallery's sort value was worked out %d times while %s" % (repeats, what)
+
+
+assert grid.current_sort == 'tags'
+searched = []
+proxy.ROWCOUNT_CHANGE.connect(lambda: searched.append(True))  # emitted after the re-filter
+proxy.init_search('zzqqxx-matches-nothing')
+pump_until(lambda: searched and proxy.rowCount() == 0, 'a search that hides every gallery')
+searched.clear()
+asked_once_each('a cleared search let every gallery back in',
+                lambda: proxy.init_search(''), lambda: searched and proxy.rowCount() == 3)
+
+added = gallerydb.Gallery()
+added.title, added.path, added.profile = 'Seeded added', WORKDIR, os.path.join(WORKDIR, 'seed.jpg')
+added.tags = {'default': ['bb']}
+asked_once_each('a gallery was inserted', lambda: library_view.add_gallery(added),
+                lambda: library_view.gallery_model.rowCount() == 4)
+say('app: a re-filter or an insert works out each sort value once, however many comparisons it makes')
+
+# What the next start opens on: the sort and its direction are stored together, and a sort that
+# reads chapters or tags is not stored at all, since the startup sorts before loading either.
+import settings  # noqa: E402
+
+click_header(app_constants.TITLE)
+click_header(app_constants.TITLE)
+window._remember_sort()
+stored = (settings.get('', 'General', 'current sort'), settings.get('', 'General', 'current sort order'))
+assert stored == ('title', 'desc'), stored
+click_header(app_constants.TAGS)
+window._remember_sort()
+stored = (settings.get('', 'General', 'current sort'), settings.get('', 'General', 'current sort order'))
+assert stored == ('title', 'desc'), 'a sort by tags was stored for the startup to run: %s' % (stored,)
+say('app: a header click is remembered with its direction, and a tags sort is not remembered at all')
+
+# A view made after the toolbar - the way a new tab's is - still has to move the menu.
+late_view = gallery.MangaViews(app_constants.ViewType.Addition, window)
+shown_view, window.current_manga_view = window.current_manga_view, late_view
+late_header = late_view.table_view.horizontalHeader()
+late_header.resize(2000, 30)
+QTest.mouseClick(late_header.viewport(), Qt.MouseButton.LeftButton,
+                 pos=QPoint(late_header.sectionViewportPosition(app_constants.LANGUAGE) + 5, 5))
+assert late_view.list_view.current_sort == 'language', late_view.list_view.current_sort
+assert sort_menu.toolbutton.text() == 'Language', 'the menu missed a later view: %s' % sort_menu.toolbutton.text()
+assert sort_menu.sort_actions.checkedAction() is None
+window.current_manga_view = shown_view
+gallery.MangaViews.manga_views.remove(late_view)
+sort_menu.update_toolbutton_text()
+say('app: a view created after the toolbar still moves the sort menu')
+
+duplicates = gallery.MangaViews(app_constants.ViewType.Duplicate, window)
+assert not duplicates.table_view.horizontalHeader().sectionsClickable()
+duplicates.list_view.sort('date_added')
+assert duplicates.sort_model.sortRole() == gallery.GalleryModel.TIME_ROLE
+gallery.MangaViews.manga_views.remove(duplicates)
+say('app: the Duplicate view keeps the order galleries were found in')
+
+gallery.QDateTime = QDateTime
+grid.sort('title')
+
+
 # --- rechecking the better version list ----------------------------------------------------
 # The path with no coverage anywhere: a confirmation dialog, a worker on its own thread, a
 # button that doubles as the stop control, and a notification that has to distinguish "nothing
