@@ -13,7 +13,9 @@ an answer, because a timer inside the application measures its own event-queue b
 
 Each argument is a configuration: a label, optionally followed by a colon and the environment
 variables that select it, so a change gated behind one can be measured against the code it
-replaces. Configurations are **alternated** rather than run in blocks, which the design doc
+replaces. Each run also prints a timeline - when the window appeared, when each phase line
+arrived, and when each hung stretch began and ended - because a total cannot say which phase a
+freeze belongs to. Configurations are **alternated** rather than run in blocks, which the design doc
 requires: the machine drifts enough over an afternoon to swallow the effect being measured.
 
 Two Windows facts the script exists to get right, each of which silently produced a wrong answer
@@ -114,24 +116,39 @@ def measure(label, env, timeout):
         sys.exit('a Happypanda window is already open; the probe would poll that one')
 
     start = os.path.getsize(LOG) if os.path.exists(LOG) else 0
+    launched_at = time.perf_counter()
     launched = subprocess.Popen([PY_EXE, os.path.join(REPO, 'version', 'main.py')],
                                 cwd=REPO, env={**os.environ, **env},
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     hung_total = hung_streak = hung_longest = 0.0
     windows = []
-    deadline = time.perf_counter() + timeout
+    window_at = None
+    # Seconds since launch. A phase line is written as its phase ends, so each arrival is also
+    # the next phase's start; the log's own timestamps stop at the minute.
+    phase_at = {}
+    stretches = []
+    deadline = launched_at + timeout
     while time.perf_counter() < deadline:
         time.sleep(POLL)
+        now = time.perf_counter() - launched_at
         if not windows:
             windows = app_windows()
+            if windows:
+                window_at = now
         if windows and any(user32.IsHungAppWindow(h) for h in windows):
+            if not hung_streak:
+                stretches.append([now, now])
+            stretches[-1][1] = now
             hung_total += POLL
             hung_streak += POLL
             hung_longest = max(hung_longest, hung_streak)
         else:
             hung_streak = 0.0
-        if LAST_PHASE in log_since(start):
+        grown = log_since(start)
+        for phase, _ in PHASE_RE.findall(grown):
+            phase_at.setdefault(phase, now)
+        if LAST_PHASE in grown:
             break
 
     subprocess.run(['taskkill', '/T', '/F', '/PID', str(launched.pid)],
@@ -145,7 +162,8 @@ def measure(label, env, timeout):
     timings = {k: float(v) for k, v in PHASE_RE.findall(log_since(start))}
     return {'label': label, 'phases': timings, 'total': sum(timings.get(p, 0.0) for p in PHASES),
             'complete': len(timings) == len(PHASES), 'windows': len(windows),
-            'hung_total': hung_total, 'hung_longest': hung_longest}
+            'hung_total': hung_total, 'hung_longest': hung_longest,
+            'window_at': window_at, 'phase_at': phase_at, 'stretches': stretches}
 
 
 def report(run):
@@ -154,7 +172,21 @@ def report(run):
     print('%-12s %s total=%6.1f hung=%6.1f longest=%6.1f%s'
           % (run['label'], phases, run['total'], run['hung_total'], run['hung_longest'],
              '' if run['complete'] else '  INCOMPLETE'))
+    print('%-12s %s' % ('', timeline(run)))
     sys.stdout.flush()
+
+
+def timeline(run):
+    """Returns the run as one line of events in seconds since launch: the window appearing, each
+    phase line arriving, and each stretch the window was reported hung - so a freeze can be
+    read against the phase it falls in rather than only summed."""
+    events = []
+    if run['window_at'] is not None:
+        events.append((run['window_at'], 'window'))
+    events += [(at, '%s done' % phase) for phase, at in run['phase_at'].items()]
+    events += [(begin, 'hung %.1f-%.1f' % (begin, end)) for begin, end in run['stretches']]
+    return ' | '.join('%.1f %s' % (at, what) if not what.startswith('hung') else what
+                      for at, what in sorted(events, key=lambda e: e[0]))
 
 
 def summarise(runs):
