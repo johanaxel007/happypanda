@@ -58,6 +58,7 @@ import app_constants, gallerydb, fetch, pewnet
 | `version/formatters/title_formatter.py` | title normalisation, `TranslationStyle` |
 | `version/betterversions.py` | the better version review list: its own SQLite store, the three-axis classification, `BetterVersionScan` and `BetterVersionRecheck` |
 | `version/tagreaders.py` | reading the source's tags off a stored gallery or a raw `gmetadata` entry, and comparing two releases on them. Imports nothing else, so it is safe anywhere in the import order |
+| `version/sortkeys.py` | every name a gallery view sorts by, with its label, starting direction and the plain `str`/`int` it compares - never a Qt date, which Qt 6 parses too slowly to sort a library by. Imports nothing else at module level |
 | `version/settings.py` | ini-backed settings; `app_constants.py` reads defaults through it |
 | `version/settingsdialog.py` | every setting needs a widget here **and** a read in `restore_options` **and** a write in `accept` |
 
@@ -310,7 +311,9 @@ isolation, so it proves a button reaches a method **by name** but never what tha
 — the confirmation dialog, the worker thread, the notification, the metadata lock — with only
 the network stubbed, on `pewnet.EHen` itself so the `isinstance` checks in the pipeline still
 hold. It seeds its temporary database, so the database startup runs against a library rather
-than an empty table, and pins which thread the models are filled from. It is the only gate on
+than an empty table, and pins which thread the models are filled from. It clicks the sort menu
+and the table headers for real and checks they, the indicator and the saved sort agree, and that
+no sort parses a Qt date. It is the only gate on
 app-level assembly, which is where a method can reference a name that does not exist and stay
 green under both pytest and `gui_smoke`. Run it for anything touching an `AppWindow` method.
 `gui_smoke.py` stays the encoding gate — building the window loads the icon font, and qtawesome
