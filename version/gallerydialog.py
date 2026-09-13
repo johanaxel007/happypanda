@@ -373,6 +373,21 @@ class GalleryDialog(QWidget):
             combobox.setCurrentIndex(default)
             return False
 
+    def _select_language(self, language):
+        """Selects a language in the combo, adding it first when the list does not offer it.
+
+        The combo lists a handful of languages where the source tags dozens, so a gallery's own
+        is regularly absent from it. Falling back to the default would lose it: the field is
+        written on Done whether or not it was touched, and there is no undo.
+        """
+        language = (language or '').strip()
+        if not language:
+            self._find_combobox_match(self.lang_box, app_constants.G_DEF_LANGUAGE, 0)
+            return
+        if self.lang_box.findText(language, Qt.MatchFixedString) == -1:
+            self.lang_box.addItem(language)
+        self._find_combobox_match(self.lang_box, language, 0)
+
     def setGallery(self, gallery):
         "To be used for when editing a gallery"
         if isinstance(gallery, gallerydb.Gallery):
@@ -389,8 +404,7 @@ class GalleryDialog(QWidget):
             self.tags_edit.setText(utils.tag_to_string(gallery.tags))
 
 
-            if not self._find_combobox_match(self.lang_box, gallery.language, 1):
-                self._find_combobox_match(self.lang_box, app_constants.G_DEF_LANGUAGE, 1)
+            self._select_language(gallery.language)
             if not self._find_combobox_match(self.type_box, gallery.type, 0):
                 self._find_combobox_match(self.type_box, app_constants.G_DEF_TYPE, 0)
             if not self._find_combobox_match(self.status_box, gallery.status, 0):
@@ -422,8 +436,7 @@ class GalleryDialog(QWidget):
                 self.tags_edit.setText(utils.tag_to_string(g.tags))
                 self.tags_edit.g_check.setChecked(True)
             if all(map(lambda x: x.language == g.language, gallery)):
-                if not self._find_combobox_match(self.lang_box, g.language, 1):
-                    self._find_combobox_match(self.lang_box, app_constants.G_DEF_LANGUAGE, 1)
+                self._select_language(g.language)
                 self.lang_box.g_check.setChecked(True)
             if all(map(lambda x: x.rating == g.rating, gallery)):
                 self.rating_box.setValue(g.rating)
@@ -496,11 +509,7 @@ class GalleryDialog(QWidget):
         self.title_edit.setText(parsed['title'])
         self.author_edit.setText(parsed['artist'])
         self.path_lbl.setText(name)
-        if not parsed['language']:
-            parsed['language'] = app_constants.G_DEF_LANGUAGE
-        l_i = self.lang_box.findText(parsed['language'])
-        if l_i != -1:
-            self.lang_box.setCurrentIndex(l_i)
+        self._select_language(parsed['language'])
         if gallerydb.GalleryDB.check_exists(name):
             self.file_exists_lbl.setText('<font color="red">Gallery already exists.</font>')
             self.file_exists_lbl.show()
@@ -599,17 +608,18 @@ class GalleryDialog(QWidget):
         else:
             # single GalleryDialog metadata fetch
             self._fetch_inst = fetch.Fetch()
-            # self._fetch_thread = QThread(self)
-            self._fetch_thread = QThread(self.parent())
-            self._fetch_thread.setObjectName("GalleryDialog metadata thread")
-            self._fetch_inst.moveToThread(self._fetch_thread)
-            self._fetch_thread.started.connect(self._fetch_inst.auto_web_metadata)
-
             self._fetch_inst.galleries = [dummy_gallery]
             self._disconnect(self._fetch_inst)
             self._fetch_inst.GALLERY_PICKER.connect(gallery_picker)
             self._fetch_inst.GALLERY_EMITTER.connect(self.set_web_metadata)
             self._fetch_inst.FINISHED.connect(status)
+            self._fetch_thread = misc.worker_thread(
+                self.parent(), self._fetch_inst, self._fetch_inst.auto_web_metadata,
+                self._fetch_inst.FINISHED, "GalleryDialog metadata thread")
+            # The thread deletes itself once the fetch ends, and the reference has to go with
+            # it: isRunning() on a deleted QThread raises rather than answering false, and the
+            # python wrapper survives, so isinstance is no guard.
+            self._fetch_thread.finished.connect(self._forget_fetch_thread)
             self._fetch_thread.start()
             log_i('fetch thread started')
             
@@ -623,7 +633,7 @@ class GalleryDialog(QWidget):
         self.author_edit.setText(metadata.artist)
         # tags = ""
         # lang = ['English', 'Japanese']
-        self._find_combobox_match(self.lang_box, metadata.language, 2)
+        self._select_language(metadata.language)
         self.tags_edit.setText(utils.tag_to_string(metadata.tags))
         pub_string = "{}".format(metadata.pub_date)
         pub_date = QDate.fromString(pub_string.split()[0], "yyyy-MM-dd")
@@ -719,6 +729,10 @@ class GalleryDialog(QWidget):
             fetch_inst.FINISHED.disconnect()
         except TypeError:
             pass
+
+    def _forget_fetch_thread(self):
+        "Drops the finished thread, which is about to delete itself."
+        self._fetch_thread = None
 
     def delayed_close(self):
         self.parent().gallery_dialog_group.unregister(self)
@@ -873,11 +887,10 @@ class GalleryDialogGroup(QObject):
 
                 fetch_inst = fetch.Fetch()
                 self.fetch_insts.add(fetch_inst)
-                fetch_thread = QThread(self.parent())
-                fetch_thread.setObjectName("GalleryDialog metadata thread")
-                fetch_inst.moveToThread(fetch_thread)
                 fetch_inst.FINISHED.connect(lambda: self.remove_fetch(fetch_inst))
-                fetch_thread.started.connect(fetch_inst.auto_web_metadata)
+                fetch_thread = misc.worker_thread(
+                    self.parent(), fetch_inst, fetch_inst.auto_web_metadata,
+                    fetch_inst.FINISHED, "GalleryDialog metadata thread")
 
             log_d(f'adding url from GalleryDialog {i+1}/{len(self.gds)}')
             gallery = gd.web_metadata(fetch_inst=fetch_inst)

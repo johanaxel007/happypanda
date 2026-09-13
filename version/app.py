@@ -40,6 +40,7 @@ import pewnet
 import utils
 import misc_db
 import database
+import betterversions
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -222,7 +223,14 @@ class AppWindow(QMainWindow):
         #QSizePolicy.Preferred)
         self.download_window = io_misc.GalleryDownloader(self)
         self.download_window.hide()
-        
+        self.better_versions_window = io_misc.BetterVersionsWindow(self)
+        self.better_versions_window.hide()
+        self._better_version_scan = None
+        self._better_version_recheck = None
+        # Only once the whole library is in memory, never on opening the window: see
+        # _prune_better_versions.
+        self.db_startup.DONE.connect(self._prune_better_versions)
+
         # init toolbar
         self.init_toolbar()
 
@@ -306,13 +314,10 @@ class AppWindow(QMainWindow):
                     self.notification_bar.add_text("An error occurred while checking for new version")
 
         self.update_instance = upd_chk()
-        thread = QThread(self)
-        self.update_instance.moveToThread(thread)
-        thread.started.connect(self.update_instance.fetch_vs)
         self.update_instance.UPDATE_CHECK.connect(check_update)
         self.update_instance.UPDATE_CHECK.connect(self.update_instance.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.start()
+        misc.worker_thread(self, self.update_instance, self.update_instance.fetch_vs,
+                           self.update_instance.UPDATE_CHECK, 'App.check_update').start()
 
     def _web_metadata_picker(self, gallery, title_url_list, queue, extras=None, parent=None):
         if not parent:
@@ -326,8 +331,6 @@ class AppWindow(QMainWindow):
             metadata_spinner = misc.Spinner(self)
             metadata_spinner.set_text("Metadata")
             metadata_spinner.set_size(55)
-            thread = QThread(self)
-            thread.setObjectName('App.get_metadata')
             fetch_instance = fetch.Fetch()
             if gal:
                 if not isinstance(gal, list):
@@ -345,7 +348,6 @@ class AppWindow(QMainWindow):
             fetch_instance.galleries = galleries
 
             self.notification_bar.begin_show()
-            fetch_instance.moveToThread(thread)
 
             def done(status):
                 self.notification_bar.end_show()
@@ -384,15 +386,243 @@ class AppWindow(QMainWindow):
             fetch_instance.GALLERY_PICKER.connect(self._web_metadata_picker)
             fetch_instance.GALLERY_EMITTER.connect(self.default_manga_view.replace_gallery)
             fetch_instance.AUTO_METADATA_PROGRESS.connect(self.notification_bar.add_text)
-            thread.started.connect(fetch_instance.auto_web_metadata)
             fetch_instance.FINISHED.connect(done)
             fetch_instance.FINISHED.connect(metadata_spinner.before_hide)
-            thread.finished.connect(thread.deleteLater)
-            thread.start()
+            misc.worker_thread(self, fetch_instance, fetch_instance.auto_web_metadata,
+                               fetch_instance.FINISHED, 'App.get_metadata').start()
             #fetch_instance.auto_web_metadata()
             metadata_spinner.show()
         else:
             self.notif_bubble.update_text("Oops!", "Auto metadata fetcher is already running...")
+
+    def _prune_better_versions(self):
+        """Drops review rows whose gallery has left the library.
+
+        Bound to the database startup finishing, because that is the only moment the whole
+        library is known to be in memory: GALLERY_DATA is filled batch by batch, and a prune
+        against a partial one would delete rows for galleries that had simply not loaded yet,
+        taking their scan progress with them.
+        """
+        live = {g.id for g in app_constants.GALLERY_DATA + app_constants.GALLERY_ADDITION_DATA
+                if g.id}
+        if betterversions.shared_store().prune(live) and self.better_versions_window.isVisible():
+            self.better_versions_window.reload()
+
+    def scan_better_versions(self, galleries=None):
+        """Asks, then searches galleries for releases that improve on them.
+
+        With no galleries given, acts on the tab's *active search* rather than the whole tab,
+        unlike the bulk removal beside it in the menu: this costs a request per gallery against
+        a source that bans on volume, so aiming a run at a few hundred galleries instead of a
+        whole library is what makes it usable at all. A selection is narrower still and comes
+        from the gallery context menu, the way fetching metadata for a selection does.
+        """
+        if self._better_version_scan:
+            self.notification_bar.add_text('A scan for better versions is already running.')
+            return
+        # Checked explicitly rather than left to the metadata lock, which is only claimed when
+        # the global lock setting is on.
+        if self._better_version_recheck:
+            self.notification_bar.add_text('The better version list is being rechecked; '
+                                           'wait for it to finish.')
+            return
+        if app_constants.GLOBAL_EHEN_LOCK or app_constants.SCANNING_FOR_GALLERIES:
+            self.notification_bar.add_text('Please wait until the running metadata fetch or '
+                                           'gallery scan has finished.')
+            return
+        # Before the count and the hours, not after: a setting that stops the scan matching
+        # anything has to be reported instead of agreed to.
+        blocked = betterversions.scan_blocked_reason()
+        if blocked:
+            self.notification_bar.add_text(blocked)
+            return
+
+        view = self.get_current_view()
+        selected = 0
+        if galleries:
+            in_view = [galleries] if not isinstance(galleries, list) else galleries
+        else:
+            in_view = []
+            for r in range(view.sort_model.rowCount()):
+                g = view.sort_model.index(r, 0).data(Qt.UserRole + 1)
+                if g:
+                    in_view.append(g)
+            # Counted through selectedIndexes because the grid view selects items rather than
+            # rows, which leaves selectedRows() empty however much is highlighted. The dialog
+            # says so when a selection is not what the run will cover.
+            selected = len({idx.row() for idx in view.selectedIndexes()})
+
+        to_scan = betterversions.galleries_to_scan(in_view)
+        if not to_scan:
+            self.notification_bar.add_text('None of the {} galleries still need scanning '
+                                           'for a better version.'.format(len(in_view)))
+            return
+
+        summary, detail = betterversions.scan_confirmation_text(to_scan, in_view, selected)
+        msgbox = QMessageBox(self)
+        msgbox.setIcon(QMessageBox.Question)
+        msgbox.setWindowTitle('Scan for better versions')
+        msgbox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msgbox.setDefaultButton(QMessageBox.No)
+        msgbox.setText(summary)
+        msgbox.setDetailedText(detail)
+        if msgbox.exec() != QMessageBox.Yes:
+            return
+
+        spinner = misc.Spinner(self)
+        spinner.set_text("Better versions")
+        spinner.set_size(55)
+        scan = betterversions.BetterVersionScan()
+        scan.galleries = to_scan
+        self._better_version_scan = scan
+        self.stop_better_versions_action.setEnabled(True)
+        # Claimed here rather than inside the worker: every other check of this flag happens on
+        # the gui thread, so a fetch started between thread.start() and the worker claiming it
+        # would pass its own check and run alongside the scan.
+        scan.take_lock()
+
+        def done(found):
+            self.notification_bar.end_show()
+            self._better_version_scan = None
+            self.stop_better_versions_action.setEnabled(False)
+            # Even a run that failed part way through has rows worth showing.
+            self.better_versions_window.reload()
+            # Read before the worker goes: a partial pass must not read as a finished one, and
+            # nor may a run whose every hit was already on the list.
+            aborted = scan.aborted
+            seen_before = scan.already_listed + scan.already_dismissed
+            dismissed = scan.already_dismissed
+            try:
+                scan.deleteLater()
+            except RuntimeError:
+                pass
+            if found is False:
+                return
+            if found:
+                message = 'Found a better version of {} gallery(s).'.format(found)
+            elif seen_before:
+                message = 'No new better versions. {} of the ones it found are already on the ' \
+                          'list'.format(seen_before)
+                message += ' ({} dismissed).'.format(dismissed) if dismissed else '.'
+            elif aborted:
+                message = 'Stopped before finding anything; the galleries it reached are recorded.'
+            else:
+                message = 'No better versions found.'
+            if aborted and found:
+                message += ' The scan stopped early, so run it again to cover the rest.'
+            self.notification_bar.add_text(message)
+            app_constants.SYSTEM_TRAY.showMessage('Better versions', message, minimized=True)
+
+        self.notification_bar.begin_show()
+        # Bound methods of gui objects, so the worker thread's emits are queued onto the gui
+        # thread instead of running there.
+        scan.PROGRESS.connect(self.notification_bar.add_text)
+        scan.FOUND.connect(self.better_versions_window.add_row)
+        scan.FINISHED.connect(done)
+        scan.FINISHED.connect(spinner.before_hide)
+        misc.worker_thread(self, scan, scan.scan, scan.FINISHED,
+                           'App.scan_better_versions').start()
+        spinner.show()
+
+    def recheck_better_versions(self):
+        """Re-judges the rows already on the list against the current classification rules.
+
+        Separate from a scan because a scan cannot reach them: every gallery it searched is
+        recorded, so a rule added afterwards would need `Forget scan progress` and a second
+        full pass. These candidates are already known, so the recheck only looks their tags up.
+        """
+        if self._better_version_scan:
+            self.notification_bar.add_text('A scan for better versions is already running.')
+            return
+        if self._better_version_recheck:
+            self.notification_bar.add_text('The better version list is already being rechecked.')
+            return
+        if app_constants.GLOBAL_EHEN_LOCK:
+            self.notification_bar.add_text('A metadata fetch is already running!')
+            return
+
+        rows = betterversions.recheckable_rows()
+        if not rows:
+            self.notification_bar.add_text('No rows on the better version list to recheck.')
+            return
+
+        summary, detail = betterversions.recheck_confirmation_text(rows)
+        msgbox = QMessageBox(self)
+        msgbox.setIcon(QMessageBox.Question)
+        msgbox.setWindowTitle('Recheck the better version list')
+        msgbox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msgbox.setDefaultButton(QMessageBox.No)
+        msgbox.setText(summary)
+        msgbox.setDetailedText(detail)
+        if msgbox.exec() != QMessageBox.Yes:
+            return
+
+        recheck = betterversions.BetterVersionRecheck()
+        recheck.galleries = [g for g in app_constants.GALLERY_DATA +
+                             app_constants.GALLERY_ADDITION_DATA if g.id]
+        # Claimed on this thread for the reason scan_better_versions gives: every other check
+        # of the flag happens here.
+        recheck.take_lock()
+        self._better_version_recheck = recheck
+        self.better_versions_window.set_recheck_running(True)
+
+        def done(dismissed):
+            self.notification_bar.end_show()
+            self._better_version_recheck = None
+            self.better_versions_window.set_recheck_running(False)
+            self.better_versions_window.reload()
+            # Read before the worker goes: a stopped pass must not read as a finished one.
+            unresolved, aborted = recheck.unresolved, recheck.aborted
+            try:
+                recheck.deleteLater()
+            except RuntimeError:
+                pass
+            if dismissed is False:
+                return
+            if dismissed:
+                message = '{} row(s) turned out to be a different work and were dismissed.'.format(
+                    dismissed)
+            elif aborted:
+                message = 'Stopped before any row turned out to be wrong.'
+            else:
+                message = 'Every row on the list still looks like a release of its gallery.'
+            if unresolved:
+                message += (' {} could not be judged, so they were left alone.'.format(unresolved))
+            if aborted and dismissed:
+                message += ' The recheck stopped early, so run it again to cover the rest.'
+            self.notification_bar.add_text(message)
+
+        self.notification_bar.begin_show()
+        # Bound methods of gui objects, so the worker's emits are queued onto the gui thread.
+        recheck.PROGRESS.connect(self.notification_bar.add_text)
+        recheck.FINISHED.connect(done)
+        misc.worker_thread(self, recheck, recheck.recheck, recheck.FINISHED,
+                           'App.recheck_better_versions').start()
+
+    def stop_better_version_recheck(self):
+        """Asks a running recheck to stop after the batch it is waiting on.
+
+        The dismissals it has already made stand - each was judged on its own evidence - and
+        the rows it never reached are untouched, so running it again covers them.
+        """
+        if not self._better_version_recheck:
+            return
+        self._better_version_recheck.cancel()
+        # Not straight back to the resting label: the run ends between batches, and `done`
+        # is what knows it has actually finished.
+        self.better_versions_window.set_recheck_stopping()
+
+    def stop_better_version_scan(self):
+        """Asks the running scan to stop after the gallery it is working on.
+
+        A temporary ban is waited out inside the request itself, so a stop issued while the
+        scan is sitting in one only takes effect once that wait is over.
+        """
+        if not self._better_version_scan:
+            return
+        self._better_version_scan.cancel()
+        self.stop_better_versions_action.setEnabled(False)
+        self.notification_bar.add_text('Stopping the scan for better versions after this gallery...')
 
     def init_stat_bar(self):
         self.status_bar = self.statusBar()
@@ -589,6 +819,26 @@ class AppWindow(QMainWindow):
         remove_missing_source.triggered.connect(
             lambda: gallery.CommonView.remove_missing_source(self.get_current_view()))
         gallery_menu.addAction(remove_missing_source)
+
+        gallery_menu.addSeparator()
+        scan_better_versions = QAction("Scan for better versions...", self)
+        scan_better_versions.setIcon(app_constants.SEARCH_ICON)
+        scan_better_versions.setStatusTip('Search the source for decensored or translated releases '
+                                          'of the galleries in view')
+        scan_better_versions.triggered.connect(self.scan_better_versions)
+        gallery_menu.addAction(scan_better_versions)
+
+        self.stop_better_versions_action = QAction("Stop scanning for better versions", self)
+        self.stop_better_versions_action.setIcon(app_constants.CROSS_ICON_WH)
+        self.stop_better_versions_action.setEnabled(False)
+        self.stop_better_versions_action.triggered.connect(self.stop_better_version_scan)
+        gallery_menu.addAction(self.stop_better_versions_action)
+
+        show_better_versions = QAction("Better versions found", self)
+        show_better_versions.setIcon(app_constants.MANAGER_ICON)
+        show_better_versions.setStatusTip('The review list of better versions found so far')
+        show_better_versions.triggered.connect(self.better_versions_window.show)
+        gallery_menu.addAction(show_better_versions)
 
         self.toolbar.addWidget(gallery_action)
 
@@ -877,8 +1127,6 @@ class AppWindow(QMainWindow):
         "Scans the given path for gallery to add into the DB"
         if len(path) < 1: return
 
-        data_thread = QThread(self)
-        data_thread.setObjectName('General gallery populate')
         self.addition_tab.click()
         self.g_populate_inst = fetch.Fetch()
         self.g_populate_inst.series_path = path
@@ -947,9 +1195,8 @@ class AppWindow(QMainWindow):
         self.g_populate_inst.FINISHED.connect(finished)
         self.g_populate_inst.FINISHED.connect(self.g_populate_inst.deleteLater)
         # self.g_populate_inst.SKIPPED.connect(skipped_gs)
-        data_thread.finished.connect(data_thread.deleteLater)
-        data_thread.started.connect(self.g_populate_inst.local)
-        data_thread.start()
+        misc.worker_thread(self, self.g_populate_inst, self.g_populate_inst.local,
+                           self.g_populate_inst.FINISHED, 'General gallery populate').start()
         #self.g_populate_inst.local()
         log_i('Populating DB from directory/archive')
 
@@ -1012,15 +1259,12 @@ class AppWindow(QMainWindow):
                 new_gall_spinner.set_text("Gallery Scan")
                 new_gall_spinner.show()
 
-                thread = QThread(self)
                 self.scan_inst = ScanDir(self.addition_tab.view, self.addition_tab)
-                self.scan_inst.moveToThread(thread)
                 self.scan_inst.finished.connect(finished)
                 self.scan_inst.finished.connect(new_gall_spinner.before_hide)
-                thread.started.connect(self.scan_inst.scan_dirs)
                 #self.scan_inst.scan_dirs()
-                thread.finished.connect(thread.deleteLater)
-                thread.start()
+                misc.worker_thread(self, self.scan_inst, self.scan_inst.scan_dirs,
+                                   self.scan_inst.finished, 'App.scan_for_new_galleries').start()
             except:
                 self.notification_bar.add_text('An error occured while attempting to scan for new galleries. Check happypanda.log.')
                 log.exception('An error occured while attempting to scan for new galleries.')

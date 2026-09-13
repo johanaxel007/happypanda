@@ -21,6 +21,7 @@ import gallerydb
 import utils
 import io_misc
 import pewnet
+import tagreaders
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -247,6 +248,11 @@ class SettingsDialog(QWidget):
         self.fallback_chaika.setChecked('chaikahen' in app_constants.HEN_LIST)
         self.fuzz_confidence_threshold.setValue(app_constants.FUZZ_CONFIDENCE_THRESHOLD)
         self.use_hash_search.setChecked(app_constants.USE_HASH_SEARCH)
+        # A stored language the combo does not offer still has to come back out of it, or the
+        # next Ok writes whichever entry happened to be first instead.
+        if self.better_version_language.findText(app_constants.BETTER_VERSION_LANGUAGE) < 0:
+            self.better_version_language.addItem(app_constants.BETTER_VERSION_LANGUAGE)
+        self.better_version_language.setCurrentText(app_constants.BETTER_VERSION_LANGUAGE)
 
 
         # Web / Download
@@ -522,6 +528,9 @@ class SettingsDialog(QWidget):
 
         app_constants.USE_HASH_SEARCH = self.use_hash_search.isChecked()
         set(app_constants.USE_HASH_SEARCH, 'Web', 'use image hash search')
+
+        app_constants.BETTER_VERSION_LANGUAGE = self.better_version_language.currentText()
+        set(app_constants.BETTER_VERSION_LANGUAGE, 'Web', 'better version language')
 
         # Visual / General
         app_constants.GALLERY_EDIT_WIDTH = self.galleryedit_width.value()
@@ -1267,7 +1276,10 @@ class SettingsDialog(QWidget):
         self.fuzz_confidence_threshold.setToolTip('How similar a search result title has to be to the local folder name to be considered a match.\n'
                                               'Lower values may result in more incorrect matches.\n'
                                               'Higher values may miss slightly different titles.\n'
-                                              'DEFAULT: 70%')
+                                              'Most correct matches score an exact 100, so a high value costs\n'
+                                              'few of them and sends the rest to the chooser instead of\n'
+                                              'applying a near miss over your metadata.\n'
+                                              'DEFAULT: 95%')
         web_metadata_m_l.addRow(fuzz_confidence_info)
         web_metadata_m_l.addRow('Confidence threshold:', self.fuzz_confidence_threshold)
 
@@ -1283,6 +1295,25 @@ class SettingsDialog(QWidget):
         web_metadata_m_l.addRow(fallback_source_l)
         self.fallback_chaika = QCheckBox("panda.chaika.moe")
         fallback_source_l.addWidget(self.fallback_chaika)
+
+        better_version_info = QLabel('Which translation counts as a better version when scanning '
+                                     'for improved releases of galleries you already hold.')
+        better_version_info.setWordWrap(True)
+        self.better_version_language = QComboBox()
+        # Every language the source tags, since the scan reads that tag. Japanese and Other
+        # are left out: it tags a language only once a gallery has been translated into
+        # one, so neither can ever appear on a candidate.
+        offered = {l.capitalize() for l in tagreaders.LANGUAGE_TAGS}
+        offered |= {l.strip().capitalize() for l in app_constants.G_CUSTOM_LANGUAGES if l.strip()}
+        self.better_version_language.addItems(
+            sorted(l for l in offered if l not in ('Japanese', 'Other')))
+        self.better_version_language.setToolTip(
+            'Gallery / Scan for better versions looks for a release of the same work translated\n'
+            'into this language, and for a decensored release of a gallery held censored.\n'
+            'Every language the source tags is offered.\n'
+            'DEFAULT: English')
+        web_metadata_m_l.addRow(better_version_info)
+        web_metadata_m_l.addRow('Better version language:', self.better_version_language)
 
     def _make_visual_general(self, tab_widget: QTabWidget):
         # Visual / General

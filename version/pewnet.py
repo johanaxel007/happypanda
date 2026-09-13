@@ -43,6 +43,7 @@ from PyQt5.QtCore import QObject, pyqtSignal
 import app_constants
 import utils
 import settings
+import tagreaders
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -1160,13 +1161,18 @@ class EHen(CommonHen):
         if app_constants.IGNORED_TAGS_APPLY_TO_WEB_FETCH:
             data['tags'] = utils.remove_ignored_tags(data['tags'])
 
+        # The namespace also holds tags naming what was done to a release rather than what
+        # language it is in, written beside the language rather than instead of it. One of
+        # those is kept only when it is all the namespace holds, so nothing is discarded.
+        lang = ""
         if 'Language' in data['tags']:
-            try:
-                lang = [x for x in data['tags']['Language'] if not x == 'translated'][0].capitalize()
-            except IndexError:
-                lang = ""
-        else:
-            lang = ""
+            named = [str(x).strip() for x in data['tags']['Language'] if str(x).strip()]
+            languages = [x for x in named if x.lower() in tagreaders.LANGUAGE_TAGS]
+            rest = [x for x in named if x.lower() != 'translated']
+            if languages:
+                lang = languages[0].capitalize()
+            elif rest:
+                lang = rest[0].capitalize()
 
         title_artist_dict = utils.title_parser(title)
         if not append:
@@ -1571,10 +1577,22 @@ class EHen(CommonHen):
         """
         Searches ehentai for the provided string (either a title query or a hash).
         Returns a dict with search_string:[list of title & url tuples] of hits found.
+
+        :expunged -> whether to fall back to the expunged listing when the normal one is
+            empty. Defaults to the INCLUDE_EH_EXPUNGED setting; a caller looking for a
+            gallery that still exists passes False, since that listing costs a second search
+            and holds only deleted galleries.
+        :max_pages -> how many result pages to follow at most. Defaults to MAX_SEARCH_PAGES;
+            a caller that has to state its total request count up front passes 1, which makes
+            one search cost exactly one request.
         """
         is_hash = isinstance(search_string, str) and regex.fullmatch(r'[a-f0-9]{40}', search_string)
 
         cookies = kwargs.pop('cookies', {})
+        include_expunged = kwargs.pop('expunged', None)
+        if include_expunged is None:
+            include_expunged = app_constants.INCLUDE_EH_EXPUNGED
+        max_pages = kwargs.pop('max_pages', None) or self.MAX_SEARCH_PAGES
 
         def no_hits_found_check(soup):
             "return true if hits are found"
@@ -1639,7 +1657,7 @@ class EHen(CommonHen):
             seen_urls = set()
             page_url, params = start_of(expunged)
 
-            for page in range(1, self.MAX_SEARCH_PAGES + 1):
+            for page in range(1, max_pages + 1):
                 if page > 1:
                     # Still inside one lock, so begin_lock's pacing does not apply here.
                     log_i(f'Results page {page - 1} was full, following the next page link.')
@@ -1699,7 +1717,7 @@ class EHen(CommonHen):
             # f_sh selects the expunged listing exclusively rather than adding it to the normal
             # one, so the two sets are disjoint and reaching both means searching twice. Gated on
             # the first coming back empty, spending the request only where the alternative fails.
-            if not found_galleries and app_constants.INCLUDE_EH_EXPUNGED:
+            if not found_galleries and include_expunged:
                 log_i('Nothing in the normal listing, retrying among expunged galleries.')
                 time.sleep(random.randint(3, max(3, self.TIME_RAND)))
                 found_galleries = run_pass(expunged=True)

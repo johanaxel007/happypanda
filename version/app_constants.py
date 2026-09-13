@@ -263,8 +263,14 @@ TORRENT_CLIENT = get('', 'Web', 'torrent client', str)
 HEN_LIST = get(['chaikahen'], 'Web', 'hen list', list) or []
 DOWNLOAD_GALLERY_TO_LIB = get(False, 'Web', 'download galleries to library', bool)
 USE_GLOBAL_EHEN_LOCK = get(True, 'Web', 'global ehen metadata fetch lock', bool)
-FUZZ_CONFIDENCE_THRESHOLD = get(70, 'Web', 'fuzz confidence threshold', int)
+# High because the score distribution is bimodal: nearly every correct match is an exact 100 and
+# the rest tail off thinly, so the band a high bar gives up is mostly where a near-miss sibling
+# would have been applied silently. Measurements are in the metadata-matching rule.
+FUZZ_CONFIDENCE_THRESHOLD = get(95, 'Web', 'fuzz confidence threshold', int)
 USE_HASH_SEARCH = get(False, 'Web', 'use image hash search', bool)
+# The translation a scan for better versions counts as an improvement. Only a language the
+# source tags is any use here, since the tag is what the scan reads.
+BETTER_VERSION_LANGUAGE = get('English', 'Web', 'better version language', str)
 ALWAYS_APPLY_TITLE = get(REPLACE_TYPE_NEVER, 'Web', 'always apply title', int)
 ALWAYS_APPLY_ARTIST = get(REPLACE_TYPE_NEVER, 'Web', 'always apply artist', int)
 ALWAYS_APPLY_LANGUAGE = get(REPLACE_TYPE_NEVER, 'Web', 'always apply language', int)

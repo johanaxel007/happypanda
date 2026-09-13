@@ -44,6 +44,7 @@ from PyQt5.QtGui import QImage, qRgba
 
 import app_constants
 import database
+import tagreaders
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -1261,6 +1262,32 @@ def tag_to_dict(string, ns_capitalize=True):
 
     return namespace_tags
 
+def known_languages():
+    """Every name that counts as a language here, lowercased.
+
+    The source's whole vocabulary rather than the handful the language pickers offer, since a
+    folder can be labelled with any of them. `G_LANGUAGES` is folded in for 'Other', which the
+    pickers offer as a value without it ever being a tag.
+    """
+    configured = app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES
+    return tagreaders.LANGUAGE_TAGS | {l.strip().lower() for l in configured if l.strip()}
+
+
+def language_spelling(language):
+    """How to write a recognised language, given it in any casing.
+
+    A configured name comes back exactly as it was configured, so the result is always a
+    string that appears in the configuration verbatim; capitalising instead would turn
+    'Traditional Chinese' into a value no list holds. Anything else is a single lower case
+    word from the source, and takes a plain capital.
+    """
+    language = (language or '').strip()
+    for configured in app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES:
+        if configured.strip().lower() == language.lower():
+            return configured.strip()
+    return language.capitalize()
+
+
 def title_parser(title):
     "Receives a title to parse. Returns dict with 'title', 'artist' and language"
     log_d(f'Parsing title: {title}')
@@ -1278,7 +1305,7 @@ def title_parser(title):
     try:
         a = re.findall(r'((?<=\[) *[^\]]+( +\S+)* *(?=\]))', title)
         assert len(a) != 0
-        lang = app_constants.G_LANGUAGES + app_constants.G_CUSTOM_LANGUAGES
+        lang = known_languages()
 
         # The artist is the leading "[Circle (Artist)]" group, optionally preceded by event tags
         # like "(C86)". It has to be the leading one: in "Guardian of Faith II [English]" the only
@@ -1287,7 +1314,7 @@ def title_parser(title):
         leading = re.match(r'^\s*(?:\([^)]*\)\s*)*\[([^\]]+)\]', title)
         if leading:
             candidate = leading.group(1).strip()
-            if candidate.lower().capitalize() not in lang:
+            if candidate.lower() not in lang:
                 artist = candidate
         parsed_title['artist'] = artist
 
@@ -1295,11 +1322,9 @@ def title_parser(title):
         # Faith II [English]" states its language in the single group it has, and defaulting
         # instead sends the wrong language: filter on every search for it.
         for x in a:
-            l = x[0].strip()
-            l = l.lower()
-            l = l.capitalize()
+            l = x[0].strip().lower()
             if l in lang:
-                parsed_title['language'] = l
+                parsed_title['language'] = language_spelling(l)
                 break
         else:
             parsed_title['language'] = app_constants.G_DEF_LANGUAGE

@@ -18,7 +18,7 @@ import logging
 import math
 import functools
 
-from PyQt5.QtCore import (QModelIndex, Qt, QPoint, QEvent, pyqtSignal, QTimer, QSize, QRect, QFileInfo, QPropertyAnimation,
+from PyQt5.QtCore import (QModelIndex, Qt, QPoint, QEvent, pyqtSignal, QTimer, QSize, QRect, QFileInfo, QPropertyAnimation, QThread,
                           QRectF, QPropertyAnimation, QByteArray, QPointF, QSizeF, qRound)
 from PyQt5.QtGui import (QTextCursor, QIcon, QMouseEvent, QFont, QPalette, QPainter, QBrush, QColor, QPen, QPixmap,
                          QPaintEvent, QFontMetrics, QPolygonF, QCursor, QTextOption, QTextLayout, QPalette)
@@ -34,6 +34,7 @@ import utils
 import app_constants
 import gallerydb
 import settings
+import betterversions
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -41,6 +42,27 @@ log_d = log.debug
 log_w = log.warning
 log_e = log.error
 log_c = log.critical
+
+
+def worker_thread(parent, worker, start_slot, finished_signal, name=''):
+    """A thread for `worker` that ends when its work does. Returned unstarted.
+
+    A QThread runs an event loop that exits only on `quit()`, so a thread nobody quits keeps
+    running for the life of the process - and the `finished` -> `deleteLater` pair a call site
+    connects never fires either, because `finished` is what `quit()` causes. Both are wired
+    here so that no call site has to remember them.
+
+    Worker lifetime stays with the caller; only the thread's belongs to this. Connect the
+    worker's own signals before calling, then start the thread returned.
+    """
+    thread = QThread(parent)
+    if name:
+        thread.setObjectName(name)
+    worker.moveToThread(thread)
+    thread.started.connect(start_slot)
+    finished_signal.connect(thread.quit)
+    thread.finished.connect(thread.deleteLater)
+    return thread
 
 
 # qtawesome sabotages itself by calling QFont.setPixelSize(size: int) with a float
@@ -1102,12 +1124,19 @@ class GalleryMenu(QMenu):
         if not self.selected:
             get_metadata = web_menu.addAction('Fetch metadata',
                                     lambda: self.parent_widget.get_metadata(index.data(Qt.UserRole + 1)))
+            scan_better = web_menu.addAction('Scan for a better version',
+                                    lambda: self.parent_widget.scan_better_versions(
+                                        [index.data(Qt.UserRole + 1)]))
         else:
             gals = []
             for idx in self.selected:
                 gals.append(idx.data(Qt.UserRole + 1))
             get_select_metadata = web_menu.addAction('Fetch metadata for selected',
                                         lambda: self.parent_widget.get_metadata(gals))
+            scan_better = web_menu.addAction('Scan selected for better versions',
+                                        lambda: self.parent_widget.scan_better_versions(gals))
+        scan_better.setToolTip('Search the source for a decensored or translated release of the '
+                               'same work. One request per gallery, and nothing is applied.')
 
         web_menu.addSeparator()
 
@@ -1832,6 +1861,10 @@ class SingleGalleryChoices(BasePopup):
         extras = extras or {}
         self.gallery = gallery
         self._thumbnails = extras.get('thumbnails') or {}
+        # Keyed by url, as the api answered for each candidate. Kept whole so that anything
+        # wanting one of its fields reads that field, instead of parsing it back out of the
+        # row's own label - which silently acquires whatever line is added to the label next.
+        self._previews = extras.get('previews') or {}
         self._preview_session = extras.get('session')
         self._preview_cache = {}
         self._preview_requested = set()
@@ -1880,8 +1913,13 @@ class SingleGalleryChoices(BasePopup):
         self.list_w.viewport().setMouseTracking(True)  # itemEntered needs it on the viewport
         self.list_w.viewport().installEventFilter(self)
         self.list_w.itemEntered.connect(self.show_preview)
-        self.buttons = self.add_buttons('Skip All', 'Skip', 'Choose',)
-        self.buttons[2].clicked.connect(self.finish)
+        self.buttons = self.add_buttons('Skip All', 'Skip', 'Better version', 'Choose')
+        self.buttons[3].clicked.connect(self.finish)
+        self.buttons[2].clicked.connect(self.note_better_version)
+        self.buttons[2].setToolTip('Remember the highlighted result as a better version of this\n'
+                                   'gallery - a decensored or translated release worth downloading\n'
+                                   'later - without choosing it as the match. It is added to\n'
+                                   'Gallery / Better versions found, and this dialog stays open.')
         self.buttons[1].clicked.connect(self.skip)
         self.buttons[0].clicked.connect(self.skipall)
         self.resize(400, 400)
@@ -2033,6 +2071,32 @@ class SingleGalleryChoices(BasePopup):
     def closeEvent(self, event):
         self._preview_popup.hide()  # a tool tip window outlives its parent's close
         return super().closeEvent(event)
+
+    def note_better_version(self):
+        """Files the highlighted result as a better version of the local gallery.
+
+        The dialog deliberately stays open. What this answers is "not this one, but keep it in
+        mind" - the choice the dialog exists to make is still outstanding, and the search that
+        turned this candidate up has already been paid for.
+        """
+        items = self.list_w.selectedItems()
+        if not items:
+            app_constants.NOTIF_BAR.add_text('Select the better version first.')
+            return
+        if not self.gallery or not self.gallery.id:
+            app_constants.NOTIF_BAR.add_text('This gallery is not in the library yet, so there '
+                                             'is nothing to note a better version for.')
+            return
+        # The label's first line is the listing title and the rest is whatever else was worth
+        # showing. Every other field comes from the preview instead, so a line added to the
+        # label cannot end up in one of them.
+        label, url = items[0].item[0], items[0].item[1]
+        title = label.split('\n', 1)[0]
+        native = self._previews.get(url, {}).get('native', '')
+        added = betterversions.note_candidate(self.gallery, title, url, native)
+        app_constants.NOTIF_BAR.add_text(
+            'Noted a better version of {}.'.format(self.gallery.title or self.gallery.path_title)
+            if added else 'That one was already noted.')
 
     def finish(self):
         item = self.list_w.selectedItems()
