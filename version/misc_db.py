@@ -119,10 +119,10 @@ class NoTooltipModel(QIdentityProxyModel):
         super().__init__(parent)
         self.setSourceModel(model)
 
-    def data(self, index, role=Qt.DisplayRole):
-        if role == Qt.ToolTipRole:
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.ToolTipRole:
             return None
-        if role == Qt.DecorationRole:
+        if role == Qt.ItemDataRole.DecorationRole:
             return app_constants.ARTIST_ICON
         return self.sourceModel().data(index, role)
 
@@ -145,7 +145,7 @@ class UniqueInfoModel(QSortFilterProxyModel):
                 if unique:
                     if not unique in self._unique:
                         if self.custom_filter != None:
-                            if not idx.data(Qt.UserRole + 1) in self.custom_filter:
+                            if not idx.data(Qt.ItemDataRole.UserRole + 1) in self.custom_filter:
                                 return False
                         self._unique.add(unique)
                         return True
@@ -163,7 +163,7 @@ class ListDelegate(QStyledItemDelegate):
     
     def sizeHint(self, option, index):
         size = super().sizeHint(option, index)
-        if index.data(Qt.DisplayRole) == self.create_new_list_txt:
+        if index.data(Qt.ItemDataRole.DisplayRole) == self.create_new_list_txt:
             return size
         return QSize(size.width(), size.height() * 2)
 
@@ -196,8 +196,8 @@ class TagsTreeView(QTreeWidget):
     NEW_LIST = pyqtSignal(str, gallerydb.GalleryList)
     def __init__(self, parent):
         super().__init__(parent)
-        self.setSelectionBehavior(self.SelectItems)
-        self.setSelectionMode(self.ExtendedSelection)
+        self.setSelectionBehavior(self.SelectionBehavior.SelectItems)
+        self.setSelectionMode(self.SelectionMode.ExtendedSelection)
         self.clipboard = QApplication.clipboard()
         self.itemDoubleClicked.connect(lambda i: self.search_tags([i]) if i.parent() else None)
 
@@ -275,7 +275,7 @@ class TagsTreeView(QTreeWidget):
             handled = True
 
         if handled:
-            menu.exec_(event.globalPos())
+            menu.exec(event.globalPos())
             event.accept()
             del menu
         else:
@@ -294,7 +294,7 @@ class TagsTreeView(QTreeWidget):
             for tag in tags[ns]:
                 child_item = QTreeWidgetItem(top_item)
                 child_item.setText(0, tag)
-        self.sortItems(0, Qt.AscendingOrder)
+        self.sortItems(0, Qt.SortOrder.AscendingOrder)
 
 class GalleryListEdit(misc.BasePopup):
     apply = pyqtSignal()
@@ -376,7 +376,7 @@ class GalleryListContextMenu(QMenu):
         self.sidebar_widget.GALLERY_LIST_CLICKED.emit(self.gallery_list)
 
 class GalleryLists(QListWidget):
-    CREATE_LIST_TYPE = misc.CustomListItem.UserType + 1
+    CREATE_LIST_TYPE = misc.CustomListItem.ItemType.UserType + 1
     GALLERY_LIST_CLICKED = pyqtSignal(gallerydb.GalleryList)
     GALLERY_LIST_REMOVED = pyqtSignal()
     def __init__(self, parent):
@@ -390,7 +390,7 @@ class GalleryLists(QListWidget):
         self.itemDoubleClicked.connect(self._item_double_clicked)
         self.setItemDelegate(ListDelegate(self))
         self.itemDelegate().closeEditor.connect(self._add_new_list)
-        self.setEditTriggers(self.NoEditTriggers)
+        self.setEditTriggers(self.EditTrigger.NoEditTriggers)
         self.viewport().setAcceptDrops(True)
         self._in_proccess_item = None
         self.current_selected = None
@@ -442,7 +442,7 @@ class GalleryLists(QListWidget):
     def create_new_list(self, name=None, gallery_list=None):
         new_item = misc.CustomListItem()
         self._in_proccess_item = new_item
-        new_item.setFlags(new_item.flags() | Qt.ItemIsEditable)
+        new_item.setFlags(new_item.flags() | Qt.ItemFlag.ItemIsEditable)
         new_item.setIcon(QIcon(app_constants.LIST_ICON))
         self.insertItem(0, new_item)
         if name:
@@ -474,7 +474,7 @@ class GalleryLists(QListWidget):
         item = self.itemAt(event.pos())
         if item and item.type() != self.CREATE_LIST_TYPE:
             menu = GalleryListContextMenu(item, self)
-            menu.exec_(event.globalPos())
+            menu.exec(event.globalPos())
             event.accept()
             return
         event.ignore()
@@ -486,12 +486,12 @@ class SideBarWidget(QFrame):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.parent_widget = parent
-        self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.MinimumExpanding)
+        self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.MinimumExpanding)
         self._widget_layout = QHBoxLayout(self)
 
         # widget stuff
         self._d_widget = QWidget(self)
-        self._d_widget.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.MinimumExpanding)
+        self._d_widget.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.MinimumExpanding)
         self._widget_layout.addWidget(self._d_widget)
         self.main_layout = QVBoxLayout(self._d_widget)
         self.main_layout.setSpacing(0)
@@ -581,14 +581,14 @@ class SideBarWidget(QFrame):
 
         self.slide_animation = misc.create_animation(self, "maximumSize")
         self.slide_animation.stateChanged.connect(self._slide_hide)
-        self.slide_animation.setEasingCurve(QEasingCurve.InOutQuad)
+        self.slide_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
 
     def _slide_hide(self, state):
         size = self.sizeHint()
-        if state == self.slide_animation.Stopped:
+        if state == self.slide_animation.State.Stopped:
             if self.arrow_handle.current_arrow == self.arrow_handle.OUT:
                 self._d_widget.hide()
-        elif self.slide_animation.Running:
+        elif state == self.slide_animation.State.Running:
             if self.arrow_handle.current_arrow == self.arrow_handle.IN:
                 if not self.parent_widget.current_manga_view.allow_sidebarwidget:
                     self.arrow_handle.current_arrow = self.arrow_handle.OUT
@@ -600,10 +600,10 @@ class SideBarWidget(QFrame):
     def slide(self, state):
         self.slide_animation.setEndValue(QSize(self.arrow_handle.width() * 2, self.height()))
         if state:
-            self.slide_animation.setDirection(self.slide_animation.Forward)
+            self.slide_animation.setDirection(self.slide_animation.Direction.Forward)
             self.slide_animation.start()
         else:
-            self.slide_animation.setDirection(self.slide_animation.Backward)
+            self.slide_animation.setDirection(self.slide_animation.Direction.Backward)
             self.slide_animation.start()
 
     def showEvent(self, event):
@@ -631,10 +631,10 @@ class DBOverview(QWidget):
     about_to_close = pyqtSignal()
     def __init__(self, parent, window=False):
         if window:
-            super().__init__(None, Qt.Window)
+            super().__init__(None, Qt.WindowType.Window)
         else:
             super().__init__(parent)
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.parent_widget = parent
         main_layout = QVBoxLayout(self)
         tabbar = QTabWidget(self)

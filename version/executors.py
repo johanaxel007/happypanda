@@ -16,14 +16,14 @@ log_e = log.error
 log_c = log.critical
 
 def _rounded_qimage(qimg, radius):
-    r_image = QImage(qimg.width(), qimg.height(), QImage.Format_ARGB32)
-    r_image.fill(Qt.transparent)
+    r_image = QImage(qimg.width(), qimg.height(), QImage.Format.Format_ARGB32)
+    r_image.fill(Qt.GlobalColor.transparent)
     p = QPainter()
-    pen = QPen(Qt.darkGray)
-    pen.setJoinStyle(Qt.RoundJoin)
+    pen = QPen(Qt.GlobalColor.darkGray)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     p.begin(r_image)
-    p.setRenderHint(p.Antialiasing)
-    p.setPen(Qt.NoPen)
+    p.setRenderHint(p.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(QBrush(qimg))
     p.drawRoundedRect(0, 0, r_image.width(), r_image.height(), radius, radius)
     p.end()
@@ -70,7 +70,8 @@ def _task_thumbnail(gallery_or_path, img: str = None, width: int = None, height:
         if image.isNull():
             raise IndexError
         radius = 5
-        image = image.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        image = image.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
         r_image = _rounded_qimage(image, radius)
         r_image.save(new_img_path, "PNG", quality=80)
     except IndexError:
@@ -91,7 +92,9 @@ def _task_load_thumbnail(ppath, thumb_size, on_method=None, **kwargs):
             size = img.size()
             if size.width() != thumb_size[0]:
                 # TODO: use _task_thumbnail
-                img = _rounded_qimage(img.scaled(thumb_size[0], thumb_size[1], Qt.KeepAspectRatio, Qt.SmoothTransformation), 5)
+                img = _rounded_qimage(img.scaled(thumb_size[0], thumb_size[1],
+                                                 Qt.AspectRatioMode.KeepAspectRatio,
+                                                 Qt.TransformationMode.SmoothTransformation), 5)
             if on_method:
                 on_method(img, **kwargs)
             return img

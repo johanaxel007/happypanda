@@ -23,7 +23,7 @@ from PyQt5.QtCore import (QModelIndex, Qt, QPoint, QEvent, pyqtSignal, QTimer, Q
 from PyQt5.QtGui import (QTextCursor, QIcon, QMouseEvent, QFont, QPalette, QPainter, QBrush, QColor, QPen, QPixmap,
                          QPaintEvent, QFontMetrics, QPolygonF, QCursor, QTextOption, QTextLayout, QPalette)
 from PyQt5.QtWidgets import (QWidget, QProgressBar, QLabel, QVBoxLayout, QHBoxLayout, QDialog, QLineEdit, QFormLayout,
-                             QPushButton, QTextEdit, QDesktopWidget, QMessageBox, QFileDialog, QCompleter, QListWidgetItem,
+                             QPushButton, QTextEdit, QApplication, QMessageBox, QFileDialog, QCompleter, QListWidgetItem,
                              QListWidget, QSizePolicy, QCheckBox, QFrame, QListView, QAbstractItemView, QTreeView, QSpinBox,
                              QAction, QStackedLayout, QScrollArea, QLayout, QFileIconProvider, QScrollArea, QSystemTrayIcon,
                              QMenu, QActionGroup, QCommonStyle, QTableWidget, QTableWidgetItem, QTableView, QStyleOption)
@@ -74,11 +74,11 @@ QFont.setPixelSize = _setPixelSize
 
 
 
-def text_layout(text, width, font, font_metrics, alignment=Qt.AlignCenter):
+def text_layout(text, width, font, font_metrics, alignment=Qt.AlignmentFlag.AlignCenter):
     "Lays out wrapped text"
     text_option = QTextOption(alignment)
     text_option.setUseDesignMetrics(True)
-    text_option.setWrapMode(QTextOption.WordWrap)
+    text_option.setWrapMode(QTextOption.WrapMode.WordWrap)
     layout = QTextLayout(text, font)
     layout.setTextOption(text_option)
     leading = font_metrics.leading()
@@ -96,14 +96,25 @@ def text_layout(text, width, font, font_metrics, alignment=Qt.AlignCenter):
     layout.endLayout()
     return layout
 
+def available_geometry(point=None):
+    """The usable area of the screen holding `point`, or of the primary screen.
+
+    Qt6 removed QDesktopWidget. screenAt() answers None for a point on no screen at all - a
+    cursor between two monitors, or on one that has just been unplugged - so the primary screen
+    stands in for it.
+    """
+    screen = QApplication.screenAt(point) if point is not None else None
+    return (screen or QApplication.primaryScreen()).availableGeometry()
+
+
 def centerWidget(widget, parent_widget=None):
     if parent_widget:
         r = parent_widget.rect()
     else:
-        r = QDesktopWidget().availableGeometry()
+        r = available_geometry()
 
-    widget.setGeometry(QCommonStyle.alignedRect(Qt.LeftToRight,
-            Qt.AlignCenter,
+    widget.setGeometry(QCommonStyle.alignedRect(Qt.LayoutDirection.LeftToRight,
+            Qt.AlignmentFlag.AlignCenter,
             widget.size(),
             r))
 
@@ -131,7 +142,7 @@ class ArrowHandle(QWidget):
         self.current_arrow = self.IN
         self.arrow_height = 20
         self.setFixedWidth(10)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def paintEvent(self, event):
         rect = self.rect()
@@ -168,7 +179,7 @@ class ArrowHandle(QWidget):
         self.update()
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self.click()
         return super().mousePressEvent(event)
 
@@ -177,12 +188,12 @@ class Line(QFrame):
     "'v' for vertical line or 'h' for horizontail line, color is hex string"
     def __init__(self, orentiation, parent=None):
         super().__init__(parent)
-        self.setFrameStyle(self.StyledPanel)
+        self.setFrameStyle(self.Shape.StyledPanel)
         if orentiation == 'v':
-            self.setFrameShape(self.VLine)
+            self.setFrameShape(self.Shape.VLine)
         else:
-            self.setFrameShape(self.HLine)
-        self.setFrameShadow(self.Sunken)
+            self.setFrameShape(self.Shape.HLine)
+        self.setFrameShadow(self.Shadow.Sunken)
 
 
 class CompleterPopupView(QListView):
@@ -194,8 +205,8 @@ class CompleterPopupView(QListView):
         self.fade_animation.setDuration(200)
         self.fade_animation.setStartValue(0.0)
         self.fade_animation.setEndValue(1.0)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setFrameStyle(self.StyledPanel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setFrameStyle(self.Shape.StyledPanel)
 
     def showEvent(self, event):
         self.setWindowOpacity(0)
@@ -209,7 +220,7 @@ class ElidedLabel(QLabel):
     def paintEvent(self, event):
         painter = QPainter(self)
         metrics = QFontMetrics(self.font())
-        elided = metrics.elidedText(self.text(), Qt.ElideRight, self.width())
+        elided = metrics.elidedText(self.text(), Qt.TextElideMode.ElideRight, self.width())
         painter.drawText(self.rect(), self.alignment(), elided)
 
 
@@ -218,7 +229,7 @@ class BaseMoveWidget(QWidget):
         move_listener = kwargs.pop('move_listener', True)
         super().__init__(parent, **kwargs)
         self.parent_widget = parent
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         if parent and move_listener:
             try:
                 parent.move_listener.connect(self.update_move)
@@ -307,14 +318,14 @@ class SortMenu(QMenu):
         self.set_toolbutton_text()
 
     def asc_desc(self):
-        if self.parent_widget.current_manga_view.sort_model.sortOrder() == Qt.AscendingOrder:
+        if self.parent_widget.current_manga_view.sort_model.sortOrder() == Qt.SortOrder.AscendingOrder:
             if self.toolbutton:
                 self.toolbutton.setIcon(app_constants.SORT_ICON_DESC)
-            self.parent_widget.current_manga_view.sort_model.sort(0, Qt.DescendingOrder)
+            self.parent_widget.current_manga_view.sort_model.sort(0, Qt.SortOrder.DescendingOrder)
         else:
             if self.toolbutton:
                 self.toolbutton.setIcon(app_constants.SORT_ICON_ASC)
-            self.parent_widget.current_manga_view.sort_model.sort(0, Qt.AscendingOrder)
+            self.parent_widget.current_manga_view.sort_model.sort(0, Qt.SortOrder.AscendingOrder)
 
     def showEvent(self, event):
         self.set_current_sort()
@@ -343,7 +354,7 @@ class ToolbarButton(QPushButton):
         if self._enable_contextmenu:
             m = QMenu(self)
             m.addAction("Close Tab").triggered.connect(lambda: self.close_tab.emit(self))
-            m.exec_(event.globalPos())
+            m.exec(event.globalPos())
             event.accept()
         else:
             event.ignore()
@@ -352,15 +363,15 @@ class ToolbarButton(QPushButton):
 class TransparentWidget(BaseMoveWidget):
     def __init__(self, parent = None, **kwargs):
         super().__init__(parent, **kwargs)
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
 
 class ArrowWindow(TransparentWidget):
     LEFT, RIGHT, TOP, BOTTOM = range(4)
 
     def __init__(self, parent):
-        super().__init__(parent, flags=Qt.Window | Qt.FramelessWindowHint, move_listener=False)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        super().__init__(parent, flags=Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint, move_listener=False)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.resize(550,300)
         self.direction = self.LEFT
         self._arrow_size = QSizeF(30, 30)
@@ -393,7 +404,7 @@ class ArrowWindow(TransparentWidget):
         opt.initFrom(self)
 
         painter = QPainter(self)
-        painter.setRenderHint(painter.Antialiasing)
+        painter.setRenderHint(painter.RenderHint.Antialiasing)
 
         size = self.size()
         if self.direction in (self.LEFT, self.RIGHT):
@@ -409,7 +420,7 @@ class ArrowWindow(TransparentWidget):
 
         #painter.save()
         #painter.translate(starting_point)
-        self.style().drawPrimitive(QCommonStyle.PE_Widget, opt, painter, self)
+        self.style().drawPrimitive(QCommonStyle.PrimitiveElement.PE_Widget, opt, painter, self)
         #painter.restore()
         painter.setBrush(QBrush(painter.pen().color()))
 
@@ -466,20 +477,21 @@ class GalleryMetaWindow(ArrowWindow):
         self.show_animation.setDuration(350)
         self.show_animation.setStartValue(0.0)
         self.show_animation.setEndValue(1.0)
-        self.setFocusPolicy(Qt.NoFocus)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.g_rect_global : QRect = QRect(0, 0, 0, 0)
 
     def show(self):
-        if not self.hide_animation.Running:
-            self.setWindowOpacity(0)
-            super().show()
-            self.show_animation.start()
-        else:
+        # Interrupting a fade-out resumes from the opacity it had reached; both branches set the
+        # start value, because whichever ran last leaves it on the shared animation.
+        if self.hide_animation.state() == self.hide_animation.State.Running:
             self.hide_animation.stop()
-            super().show()
             self.show_animation.setStartValue(self.windowOpacity())
-            self.show_animation.start()
+        else:
+            self.setWindowOpacity(0)
+            self.show_animation.setStartValue(0.0)
+        super().show()
+        self.show_animation.start()
 
     def focusOutEvent(self, event):
         self.delayed_hide()
@@ -626,7 +638,7 @@ class GalleryMetaWindow(ArrowWindow):
         else: # default pos is bottom
             fits_below(True)
 
-        self._set_gallery(index.data(Qt.UserRole + 1))
+        self._set_gallery(index.data(Qt.ItemDataRole.UserRole + 1))
         self.show()
         self.update()
 
@@ -654,24 +666,24 @@ class GalleryMetaWindow(ArrowWindow):
             def __init__(self, parent):
                 super().__init__(parent)
                 self.setColumnCount(3)
-                self.setEditTriggers(self.NoEditTriggers)
-                self.setFocusPolicy(Qt.NoFocus)
-                self.verticalHeader().setSectionResizeMode(self.verticalHeader().ResizeToContents)
-                self.horizontalHeader().setSectionResizeMode(0, self.horizontalHeader().ResizeToContents)
-                self.horizontalHeader().setSectionResizeMode(1, self.horizontalHeader().Stretch)
-                self.horizontalHeader().setSectionResizeMode(2, self.horizontalHeader().ResizeToContents)
+                self.setEditTriggers(self.EditTrigger.NoEditTriggers)
+                self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                self.verticalHeader().setSectionResizeMode(self.verticalHeader().ResizeMode.ResizeToContents)
+                self.horizontalHeader().setSectionResizeMode(0, self.horizontalHeader().ResizeMode.ResizeToContents)
+                self.horizontalHeader().setSectionResizeMode(1, self.horizontalHeader().ResizeMode.Stretch)
+                self.horizontalHeader().setSectionResizeMode(2, self.horizontalHeader().ResizeMode.ResizeToContents)
                 self.horizontalHeader().hide()
                 self.verticalHeader().hide()
-                self.setSelectionMode(self.SingleSelection)
-                self.setSelectionBehavior(self.SelectRows)
+                self.setSelectionMode(self.SelectionMode.SingleSelection)
+                self.setSelectionBehavior(self.SelectionBehavior.SelectRows)
                 self.setShowGrid(False)
-                self.viewport().setBackgroundRole(self.palette().Dark)
+                self.viewport().setBackgroundRole(self.palette().ColorRole.Dark)
                 palette = self.viewport().palette()
-                palette.setColor(palette.Highlight, QColor(88, 88, 88, 70))
-                palette.setColor(palette.HighlightedText, QColor('black'))
+                palette.setColor(palette.ColorRole.Highlight, QColor(88, 88, 88, 70))
+                palette.setColor(palette.ColorRole.HighlightedText, QColor('black'))
                 self.viewport().setPalette(palette)
                 self.setWordWrap(False)
-                self.setTextElideMode(Qt.ElideRight)
+                self.setTextElideMode(Qt.TextElideMode.ElideRight)
                 self.doubleClicked.connect(lambda idx: self._get_chap(idx).open())
 
             def set_chapters(self, chapter_container):
@@ -687,8 +699,8 @@ class GalleryMetaWindow(ArrowWindow):
                     self.setRowCount(c_row)
                     c_row -= 1
                     n = t_item()
-                    n.setData(Qt.DisplayRole, chap.number + 1)
-                    n.setData(Qt.UserRole + 1, chap)
+                    n.setData(Qt.ItemDataRole.DisplayRole, chap.number + 1)
+                    n.setData(Qt.ItemDataRole.UserRole + 1, chap)
                     self.setItem(c_row, 0, n)
                     title = chap.title
                     if not title:
@@ -702,7 +714,7 @@ class GalleryMetaWindow(ArrowWindow):
             def _get_chap(self, idx):
                 r = idx.row()
                 t = self.item(r, 0)
-                return t.data(Qt.UserRole + 1)
+                return t.data(Qt.ItemDataRole.UserRole + 1)
 
             def contextMenuEvent(self, event):
                 idx = self.indexAt(event.pos())
@@ -717,7 +729,7 @@ class GalleryMetaWindow(ArrowWindow):
                         utils.open_path(path)
                     t = "Open archive" if chap.in_archive else "Open folder"
                     action_open_path = menu.addAction(t, open_source)
-                    menu.exec_(event.globalPos())
+                    menu.exec(event.globalPos())
                     event.accept()
                     del menu
                 else:
@@ -725,7 +737,7 @@ class GalleryMetaWindow(ArrowWindow):
 
         def __init__(self, parent, appwindow):
             super().__init__(parent)
-            self.setFocusPolicy(Qt.NoFocus)
+            self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.appwindow = appwindow
             self.setStyleSheet('color:white;')
             main_layout = QHBoxLayout(self)
@@ -738,7 +750,7 @@ class GalleryMetaWindow(ArrowWindow):
             self.chapter_list = self.ChapterList(self)
             back_btn = TagText('Back')
             back_btn.clicked.connect(lambda: stacked_l.setCurrentIndex(self.general_index))
-            chapter_layout.addWidget(back_btn, 0, Qt.AlignCenter)
+            chapter_layout.addWidget(back_btn, 0, Qt.AlignmentFlag.AlignCenter)
             chapter_layout.addWidget(self.chapter_list)
             self.left_layout = QFormLayout()
             self.main_left_layout = QVBoxLayout(general_info)
@@ -761,7 +773,7 @@ class GalleryMetaWindow(ArrowWindow):
             self.g_artist_lbl.setToolTip("Click to see more from this artist")
             self.left_layout.addRow(self.g_artist_lbl)
             for lbl in (self.g_title_lbl, self.g_artist_lbl):
-                lbl.setAlignment(Qt.AlignCenter)
+                lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.left_layout.addRow(Line('h'))
 
             first_layout = QHBoxLayout()
@@ -778,7 +790,7 @@ class GalleryMetaWindow(ArrowWindow):
             self.right_layout.addRow(self.g_lang_lbl)
             self.right_layout.addRow(self.g_chap_count_lbl)
             #first_layout.addWidget(self.g_lang_lbl, 0, Qt.AlignLeft)
-            first_layout.addWidget(self.g_chapters_lbl, 0, Qt.AlignCenter)
+            first_layout.addWidget(self.g_chapters_lbl, 0, Qt.AlignmentFlag.AlignCenter)
             #first_layout.addWidget(self.g_type_lbl, 0, Qt.AlignRight)
             self.left_layout.addRow(first_layout)
 
@@ -806,12 +818,12 @@ class GalleryMetaWindow(ArrowWindow):
 
             self.tags_scroll = QScrollArea(self)
             self.tags_widget = QWidget(self.tags_scroll)
-            self.tags_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.tags_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self.tags_layout = QFormLayout(self.tags_widget)
-            self.tags_layout.setSizeConstraint(self.tags_layout.SetMaximumSize)
+            self.tags_layout.setSizeConstraint(self.tags_layout.SizeConstraint.SetMaximumSize)
             self.tags_scroll.setWidget(self.tags_widget)
             self.tags_scroll.setWidgetResizable(True)
-            self.tags_scroll.setFrameShape(QFrame.NoFrame)
+            self.tags_scroll.setFrameShape(QFrame.Shape.NoFrame)
             self.main_left_layout.addWidget(self.tags_scroll)
 
 
@@ -886,8 +898,8 @@ class Spinner(TransparentWidget):
 
     def __init__(self, parent, position='topright'):
         "Position can be: 'center', 'topright' or QPoint"
-        super().__init__(parent, flags=Qt.Window | Qt.FramelessWindowHint, move_listener=False)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        super().__init__(parent, flags=Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint, move_listener=False)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.fps = 21
         self.border = 2
         self.line_width = 5
@@ -965,14 +977,14 @@ class Spinner(TransparentWidget):
         painter = QPainter()
         painter.begin(self)
         try:
-            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
             txt_rect = QRect(0,0,0,0)
             if not self.text:
                 txt_rect.setHeight(self.fontMetrics().height())
 
             painter.save()
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(QColor(88,88,88,180)))
             painter.drawRoundedRect(QRect(0,0, self.width(), self.height() - txt_rect.height()), 5, 5)
             painter.restore()
@@ -1056,7 +1068,7 @@ class GalleryMenu(QMenu):
         self.view = view
         self.sort_model = sort_model
         self.index = index
-        self.gallery = index.data(Qt.UserRole + 1)
+        self.gallery = index.data(Qt.ItemDataRole.UserRole + 1)
         self.selected = selected_indexes
         if self.view.view_type == app_constants.ViewType.Default:
             if not self.selected:
@@ -1072,7 +1084,7 @@ class GalleryMenu(QMenu):
                 favourite_act.setCheckable(True)
                 f = []
                 for idx in self.selected:
-                    if idx.data(Qt.UserRole + 1).fav:
+                    if idx.data(Qt.ItemDataRole.UserRole + 1).fav:
                         f.append(True)
                     else:
                         f.append(False)
@@ -1123,14 +1135,14 @@ class GalleryMenu(QMenu):
 
         if not self.selected:
             get_metadata = web_menu.addAction('Fetch metadata',
-                                    lambda: self.parent_widget.get_metadata(index.data(Qt.UserRole + 1)))
+                                    lambda: self.parent_widget.get_metadata(index.data(Qt.ItemDataRole.UserRole + 1)))
             scan_better = web_menu.addAction('Scan for a better version',
                                     lambda: self.parent_widget.scan_better_versions(
-                                        [index.data(Qt.UserRole + 1)]))
+                                        [index.data(Qt.ItemDataRole.UserRole + 1)]))
         else:
             gals = []
             for idx in self.selected:
-                gals.append(idx.data(Qt.UserRole + 1))
+                gals.append(idx.data(Qt.ItemDataRole.UserRole + 1))
             get_select_metadata = web_menu.addAction('Fetch metadata for selected',
                                         lambda: self.parent_widget.get_metadata(gals))
             scan_better = web_menu.addAction('Scan selected for better versions',
@@ -1140,10 +1152,10 @@ class GalleryMenu(QMenu):
 
         web_menu.addSeparator()
 
-        if self.index.data(Qt.UserRole + 1).link and not self.selected:
+        if self.index.data(Qt.ItemDataRole.UserRole + 1).link and not self.selected:
             op_link = web_menu.addAction('Open URL', self.op_link)
             web_menu.addSeparator()
-        if self.selected and all([idx.data(Qt.UserRole + 1).link for idx in self.selected]):
+        if self.selected and all([idx.data(Qt.ItemDataRole.UserRole + 1).link for idx in self.selected]):
             op_links = web_menu.addAction('Open URLs', lambda: self.op_link(True))
             web_menu.addSeparator()
 
@@ -1153,16 +1165,19 @@ class GalleryMenu(QMenu):
         self.addSeparator()
 
         edit = self.addAction('Edit', lambda: self.edit_gallery.emit(self.parent_widget,
-                                            self.index.data(Qt.UserRole + 1) if not self.selected else [idx.data(Qt.UserRole + 1) for idx in self.selected]))
+                                            self.index.data(Qt.ItemDataRole.UserRole + 1)
+                                            if not self.selected
+                                            else [idx.data(Qt.ItemDataRole.UserRole + 1)
+                                                  for idx in self.selected]))
         
         self.addSeparator()
 
         if not self.selected:
-            text = 'folder' if not self.index.data(Qt.UserRole + 1).is_archive else 'archive'
+            text = 'folder' if not self.index.data(Qt.ItemDataRole.UserRole + 1).is_archive else 'archive'
             op_folder_act = self.addAction('Open {}'.format(text), self.op_folder)
             op_cont_folder_act = self.addAction('Show in folder', lambda: self.op_folder(containing=True))
         else:
-            text = 'folders' if not self.index.data(Qt.UserRole + 1).is_archive else 'archives'
+            text = 'folders' if not self.index.data(Qt.ItemDataRole.UserRole + 1).is_archive else 'archives'
             op_folder_select = self.addAction('Open {}'.format(text), lambda: self.op_folder(True))
             op_cont_folder_select = self.addAction('Show in folders', lambda: self.op_folder(True, True))
 
@@ -1180,7 +1195,7 @@ class GalleryMenu(QMenu):
             remove_ch = remove_menu.addAction('Remove chapter')
             remove_ch_menu = QMenu(self)
             remove_ch.setMenu(remove_ch_menu)
-            for number, chap_number in enumerate(range(len(self.index.data(Qt.UserRole + 1).chapters)), 1):
+            for number, chap_number in enumerate(range(len(self.index.data(Qt.ItemDataRole.UserRole + 1).chapters)), 1):
                 chap_action = QAction("Remove chapter {}".format(number),
                           remove_ch_menu,
                           triggered = functools.partial(self.parent_widget.manga_list_view.del_chapter,
@@ -1206,7 +1221,7 @@ class GalleryMenu(QMenu):
         if self.selected:
             allow_metadata_count = 0
             for i in self.selected:
-                if i.data(Qt.UserRole + 1).exed:
+                if i.data(Qt.ItemDataRole.UserRole + 1).exed:
                     allow_metadata_count += 1
             self.allow_metadata_exed = allow_metadata_count >= len(self.selected) // 2
         else:
@@ -1224,9 +1239,9 @@ class GalleryMenu(QMenu):
         if txt == 'artist':
             if self.selected:
                 for i in self.selected:
-                    tag.append('artist:' + i.data(Qt.UserRole + 2).strip())
+                    tag.append('artist:' + i.data(Qt.ItemDataRole.UserRole + 2).strip())
             else:
-                tag.append('artist:' + self.index.data(Qt.UserRole + 2).strip())
+                tag.append('artist:' + self.index.data(Qt.ItemDataRole.UserRole + 2).strip())
 
         [utils.lookup_tag(t) for t in tag]
 
@@ -1236,7 +1251,7 @@ class GalleryMenu(QMenu):
             gallerydb.execute(gallerydb.GalleryDB.modify_gallery,
                                 True, g.id, rating=g.rating)
         if self.selected:
-           [(setattr(g, "rating", x), save_rating(g)) for g in [idx.data(Qt.UserRole + 1) for idx in self.selected]]
+           [(setattr(g, "rating", x), save_rating(g)) for g in [idx.data(Qt.ItemDataRole.UserRole + 1) for idx in self.selected]]
         else:
              self.gallery.rating = x
              save_rating(self.gallery)
@@ -1247,7 +1262,7 @@ class GalleryMenu(QMenu):
             gs = self.selected
         else:
             gs = [self.index]
-        galleries = [idx.data(Qt.UserRole + 1) for idx in gs]
+        galleries = [idx.data(Qt.ItemDataRole.UserRole + 1) for idx in gs]
 
         paths = set()
         for g in galleries:
@@ -1266,7 +1281,7 @@ class GalleryMenu(QMenu):
             gs = self.selected
         else:
             gs = [self.index]
-        galleries = [idx.data(Qt.UserRole + 1) for idx in gs]
+        galleries = [idx.data(Qt.ItemDataRole.UserRole + 1) for idx in gs]
         rows = len(galleries)
         self.view.gallery_model._gallery_to_remove.extend(galleries)
         self.view.gallery_model.removeRows(self.view.gallery_model.rowCount() - rows, rows)
@@ -1281,7 +1296,7 @@ class GalleryMenu(QMenu):
         exed = 0 if self.allow_metadata_exed else 1
         if self.selected:
             for idx in self.selected:
-                g = idx.data(Qt.UserRole + 1)
+                g = idx.data(Qt.ItemDataRole.UserRole + 1)
                 g.exed = exed
                 gallerydb.execute(gallerydb.GalleryDB.modify_gallery, True, g.id, {'exed':exed})
         else:
@@ -1291,7 +1306,7 @@ class GalleryMenu(QMenu):
     def reset_read_count(self):
         if self.selected:
             for idx in self.selected:
-                g = idx.data(Qt.UserRole + 1)
+                g = idx.data(Qt.ItemDataRole.UserRole + 1)
                 g.times_read = 0
                 gallerydb.execute(gallerydb.GalleryDB.modify_gallery, True, g.id, {'times_read':0})
         else:
@@ -1302,7 +1317,7 @@ class GalleryMenu(QMenu):
         galleries = []
         if self.selected:
             for idx in self.selected:
-                galleries.append(idx.data(Qt.UserRole + 1))
+                galleries.append(idx.data(Qt.ItemDataRole.UserRole + 1))
         else:
             galleries.append(self.gallery)
         g_list.add_gallery(galleries)
@@ -1312,7 +1327,7 @@ class GalleryMenu(QMenu):
         if self.selected:
             g_ids = []
             for idx in self.selected:
-                g_ids.append(idx.data(Qt.UserRole + 1).id)
+                g_ids.append(idx.data(Qt.ItemDataRole.UserRole + 1).id)
         else:
             g_ids = self.gallery.id
         self.sort_model.current_gallery_list.remove_gallery(g_ids)
@@ -1323,7 +1338,7 @@ class GalleryMenu(QMenu):
             self.parent_widget.manga_list_view.favorite(idx)
 
     def change_cover(self):
-        gallery = self.index.data(Qt.UserRole + 1)
+        gallery = self.index.data(Qt.ItemDataRole.UserRole + 1)
         log_i('Attempting to change cover of {}'.format(gallery.title))
         if gallery.is_archive:
             try:
@@ -1350,34 +1365,34 @@ class GalleryMenu(QMenu):
         txt = "Opening first chapters of selected galleries"
         app_constants.STAT_MSG_METHOD(txt)
         for idx in self.selected:
-            idx.data(Qt.UserRole + 1).chapters[0].open(False)
+            idx.data(Qt.ItemDataRole.UserRole + 1).chapters[0].open(False)
 
     def op_link(self, select=False):
         if select:
             for x in self.selected:
-                gal = x.data(Qt.UserRole + 1)
+                gal = x.data(Qt.ItemDataRole.UserRole + 1)
                 utils.open_web_link(gal.link)
         else:
-            utils.open_web_link(self.index.data(Qt.UserRole + 1).link)
+            utils.open_web_link(self.index.data(Qt.ItemDataRole.UserRole + 1).link)
             
 
     def op_folder(self, select=False, containing=False):
         if select:
             for x in self.selected:
-                text = 'Opening archives...' if self.index.data(Qt.UserRole + 1).is_archive else 'Opening folders...'
+                text = 'Opening archives...' if self.index.data(Qt.ItemDataRole.UserRole + 1).is_archive else 'Opening folders...'
                 text = 'Opening containing folders...' if containing else text
                 self.view.STATUS_BAR_MSG.emit(text)
-                gal = x.data(Qt.UserRole + 1)
+                gal = x.data(Qt.ItemDataRole.UserRole + 1)
                 path = os.path.split(gal.path)[0] if containing else gal.path
                 if containing:
                     utils.open_path(path, gal.path)
                 else:
                     utils.open_path(path)
         else:
-            text = 'Opening archive...' if self.index.data(Qt.UserRole + 1).is_archive else 'Opening folder...'
+            text = 'Opening archive...' if self.index.data(Qt.ItemDataRole.UserRole + 1).is_archive else 'Opening folder...'
             text = 'Opening containing folder...' if containing else text
             self.view.STATUS_BAR_MSG.emit(text)
-            gal = self.index.data(Qt.UserRole + 1)
+            gal = self.index.data(Qt.ItemDataRole.UserRole + 1)
             path = os.path.split(gal.path)[0] if containing else gal.path
             if containing:
                 utils.open_path(path, gal.path)
@@ -1387,10 +1402,10 @@ class GalleryMenu(QMenu):
 
     def add_chapters(self):
         def add_chdb(chaps_container):
-            gallery = self.index.data(Qt.UserRole + 1)
+            gallery = self.index.data(Qt.ItemDataRole.UserRole + 1)
             log_i('Adding new chapter for {}'.format(gallery.title))
             gallerydb.execute(gallerydb.ChapterDB.add_chapters_raw, False, gallery.id, chaps_container)
-        ch_widget = ChapterAddWidget(self.index.data(Qt.UserRole + 1), self.parent_widget)
+        ch_widget = ChapterAddWidget(self.index.data(Qt.ItemDataRole.UserRole + 1), self.parent_widget)
         ch_widget.CHAPTERS.connect(add_chdb)
         ch_widget.show()
 
@@ -1404,7 +1419,7 @@ class SystemTray(QSystemTrayIcon):
         super().__init__(icon, parent=None)
         self.parent_widget = parent
 
-    def showMessage(self, title, msg, icon=QSystemTrayIcon.Information,
+    def showMessage(self, title, msg, icon=QSystemTrayIcon.MessageIcon.Information,
                  msecs=10000, minimized=False):
         # NOTE: Crashes on linux
         # TODO: Fix this!!
@@ -1423,13 +1438,14 @@ class ClickedLabel(QLabel):
     clicked = pyqtSignal(str)
     def __init__(self, s="", **kwargs):
         super().__init__(s, **kwargs)
-        self.setTextInteractionFlags(Qt.LinksAccessibleByMouse | Qt.LinksAccessibleByKeyboard)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse
+                                     | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
 
     def enterEvent(self, event):
         if self.text():
-            self.setCursor(Qt.PointingHandCursor)
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
-            self.setCursor(Qt.ArrowCursor)
+            self.setCursor(Qt.CursorShape.ArrowCursor)
         return super().enterEvent(event)
 
     def mousePressEvent(self, event):
@@ -1450,7 +1466,7 @@ class TagText(QPushButton):
 
     def mousePressEvent(self, ev):
         assert isinstance(ev, QMouseEvent)
-        if ev.button() == Qt.RightButton:
+        if ev.button() == Qt.MouseButton.RightButton:
             if self.search_widget:
                 menu = QMenu(self)
                 menu.addAction("Lookup tag",
@@ -1462,9 +1478,9 @@ class TagText(QPushButton):
 
     def enterEvent(self, event):
         if self.text():
-            self.setCursor(Qt.PointingHandCursor)
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
-            self.setCursor(Qt.ArrowCursor)
+            self.setCursor(Qt.CursorShape.ArrowCursor)
         return super().enterEvent(event)
 
 
@@ -1477,12 +1493,12 @@ class BasePopup(TransparentWidget):
             if kwargs:
                 super().__init__(parent, **kwargs)
             else:
-                super().__init__(parent, flags= Qt.Dialog | Qt.FramelessWindowHint)
+                super().__init__(parent, flags= Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         else:
-            super().__init__(parent, flags= Qt.Dialog | Qt.FramelessWindowHint)
+            super().__init__(parent, flags= Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         main_layout = QVBoxLayout()
         self.main_widget = QFrame()
-        self.main_widget.setFrameStyle(QFrame.StyledPanel)
+        self.main_widget.setFrameStyle(QFrame.Shape.StyledPanel)
         self.setLayout(main_layout)
         main_layout.addWidget(self.main_widget)
         self.generic_buttons = QHBoxLayout()
@@ -1516,7 +1532,7 @@ class BasePopup(TransparentWidget):
         return super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.LeftButton:
+        if event.buttons() == Qt.MouseButton.LeftButton:
             diff = event.pos() - self.curr_pos
             newpos = self.pos() + diff
             self.move(newpos)
@@ -1556,17 +1572,17 @@ class BasePopup(TransparentWidget):
 class AppBubble(BasePopup):
     "For application notifications"
     def __init__(self, parent):
-        super().__init__(parent, flags= Qt.Window | Qt.FramelessWindowHint, blur=False)
+        super().__init__(parent, flags= Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint, blur=False)
         self.hide_timer = QTimer(self)
         self.hide_timer.timeout.connect(self.hide)
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum) 
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum) 
         main_layout = QVBoxLayout(self.main_widget)
         self.title = QLabel()
-        self.title.setTextFormat(Qt.RichText)
+        self.title.setTextFormat(Qt.TextFormat.RichText)
         main_layout.addWidget(self.title)
         self.content = QLabel()
         self.content.setWordWrap(True)
-        self.content.setTextFormat(Qt.RichText)
+        self.content.setTextFormat(Qt.TextFormat.RichText)
         self.content.setOpenExternalLinks(True)
         main_layout.addWidget(self.content)
         self.adjustSize()
@@ -1590,7 +1606,7 @@ class AppBubble(BasePopup):
             self.move(x, y)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.MouseButton.RightButton:
             self.close()
         super().mousePressEvent(event)
 
@@ -1603,14 +1619,14 @@ class AppDialog(BasePopup):
     def __init__(self, parent, mode=PROGRESS):
         self.mode = mode
         if mode == self.MESSAGE:
-            super().__init__(parent, flags=Qt.Dialog)
+            super().__init__(parent, flags=Qt.WindowType.Dialog)
         else:
             super().__init__(parent)
         self.parent_widget = parent
         main_layout = QVBoxLayout()
 
         self.info_lbl = QLabel()
-        self.info_lbl.setAlignment(Qt.AlignCenter)
+        self.info_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(self.info_lbl)
         if mode == self.PROGRESS:
             self.info_lbl.setText("Updating your galleries to newest version...")
@@ -1630,9 +1646,9 @@ class AppDialog(BasePopup):
             self.prog.reached_maximum.connect(self.close)
             main_layout.addWidget(self.prog)
             self.note_info = QLabel("Note: This popup will close itself when everything is ready")
-            self.note_info.setAlignment(Qt.AlignCenter)
+            self.note_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.restart_info = QLabel("Please wait.. It is safe to restart if there is no sign of progress.")
-            self.restart_info.setAlignment(Qt.AlignCenter)
+            self.restart_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
             main_layout.addWidget(self.note_info)
             main_layout.addWidget(self.restart_info)
         elif mode == self.MESSAGE:
@@ -1679,7 +1695,7 @@ class NotificationOverlay(QWidget):
         self._dynamic_height = 0
         self._lbl = QLabel()
         self._main_layout.addWidget(self._lbl)
-        self._lbl.setAlignment(Qt.AlignCenter)
+        self._lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._main_layout.setContentsMargins(10, 5, 10, 5)
         self._click = False
         self._override_hide = False
@@ -1705,7 +1721,7 @@ class NotificationOverlay(QWidget):
 
     def set_clickable(self, value=True):
         self._click = value
-        self._set_cursor.emit(Qt.PointingHandCursor)
+        self._set_cursor.emit(Qt.CursorShape.PointingHandCursor)
 
     def resize(self, w, h=0):
         return super().resize(w, self._dynamic_height)
@@ -1755,7 +1771,7 @@ class GalleryShowcaseWidget(QWidget):
 
     def __init__(self, gallery=None, parent=None, menu=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.main_layout = QVBoxLayout(self)
         self.parent_widget = parent
         if menu:
@@ -1764,7 +1780,7 @@ class GalleryShowcaseWidget(QWidget):
         self.gallery = gallery
         self.extra_text = QLabel()
         self.profile = QLabel(self)
-        self.profile.setAlignment(Qt.AlignCenter)
+        self.profile.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.text = QLabel(self)
         self.font_M = self.text.fontMetrics()
         self.main_layout.addWidget(self.extra_text)
@@ -1801,8 +1817,8 @@ class GalleryShowcaseWidget(QWidget):
         img = gallery.get_profile(app_constants.ProfileType.Small, self.set_pixmap)
         if img:
             self.profile.setPixmap(QPixmap.fromImage(img))
-        title = self.font_M.elidedText(gallery.title, Qt.ElideRight, self.w)
-        artist = self.font_M.elidedText(gallery.artist, Qt.ElideRight, self.w)
+        title = self.font_M.elidedText(gallery.title, Qt.TextElideMode.ElideRight, self.w)
+        artist = self.font_M.elidedText(gallery.artist, Qt.TextElideMode.ElideRight, self.w)
         self.text.setText("{}\n{}".format(title, artist))
         self.setToolTip("{}\n{}".format(gallery.path_title, gallery.artist))
         self.resize(self.w, self.h + 50)
@@ -1833,7 +1849,7 @@ class GalleryShowcaseWidget(QWidget):
 
     def contextMenuEvent(self, event):
         if self._menu:
-            self._menu.exec_(event.globalPos())
+            self._menu.exec(event.globalPos())
             event.accept()
         else:
             event.ignore()
@@ -1857,7 +1873,7 @@ class SingleGalleryChoices(BasePopup):
     CARD_MAX_WIDTH = 360
 
     def __init__(self, gallery, tuple_first_idx, text=None, parent=None, extras=None):
-        super().__init__(parent, flags= Qt.Dialog | Qt.FramelessWindowHint)
+        super().__init__(parent, flags= Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         extras = extras or {}
         self.gallery = gallery
         self._thumbnails = extras.get('thumbnails') or {}
@@ -1891,11 +1907,11 @@ class SingleGalleryChoices(BasePopup):
             info.setWordWrap(True)
             t_layout.addWidget(info)
         else:
-            main_layout.addWidget(g_showcase, 0, Qt.AlignCenter)
+            main_layout.addWidget(g_showcase, 0, Qt.AlignmentFlag.AlignCenter)
         self.list_w = QListWidget(self)
         self.list_w.setAlternatingRowColors(True)
         self.list_w.setWordWrap(True)
-        self.list_w.setTextElideMode(Qt.ElideNone)
+        self.list_w.setTextElideMode(Qt.TextElideMode.ElideNone)
         main_layout.addWidget(self.list_w, 3)
         main_layout.addLayout(self.buttons_layout)
         for t in tuple_first_idx:
@@ -1904,7 +1920,7 @@ class SingleGalleryChoices(BasePopup):
             self.list_w.addItem(item)
         # A romaji listing title is not something the owner of a Japanese folder name can
         # verify by eye. The cover usually settles it on its own; the source page always does.
-        self.list_w.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list_w.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_w.customContextMenuRequested.connect(self.open_in_browser)
         self.list_w.itemDoubleClicked.connect(self.open_in_browser)
 
@@ -1950,10 +1966,10 @@ class SingleGalleryChoices(BasePopup):
         on its own schedule and at its own position, so a tool tip and a cover window aimed at
         the same spot end up stacked, with the cover underneath.
         """
-        self._preview_popup = QFrame(self, Qt.ToolTip | Qt.FramelessWindowHint)
+        self._preview_popup = QFrame(self, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
         # The card follows the cursor around the row it describes and must never take it.
-        self._preview_popup.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self._preview_popup.setFrameShape(QFrame.StyledPanel)
+        self._preview_popup.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._preview_popup.setFrameShape(QFrame.Shape.StyledPanel)
         self._preview_popup.setAutoFillBackground(True)
 
         layout = QVBoxLayout(self._preview_popup)
@@ -1961,10 +1977,10 @@ class SingleGalleryChoices(BasePopup):
         layout.setSpacing(6)
 
         self._preview_image = QLabel()
-        self._preview_image.setAlignment(Qt.AlignCenter)
+        self._preview_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_separator = QFrame()
-        self._preview_separator.setFrameShape(QFrame.HLine)
-        self._preview_separator.setFrameShadow(QFrame.Sunken)
+        self._preview_separator.setFrameShape(QFrame.Shape.HLine)
+        self._preview_separator.setFrameShadow(QFrame.Shadow.Sunken)
         self._preview_url = QLabel()
         self._preview_url.setWordWrap(True)
         self._preview_hint = QLabel('Right click or double click to open in your browser.')
@@ -2011,7 +2027,8 @@ class SingleGalleryChoices(BasePopup):
             log_e('Cover preview is not a readable image: {}'.format(download.download_url))
             return
         url = getattr(download, 'preview_for', '')
-        pixmap = pixmap.scaled(*self.PREVIEW_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        pixmap = pixmap.scaled(*self.PREVIEW_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation)
         self._preview_cache[url] = pixmap
         if self._preview_wanted == url:  # the cursor may have moved on while this was fetched
             self._show_preview_cover(pixmap)
@@ -2035,7 +2052,7 @@ class SingleGalleryChoices(BasePopup):
         self._size_preview()
         size = self._preview_popup.size()
         cursor = QCursor.pos()
-        screen = QDesktopWidget().availableGeometry(cursor)
+        screen = available_geometry(cursor)
 
         x = cursor.x() + self.CARD_OFFSET
         if x + size.width() > screen.right():
@@ -2063,7 +2080,7 @@ class SingleGalleryChoices(BasePopup):
         self._preview_popup.resize(width, height)
 
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.Leave and watched is self.list_w.viewport():
+        if event.type() == QEvent.Type.Leave and watched is self.list_w.viewport():
             self._preview_wanted = ''
             self._preview_popup.hide()
         return super().eventFilter(watched, event)
@@ -2118,8 +2135,8 @@ class BaseUserChoice(QDialog):
     USER_CHOICE = pyqtSignal(object)
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
-        self.setAttribute(Qt.WA_DeleteOnClose)
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         main_widget = QFrame(self)
         layout = QVBoxLayout(self)
         layout.addWidget(main_widget)
@@ -2145,7 +2162,7 @@ class TorrentUserChoice(BaseUserChoice):
     def __init__(self, parent, torrentitems=[], **kwargs):
         super().__init__(parent, **kwargs)
         title = QLabel('Torrents')
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.main_layout.addRow(title)
         self._list_w = QListWidget(self)
         self.main_layout.addRow(self._list_w)
@@ -2177,16 +2194,16 @@ class LoadingOverlay(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         palette = QPalette(self.palette())
-        palette.setColor(palette.Background, Qt.transparent)
+        palette.setColor(palette.ColorRole.Window, Qt.GlobalColor.transparent)
         self.setPalette(palette)
 
     def paintEngine(self, event):
         painter = QPainter()
         painter.begin(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(event.rect(),
                    QBrush(QColor(255,255,255,127)))
-        painter.setPen(QPen(Qt.NoPen))
+        painter.setPen(QPen(Qt.PenStyle.NoPen))
         for i in range(6):
             if (self.counter / 5) % 6 == i:
                 painter.setBrush(QBrush(QColor(127 + (self.counter % 5) * 32,127,127)))
@@ -2332,11 +2349,11 @@ class Spacer(QWidget):
     def __init__(self, mode='both', parent=None):
         super().__init__(parent)
         if mode == 'h':
-            self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+            self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         elif mode == 'v':
-            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         else:
-            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
 
 class FlowLayout(QLayout):
@@ -2412,8 +2429,12 @@ class FlowLayout(QLayout):
 
         for item in self.itemList:
             wid = item.widget()
-            spaceX = self.spacing() + wid.style().layoutSpacing(QSizePolicy.PushButton, QSizePolicy.PushButton, Qt.Horizontal)
-            spaceY = self.spacing() + wid.style().layoutSpacing(QSizePolicy.PushButton, QSizePolicy.PushButton, Qt.Vertical)
+            spaceX = self.spacing() + wid.style().layoutSpacing(
+                QSizePolicy.ControlType.PushButton, QSizePolicy.ControlType.PushButton,
+                Qt.Orientation.Horizontal)
+            spaceY = self.spacing() + wid.style().layoutSpacing(
+                QSizePolicy.ControlType.PushButton, QSizePolicy.ControlType.PushButton,
+                Qt.Orientation.Vertical)
             nextX = x + item.sizeHint().width() + spaceX
             if nextX - spaceX > rect.right() and lineHeight > 0:
                 x = rect.x()
@@ -2438,7 +2459,7 @@ class LineEdit(QLineEdit):
         super().__init__(parent)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.MouseButton.RightButton:
             self.selectAll()
         else:
             super().mousePressEvent(event)
@@ -2477,11 +2498,11 @@ class PathLineEdit(QLineEdit):
     def mousePressEvent(self, event):
         assert isinstance(event, QMouseEvent)
         if len(self.text()) == 0:
-            if event.button() == Qt.LeftButton:
+            if event.button() == Qt.MouseButton.LeftButton:
                 self.openExplorer()
             else:
                 return super().mousePressEvent(event)
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.MouseButton.RightButton:
             self.openExplorer()
             
         super().mousePressEvent(event)
@@ -2491,8 +2512,8 @@ class ChapterAddWidget(QWidget):
     CHAPTERS = pyqtSignal(gallerydb.ChaptersContainer)
     def __init__(self, gallery, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(Qt.Window)
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setWindowFlags(Qt.WindowType.Window)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.current_chapters = gallery.chapters.count()
         self.added_chaps = 0
         self.gallery = gallery
@@ -2513,14 +2534,14 @@ class ChapterAddWidget(QWidget):
         add_btn.clicked.connect(self.finish)
         add_btn.adjustSize()
         new_l = QHBoxLayout()
-        new_l.addWidget(add_btn, 1, alignment=Qt.AlignLeft)
+        new_l.addWidget(add_btn, 1, alignment=Qt.AlignmentFlag.AlignLeft)
         new_l.addWidget(Spacer('h'))
-        new_l.addWidget(new_btn, alignment=Qt.AlignRight)
-        new_l.addWidget(new_btn_a, alignment=Qt.AlignRight)
+        new_l.addWidget(new_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        new_l.addWidget(new_btn_a, alignment=Qt.AlignmentFlag.AlignRight)
         layout.addRow(new_l)
 
         frame = QFrame()
-        frame.setFrameShape(frame.StyledPanel)
+        frame.setFrameShape(frame.Shape.StyledPanel)
         layout.addRow(frame)
 
         self.chapter_l = QVBoxLayout()
@@ -2532,7 +2553,7 @@ class ChapterAddWidget(QWidget):
             self.move(parent.window().frameGeometry().topLeft() + parent.window().rect().center() - self.rect().center())
         else:
             frect = self.frameGeometry()
-            frect.moveCenter(QDesktopWidget().availableGeometry().center())
+            frect.moveCenter(available_geometry().center())
             self.move(frect.topLeft())
         self.setWindowTitle('Add Chapters')
 
@@ -2555,7 +2576,7 @@ class ChapterAddWidget(QWidget):
             chp_path = PathLineEdit(dir=False)
             chp_path.setPlaceholderText('Right/Left-click to open folder explorer.' + ' Leave empty to not add.')
 
-        chp_path.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        chp_path.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         if mode == 'f':
             chap_layout.addWidget(QLabel('D'))
         elif mode == 'a':
@@ -2563,7 +2584,7 @@ class ChapterAddWidget(QWidget):
         chap_layout.addWidget(chp_path, 3)
         chap_layout.addWidget(chp_numb, 0)
         self.chapter_l.addWidget(curr_chap_lbl,
-                           alignment=Qt.AlignLeft)
+                           alignment=Qt.AlignmentFlag.AlignLeft)
         self.chapter_l.addLayout(chap_layout)
 
     def finish(self):
@@ -2599,13 +2620,13 @@ class ChapterAddWidget(QWidget):
 
 
 class CustomListItem(QListWidgetItem):
-    def __init__(self, item=None, parent=None, txt='', type=QListWidgetItem.Type):
+    def __init__(self, item=None, parent=None, txt='', type=QListWidgetItem.ItemType.Type):
         super().__init__(txt, parent, type)
         self.item = item
 
 
 class CustomTableItem(QTableWidgetItem):
-    def __init__(self, item=None, txt='', type=QTableWidgetItem.Type):
+    def __init__(self, item=None, txt='', type=QTableWidgetItem.ItemType.Type):
         super().__init__(txt, type)
         self.item = item
 
@@ -2614,14 +2635,14 @@ class GalleryListView(QWidget):
     SERIES = pyqtSignal(list)
     def __init__(self, parent=None, modal=False):
         super().__init__(parent)
-        self.setWindowFlags(Qt.Dialog)
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setWindowFlags(Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         layout = QVBoxLayout()
         self.setLayout(layout)
 
         if modal:
             frame = QFrame()
-            frame.setFrameShape(frame.StyledPanel)
+            frame.setFrameShape(frame.Shape.StyledPanel)
             modal_layout = QHBoxLayout()
             frame.setLayout(modal_layout)
             layout.addWidget(frame)
@@ -2630,9 +2651,9 @@ class GalleryListView(QWidget):
             f_folder.clicked.connect(self.from_folder)
             f_files = QPushButton('Add archives')
             f_files.clicked.connect(self.from_files)
-            modal_layout.addWidget(info, 3, Qt.AlignLeft)
-            modal_layout.addWidget(f_folder, 0, Qt.AlignRight)
-            modal_layout.addWidget(f_files, 0, Qt.AlignRight)
+            modal_layout.addWidget(info, 3, Qt.AlignmentFlag.AlignLeft)
+            modal_layout.addWidget(f_folder, 0, Qt.AlignmentFlag.AlignRight)
+            modal_layout.addWidget(f_files, 0, Qt.AlignmentFlag.AlignRight)
 
         check_layout = QHBoxLayout()
         layout.addLayout(check_layout)
@@ -2648,10 +2669,10 @@ class GalleryListView(QWidget):
 
         check_layout.addWidget(self.check_all)
         self.view_list = QListWidget()
-        self.view_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        self.view_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.view_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.view_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.view_list.setAlternatingRowColors(True)
-        self.view_list.setEditTriggers(self.view_list.NoEditTriggers)
+        self.view_list.setEditTriggers(self.view_list.EditTrigger.NoEditTriggers)
         layout.addWidget(self.view_list)
         
         add_btn = QPushButton('Add checked')
@@ -2662,7 +2683,7 @@ class GalleryListView(QWidget):
         btn_layout = QHBoxLayout()
 
         spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         btn_layout.addWidget(spacer)
         btn_layout.addWidget(add_btn)
         btn_layout.addWidget(cancel_btn)
@@ -2670,7 +2691,7 @@ class GalleryListView(QWidget):
 
         self.resize(500,550)
         frect = self.frameGeometry()
-        frect.moveCenter(QDesktopWidget().availableGeometry().center())
+        frect.moveCenter(available_geometry().center())
         self.move(frect.topLeft())
         self.setWindowTitle('Gallery List')
         self.count = 0
@@ -2682,10 +2703,10 @@ class GalleryListView(QWidget):
             item = self.view_list.item(row)
             if item:
                 row += 1
-                if new_state == Qt.Unchecked:
-                    item.setCheckState(Qt.Unchecked)
+                if new_state == Qt.CheckState.Unchecked:
+                    item.setCheckState(Qt.CheckState.Unchecked)
                 else:
-                    item.setCheckState(Qt.Checked)
+                    item.setCheckState(Qt.CheckState.Checked)
             else:
                 done = True
 
@@ -2697,8 +2718,8 @@ class GalleryListView(QWidget):
         assert isinstance(name, str)
         gallery_item = CustomListItem(item)
         gallery_item.setText(name)
-        gallery_item.setFlags(gallery_item.flags() | Qt.ItemIsUserCheckable)
-        gallery_item.setCheckState(Qt.Checked)
+        gallery_item.setFlags(gallery_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        gallery_item.setCheckState(Qt.CheckState.Checked)
         self.view_list.addItem(gallery_item)
         self.count += 1
 
@@ -2714,7 +2735,7 @@ class GalleryListView(QWidget):
             if not item:
                 done = True
             else:
-                if item.checkState() == Qt.Checked:
+                if item.checkState() == Qt.CheckState.Checked:
                     gallery_list.append(item.item)
                 row += 1
 
@@ -2723,14 +2744,16 @@ class GalleryListView(QWidget):
 
     def from_folder(self):
         file_dialog = QFileDialog()
-        file_dialog.setFileMode(QFileDialog.DirectoryOnly)
-        file_dialog.setOption(QFileDialog.DontUseNativeDialog, True)
+        # Qt6 dropped DirectoryOnly; Directory plus ShowDirsOnly is what it stood for.
+        file_dialog.setFileMode(QFileDialog.FileMode.Directory)
+        file_dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+        file_dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
         file_view = file_dialog.findChild(QListView, 'listView')
         if file_view:
-            file_view.setSelectionMode(QAbstractItemView.MultiSelection)
+            file_view.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         f_tree_view = file_dialog.findChild(QTreeView)
         if f_tree_view:
-            f_tree_view.setSelectionMode(QAbstractItemView.MultiSelection)
+            f_tree_view.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
 
         if file_dialog.exec():
             for path in file_dialog.selectedFiles():
@@ -2749,10 +2772,10 @@ class GalleryListView(QWidget):
     def close_window(self):
         msgbox = QMessageBox()
         msgbox.setText('Are you sure you want to cancel?')
-        msgbox.setStandardButtons(msgbox.Yes | msgbox.No)
-        msgbox.setDefaultButton(msgbox.No)
-        msgbox.setIcon(msgbox.Question)
-        if msgbox.exec() == QMessageBox.Yes:
+        msgbox.setStandardButtons(msgbox.StandardButton.Yes | msgbox.StandardButton.No)
+        msgbox.setDefaultButton(msgbox.StandardButton.No)
+        msgbox.setIcon(msgbox.Icon.Question)
+        if msgbox.exec() == QMessageBox.StandardButton.Yes:
             self.close()
 
 
@@ -2763,10 +2786,10 @@ class Loading(BasePopup):
         self.progress = QProgressBar()
         self.progress.setStyleSheet("color:white")
         self.text = QLabel()
-        self.text.setAlignment(Qt.AlignCenter)
+        self.text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.text.setStyleSheet("color:white;background-color:transparent;")
         inner_layout_ = QVBoxLayout()
-        inner_layout_.addWidget(self.text, 0, Qt.AlignHCenter)
+        inner_layout_.addWidget(self.text, 0, Qt.AlignmentFlag.AlignHCenter)
         inner_layout_.addWidget(self.progress)
         self.main_widget.setLayout(inner_layout_)
         self.resize(300,100)
@@ -2802,8 +2825,8 @@ class CompleterTextEdit(QTextEdit):
         self._completer = c
 
         c.setWidget(self)
-        c.setCompletionMode(QCompleter.PopupCompletion)
-        c.setCaseSensitivity(Qt.CaseInsensitive)
+        c.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        c.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         c.activated.connect(self.insertCompletion)
 
     def completer(self):
@@ -2815,14 +2838,14 @@ class CompleterTextEdit(QTextEdit):
 
         tc = self.textCursor()
         extra = len(completion) - len(self._completer.completionPrefix())
-        tc.movePosition(QTextCursor.Left)
-        tc.movePosition(QTextCursor.EndOfWord)
+        tc.movePosition(QTextCursor.MoveOperation.Left)
+        tc.movePosition(QTextCursor.MoveOperation.EndOfWord)
         tc.insertText(completion[-extra:])
         self.setTextCursor(tc)
 
     def textUnderCursor(self):
         tc = self.textCursor()
-        tc.select(QTextCursor.WordUnderCursor)
+        tc.select(QTextCursor.SelectionType.WordUnderCursor)
 
         return tc.selectedText()
 
@@ -2835,22 +2858,22 @@ class CompleterTextEdit(QTextEdit):
     def keyPressEvent(self, e):
         if self._completer is not None and self._completer.popup().isVisible():
             # The following keys are forwarded by the completer to the widget.
-            if e.key() in (Qt.Key_Enter, Qt.Key_Return, Qt.Key_Escape, Qt.Key_Tab, Qt.Key_Backtab):
+            if e.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Escape, Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
                 e.ignore()
                 # Let the completer do default behavior.
                 return
 
-        isShortcut = e.modifiers() == Qt.ControlModifier and e.key() == Qt.Key_E
+        isShortcut = e.modifiers() == Qt.KeyboardModifier.ControlModifier and e.key() == Qt.Key.Key_E
         if self._completer is None or not isShortcut:
             # Do not process the shortcut when we have a completer.
             super().keyPressEvent(e)
 
-        ctrlOrShift = e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)
+        ctrlOrShift = e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
         if self._completer is None or (ctrlOrShift and len(e.text()) == 0):
             return
 
         eow = "~!@#$%^&*()_+{}|:\"<>?,./;'[]\\-="
-        hasModifier = (e.modifiers() != Qt.NoModifier) and not ctrlOrShift
+        hasModifier = (e.modifiers() != Qt.KeyboardModifier.NoModifier) and not ctrlOrShift
         completionPrefix = self.textUnderCursor()
 
         if not isShortcut and (hasModifier or len(e.text()) == 0 or len(completionPrefix) < 3 or e.text()[-1] in eow):
@@ -2884,7 +2907,7 @@ class GCompleter(QCompleter):
 
         self.all_data.extend(d)
         super().__init__(self.all_data, parent)
-        self.setCaseSensitivity(Qt.CaseInsensitive)
+        self.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
     def complete(self, rect: QRect) -> None:
         # If the only suggestion matches the string that prompted this completion:
@@ -3033,7 +3056,7 @@ class DictStrStrEdit(QScrollArea):
         layout.setSpacing(3)
 
         self.widget().setLayout(layout)
-        self.widget().setBackgroundRole(QPalette.Base)
+        self.widget().setBackgroundRole(QPalette.ColorRole.Base)
         self.setMinimumHeight(50)
         # self.widget().setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)

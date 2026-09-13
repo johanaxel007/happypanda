@@ -88,4 +88,4 @@ if __name__ == '__main__':
     window.setLayout(hbox_layout)
     window.show()
 
-    sys.exit(app.exec_())
+    sys.exit(app.exec())

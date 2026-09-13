@@ -73,6 +73,7 @@ python misc/analyze_fetch_log.py path/to/happypanda.log --failures # diagnose a 
 python misc/analyze_scan_log.py path/to/happypanda.log --rejections # diagnose a better-version scan
 venv/Scripts/python.exe misc/gui_smoke.py                          # exercise the gui headlessly
 venv/Scripts/python.exe misc/app_smoke.py                          # drive the real AppWindow headlessly
+venv/Scripts/python.exe misc/check_qt_enums.py --instance          # Qt enum sites left in the Qt5 spelling
 ```
 
 The build reads its version string from `VS.txt`.
@@ -195,8 +196,9 @@ cmd /c "mklink /J .claude\skills .agents\skills"
 | `CLAUDE.md`/`AGENTS.md` | Byte-identical twins — update both together                          |
 | `misc/`                 | Developer tooling that is not part of the app                        |
 
-Three skills, each owning a distinct moment: `create-implementation-plan` before the work,
-`review-changes` on a diff that already exists, and `manage-skill` when authoring a skill or rule.
+Four skills, each owning a distinct moment: `create-implementation-plan` before the work,
+`review-changes` on a diff that already exists, `create-design-doc` when an analysis is worth
+keeping in `Documentation/Design/`, and `manage-skill` when authoring a skill or rule.
 Adding one is `manage-skill`'s job — it owns the frontmatter rules and the description-cost budget.
 
 `AGENTS.md` is a copy of this file for harnesses that read that name instead. When you change
@@ -281,8 +283,17 @@ the first time a second consumer appears.
 
 ## Testing
 
-`pytest tests/ -q`. `tests/test_metadata_matching.py` is the meaningful suite — regression cases
-for the online metadata pipeline, drawn from real failures. The four `test_init_db` failures are
+`pytest tests/ -q`. `tests/test_qt_scoping.py` is what stands between a mistyped Qt enum scope
+and an `AttributeError` at paint time, and it has to stay green through the PyQt6 switch. It
+checks three things against whichever binding is installed: no unscoped Qt5 spelling is left;
+every `QClass.Scope.MEMBER` resolves; and for a scope read off a receiver rather than a class
+— `v_header.ResizeMode.Fixed` — that the scope and member exist at all, tightened to the
+enclosing class where the receiver is a bare `self`. What it cannot check is whether such a
+scope is the right one for the object it was read off; that needs the receiver's type, which
+is not in the source. `misc/check_qt_enums.py` is the same scan as a report.
+
+`tests/test_metadata_matching.py` is the meaningful suite for the application itself — regression
+cases for the online metadata pipeline, drawn from real failures. The four `test_init_db` failures are
 pre-existing and unrelated.
 
 `misc/gui_smoke.py` covers the settings dialog, the gallery chooser, the better version list

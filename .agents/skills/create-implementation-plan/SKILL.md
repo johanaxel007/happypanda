@@ -1,6 +1,6 @@
 ---
 name: create-implementation-plan
-description: Analyze a session-scale task (bug fix, feature, matching-logic change, new setting) and produce an implementation plan that has already survived an adversarial self-review, ending in a decision menu of the genuine judgment calls. Use when the user asks to "create an implementation plan", "analyze X and create a plan", "plan this fix/feature", or "research this, then give me a plan". For a trivial one-file change, skip the plan and just do it. To review a diff that already exists, use review-changes instead.
+description: Analyze a session-scale task (bug fix, feature, matching-logic change, new setting) and produce an implementation plan that has already survived an adversarial self-review, ending in a decision menu of the genuine judgment calls. Use when the user asks to "create an implementation plan", "analyze X and create a plan", "plan this fix/feature", or "research this, then give me a plan". For a trivial one-file change, skip the plan and just do it. To review a diff that already exists, use review-changes instead. To record an analysis as a durable document for work that may not start for months, use create-design-doc instead.
 ---
 
 # Create Implementation Plan
@@ -24,6 +24,9 @@ Only Step 4 is visible to the user.
 - **Skip** when the bug is not yet diagnosed. Find the root cause first; plan the fix once you
   know what it is. A plan built on a guessed cause plans the wrong work. For a metadata-fetch
   bug, diagnosis means reading the log (`misc/analyze_fetch_log.py --failures`), not theorising.
+- **Skip** when the work is not starting now and the analysis is what needs preserving — that is
+  `create-design-doc`, which writes it to `Documentation/Design/`. The two compose: a phase from
+  a design doc's plan table is a normal input to this skill once that phase is picked up.
 
 ## Step 0 — Entry
 

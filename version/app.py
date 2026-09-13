@@ -79,7 +79,7 @@ class AppWindow(QMainWindow):
         self.initUI()
         self.startup()
         QTimer.singleShot(3000, self._check_update)
-        self.setFocusPolicy(Qt.NoFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.set_shortcuts()
         self.graphics_blur.setParent(self)
 
@@ -88,10 +88,12 @@ class AppWindow(QMainWindow):
 
     def set_shortcuts(self):
         quit = QShortcut(QKeySequence('Ctrl+Q'), self, self.close)
-        search_focus = QShortcut(QKeySequence(QKeySequence.Find), self, lambda:self.search_bar.setFocus(Qt.ShortcutFocusReason))
-        prev_view = QShortcut(QKeySequence(QKeySequence.PreviousChild), self, self.switch_display)
-        next_view = QShortcut(QKeySequence(QKeySequence.NextChild), self, self.switch_display)
-        help = QShortcut(QKeySequence(QKeySequence.HelpContents), self, lambda:utils.open_web_link("https://github.com/Pewpews/happypanda/wiki"))
+        search_focus = QShortcut(QKeySequence(QKeySequence.StandardKey.Find), self,
+                                 lambda:self.search_bar.setFocus(Qt.FocusReason.ShortcutFocusReason))
+        prev_view = QShortcut(QKeySequence(QKeySequence.StandardKey.PreviousChild), self, self.switch_display)
+        next_view = QShortcut(QKeySequence(QKeySequence.StandardKey.NextChild), self, self.switch_display)
+        help = QShortcut(QKeySequence(QKeySequence.StandardKey.HelpContents), self,
+                         lambda:utils.open_web_link("https://github.com/Pewpews/happypanda/wiki"))
 
     def check_site_logins(self):
         # checking logins
@@ -248,7 +250,7 @@ class AppWindow(QMainWindow):
         tray_quit.triggered.connect(self.close)
         self.system_tray.show()
         def tray_activate(r=None):
-            if not r or r == QSystemTrayIcon.Trigger:
+            if not r or r == QSystemTrayIcon.ActivationReason.Trigger:
                 self.showNormal()
                 self.activateWindow()
         self.system_tray.messageClicked.connect(tray_activate)
@@ -444,7 +446,7 @@ class AppWindow(QMainWindow):
         else:
             in_view = []
             for r in range(view.sort_model.rowCount()):
-                g = view.sort_model.index(r, 0).data(Qt.UserRole + 1)
+                g = view.sort_model.index(r, 0).data(Qt.ItemDataRole.UserRole + 1)
                 if g:
                     in_view.append(g)
             # Counted through selectedIndexes because the grid view selects items rather than
@@ -460,13 +462,13 @@ class AppWindow(QMainWindow):
 
         summary, detail = betterversions.scan_confirmation_text(to_scan, in_view, selected)
         msgbox = QMessageBox(self)
-        msgbox.setIcon(QMessageBox.Question)
+        msgbox.setIcon(QMessageBox.Icon.Question)
         msgbox.setWindowTitle('Scan for better versions')
-        msgbox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msgbox.setDefaultButton(QMessageBox.No)
+        msgbox.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msgbox.setDefaultButton(QMessageBox.StandardButton.No)
         msgbox.setText(summary)
         msgbox.setDetailedText(detail)
-        if msgbox.exec() != QMessageBox.Yes:
+        if msgbox.exec() != QMessageBox.StandardButton.Yes:
             return
 
         spinner = misc.Spinner(self)
@@ -548,13 +550,13 @@ class AppWindow(QMainWindow):
 
         summary, detail = betterversions.recheck_confirmation_text(rows)
         msgbox = QMessageBox(self)
-        msgbox.setIcon(QMessageBox.Question)
+        msgbox.setIcon(QMessageBox.Icon.Question)
         msgbox.setWindowTitle('Recheck the better version list')
-        msgbox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msgbox.setDefaultButton(QMessageBox.No)
+        msgbox.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msgbox.setDefaultButton(QMessageBox.StandardButton.No)
         msgbox.setText(summary)
         msgbox.setDetailedText(detail)
-        if msgbox.exec() != QMessageBox.Yes:
+        if msgbox.exec() != QMessageBox.StandardButton.Yes:
             return
 
         recheck = betterversions.BetterVersionRecheck()
@@ -737,7 +739,7 @@ class AppWindow(QMainWindow):
         self.toolbar.setMovable(False)
         self.toolbar.setFloatable(False)
         #self.toolbar.setIconSize(QSize(20,20))
-        self.toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.toolbar.setIconSize(QSize(20,20))
 
         def switch_view(fav):
@@ -771,17 +773,17 @@ class AppWindow(QMainWindow):
         new_galleries_k = QKeySequence('Ctrl+Shift+N')
         new_populate_k = QKeySequence('Ctrl+Alt+N')
         scan_galleries_k = QKeySequence('Ctrl+Alt+S')
-        open_random_k = QKeySequence(QKeySequence.Open)
+        open_random_k = QKeySequence(QKeySequence.StandardKey.Open)
         get_all_metadata_k = QKeySequence('Ctrl+Alt+M')
         gallery_downloader_k = QKeySequence('Ctrl+Alt+D')
 
         gallery_menu = QMenu()
         gallery_action = QToolButton()
         gallery_action.setIcon(app_constants.PLUS_ICON)
-        gallery_action.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        gallery_action.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         gallery_action.setShortcut(gallery_k)
         gallery_action.setText('Gallery ')
-        gallery_action.setPopupMode(QToolButton.InstantPopup)
+        gallery_action.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         gallery_action.setToolTip('Contains various gallery related features')
         gallery_action.setMenu(gallery_menu)
         add_gallery_icon = QIcon(app_constants.PLUS_ICON)
@@ -850,7 +852,7 @@ class AppWindow(QMainWindow):
         metadata_action.setText('Fetch all metadata')
         metadata_action.clicked.connect(self.get_metadata)
         metadata_action.setIcon(app_constants.DOWNLOAD_ICON)
-        metadata_action.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        metadata_action.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         metadata_action.setShortcut(get_all_metadata_k)
         self.toolbar.addWidget(metadata_action)
 
@@ -862,7 +864,7 @@ class AppWindow(QMainWindow):
         gallery_action_random.setText("Open random gallery")
         gallery_action_random.clicked.connect(lambda: gallery.CommonView.open_random_gallery(self.get_current_view()))
         gallery_action_random.setIcon(app_constants.RANDOM_ICON)
-        gallery_action_random.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        gallery_action_random.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         gallery_action_random.setShortcut(open_random_k)
         self.toolbar.addWidget(gallery_action_random)
 
@@ -872,7 +874,7 @@ class AppWindow(QMainWindow):
 
         gallery_downloader = QToolButton()
         gallery_downloader.setText("Downloader")
-        gallery_downloader.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        gallery_downloader.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         gallery_downloader.clicked.connect(self.download_window.show)
         gallery_downloader.setShortcut(gallery_downloader_k)
         gallery_downloader.setIcon(app_constants.MANAGER_ICON)
@@ -893,19 +895,19 @@ class AppWindow(QMainWindow):
             debug_btn.clicked.connect(debug_func)
 
         spacer_middle = QWidget() # aligns buttons to the right
-        spacer_middle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        spacer_middle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.toolbar.addWidget(spacer_middle)
 
         sort_k = QKeySequence('Alt+S')
 
         sort_action = QToolButton()
-        sort_action.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        sort_action.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         sort_action.setShortcut(sort_k)
         sort_action.setIcon(app_constants.SORT_ICON_DESC)
         sort_menu = misc.SortMenu(self, self.toolbar, sort_action)
         sort_menu.set_toolbutton_text()
         sort_action.setMenu(sort_menu)
-        sort_action.setPopupMode(QToolButton.InstantPopup)
+        sort_action.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.tab_manager.favorite_btn.clicked.connect(sort_menu.update_toolbutton_text)
         self.tab_manager.library_btn.clicked.connect(sort_menu.update_toolbutton_text)
         self.addition_tab.clicked.connect(sort_menu.update_toolbutton_text)
@@ -925,8 +927,8 @@ class AppWindow(QMainWindow):
         self.grid_toggle_g_icon = app_constants.GRID_ICON
         self.grid_toggle_l_icon = app_constants.LIST_ICON
         self.grid_toggle = QToolButton()
-        self.grid_toggle.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self.grid_toggle.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
+        self.grid_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.grid_toggle.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
         self.grid_toggle.setShortcut(togle_view_k)
         if self.current_manga_view.current_view == gallery.MangaViews.View.List:
             self.grid_toggle.setIcon(self.grid_toggle_l_icon)
@@ -942,7 +944,7 @@ class AppWindow(QMainWindow):
 
         search_options = QToolButton()
         search_options.setIconSize(QSize(15,15))
-        search_options.setPopupMode(QToolButton.InstantPopup)
+        search_options.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.toolbar.addWidget(search_options)
         search_options.setIcon(app_constants.SEARCH_ICON)
         search_options_menu = QMenu(self)
@@ -988,8 +990,10 @@ class AppWindow(QMainWindow):
 
         self.search_bar = misc.LineEdit()
 
-        remove_txt = self.search_bar.addAction(app_constants.CROSS_ICON, QLineEdit.LeadingPosition)
-        refresh_search = self.search_bar.addAction(app_constants.REFRESH_ICON, QLineEdit.TrailingPosition)
+        remove_txt = self.search_bar.addAction(app_constants.CROSS_ICON,
+                                               QLineEdit.ActionPosition.LeadingPosition)
+        refresh_search = self.search_bar.addAction(app_constants.REFRESH_ICON,
+                                                   QLineEdit.ActionPosition.TrailingPosition)
         refresh_search.triggered.connect(self.current_manga_view.get_current_view().sort_model.refresh)
         remove_txt.setVisible(False)
         def clear_txt():
@@ -1016,18 +1020,18 @@ class AppWindow(QMainWindow):
             completer.setPopup(completer_view)
             completer_view._setup()
             completer.setModel(self.manga_list_view.gallery_model)
-            completer.setCaseSensitivity(Qt.CaseInsensitive)
-            completer.setCompletionMode(QCompleter.PopupCompletion)
-            completer.setCompletionRole(Qt.DisplayRole)
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+            completer.setCompletionRole(Qt.ItemDataRole.DisplayRole)
             completer.setCompletionColumn(app_constants.TITLE)
-            completer.setFilterMode(Qt.MatchContains)
+            completer.setFilterMode(Qt.MatchFlag.MatchContains)
             completer.activated[str].connect(lambda a: self.search(a))
             self.search_bar.setCompleter(completer)
             self.search_bar.returnPressed.connect(lambda: self.search(self.search_bar.text()))
         if not app_constants.SEARCH_ON_ENTER:
             self.search_bar.textEdited.connect(lambda: self.search_timer.start(800))
         self.search_bar.setPlaceholderText("Search title, artist, namespace & tags")
-        self.search_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.search_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.manga_list_view.sort_model.HISTORY_SEARCH_TERM.connect(lambda a: self.search_bar.setText(a))
         self.toolbar.addWidget(self.search_bar)
 
@@ -1038,8 +1042,8 @@ class AppWindow(QMainWindow):
             if back:
                 self.search_forward.setVisible(True)
 
-        back_k = QKeySequence(QKeySequence.Back)
-        forward_k = QKeySequence(QKeySequence.Forward)
+        back_k = QKeySequence(QKeySequence.StandardKey.Back)
+        forward_k = QKeySequence(QKeySequence.StandardKey.Forward)
 
         search_backbutton = QToolButton(self.toolbar)
         search_backbutton.setIcon(app_constants.ARROW_LEFT_ICON)
@@ -1150,20 +1154,20 @@ class AppWindow(QMainWindow):
         def skipped_gs(s_list):
             "Skipped galleries"
             msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setIcon(QMessageBox.Icon.Question)
             msg_box.setText('Do you want to view skipped paths?')
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            msg_box.setDefaultButton(QMessageBox.No)
-            if msg_box.exec() == QMessageBox.Yes:
+            msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg_box.setDefaultButton(QMessageBox.StandardButton.No)
+            if msg_box.exec() == QMessageBox.StandardButton.Yes:
                 list_wid = QTableWidget(self)
-                list_wid.setAttribute(Qt.WA_DeleteOnClose)
+                list_wid.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
                 list_wid.setRowCount(len(s_list))
                 list_wid.setColumnCount(2)
                 list_wid.setAlternatingRowColors(True)
-                list_wid.setEditTriggers(list_wid.NoEditTriggers)
+                list_wid.setEditTriggers(list_wid.EditTrigger.NoEditTriggers)
                 list_wid.setHorizontalHeaderLabels(['Reason', 'Path'])
-                list_wid.setSelectionBehavior(list_wid.SelectRows)
-                list_wid.setSelectionMode(list_wid.SingleSelection)
+                list_wid.setSelectionBehavior(list_wid.SelectionBehavior.SelectRows)
+                list_wid.setSelectionMode(list_wid.SelectionMode.SingleSelection)
                 list_wid.setSortingEnabled(True)
                 list_wid.verticalHeader().hide()
                 list_wid.setAutoScroll(False)
@@ -1172,7 +1176,7 @@ class AppWindow(QMainWindow):
                     list_wid.setItem(x, 1, QTableWidgetItem(g[0]))
                 list_wid.resizeColumnsToContents()
                 list_wid.setWindowTitle('{} skipped paths'.format(len(s_list)))
-                list_wid.setWindowFlags(Qt.Window)
+                list_wid.setWindowFlags(Qt.WindowType.Window)
                 list_wid.resize(900,400)
 
                 list_wid.doubleClicked.connect(lambda i: utils.open_path(list_wid.item(i.row(), 1).text(), list_wid.item(i.row(), 1).text()))
@@ -1397,10 +1401,10 @@ class AppWindow(QMainWindow):
             msg_box = QMessageBox(self)
             msg_box.setText('Database activity detected!')
             msg_box.setInformativeText("Closing now might result in data loss." + " Do you still want to close?\n(Wait for the activity spinner to hide before closing)")
-            msg_box.setIcon(QMessageBox.Critical)
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            msg_box.setDefaultButton(QMessageBox.No)
-            if msg_box.exec() == QMessageBox.Yes:
+            msg_box.setIcon(QMessageBox.Icon.Critical)
+            msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg_box.setDefaultButton(QMessageBox.StandardButton.No)
+            if msg_box.exec() == QMessageBox.StandardButton.Yes:
                 return 1
             else:
                 return 2
@@ -1461,11 +1465,11 @@ class AppWindow(QMainWindow):
         traceback.print_exception(ex_type, ex, tb)
         w = QMessageBox(self)
         w.setWindowTitle("Critical Error")
-        w.setIcon(QMessageBox.Critical)
+        w.setIcon(QMessageBox.Icon.Critical)
         w.setText('A critical error has ben encountered. Stability from this point onward cannot be guaranteed.')
-        w.setStandardButtons(QMessageBox.Ok)
-        w.setDefaultButton(QMessageBox.Ok)
-        w.exec_()
+        w.setStandardButtons(QMessageBox.StandardButton.Ok)
+        w.setDefaultButton(QMessageBox.StandardButton.Ok)
+        w.exec()
 
     def closeEvent(self, event):
         r_code = self.cleanup_exit()

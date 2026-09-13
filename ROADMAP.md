@@ -168,3 +168,32 @@ budget. `misc/analyze_fetch_log.py` then reports the split between `Single perfe
 **Sequencing note.** Raising the confidence threshold to 95% already removed the 70–94 band this
 would have caught, so what remains is the narrow 95–99 band. Do the measurement before assuming
 there is anything left to fix.
+
+---
+
+## Migrate from Qt5 to Qt6
+
+PyQt5 5.15.11 / Qt 5.15.2 is the last supported Qt5. The full analysis, including the binding
+decision and a phased plan, is in
+[`Documentation/Design/QT6_MIGRATION.md`](Documentation/Design/QT6_MIGRATION.md) — read that
+before touching this, so a session does not repeat the measurement.
+
+**Phases Q0–Q2 have shipped.** The whole tree is written in the Qt6 dialect and still runs on
+PyQt5: 503 class-keyed enum sites, 81 instance-level ones and 26 removed-API swaps, landed one
+module at a time. `misc/check_qt_enums.py` reports what is left — currently nothing — and
+`tests/test_qt_scoping.py` resolves every rescoped site against whichever binding is installed
+and fails if an unscoped spelling comes back.
+
+**What is left is Q3 onwards: the switch itself.** Roughly 11 edits that cannot run on both
+bindings at once — the `QAction`/`QActionGroup`/`QShortcut` import move, `QDropEvent.pos()`, the
+two high-DPI attributes, and the `sip` module name — plus `requirements.txt` and
+`HappyPanda.spec`. Then `FORCE_HIGH_DPI_SUPPORT` comes out through all four settings places
+(Core Constraint 4), and the shakedown begins.
+
+**The hard part is still that nothing can test the result.** The scoping gate catches a
+misspelled scope, and it cannot catch a scope that resolves and means something else, or a
+painter that lays out differently under Qt6's always-on scaling. That leaves 62 widget subclasses
+and 7 custom painters whose failures surface only when a user opens that particular dialog. The
+shakedown dominates the schedule, and per Core Constraint 1 it has to run against a copy of the
+database, because a mis-scoped button comparison inside a delete confirmation is silent data
+loss.

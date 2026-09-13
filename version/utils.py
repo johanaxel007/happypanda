@@ -1626,21 +1626,21 @@ def PToQImageHelper(im):
         im = Image.open(im)
 
     if im.mode == "1":
-        format = QImage.Format_Mono
+        format = QImage.Format.Format_Mono
     elif im.mode == "L":
-        format = QImage.Format_Indexed8
+        format = QImage.Format.Format_Indexed8
         colortable = []
         for i in range(256):
             colortable.append(rgb(i, i, i))
     elif im.mode == "P":
-        format = QImage.Format_Indexed8
+        format = QImage.Format.Format_Indexed8
         colortable = []
         palette = im.getpalette()
         for i in range(0, len(palette), 3):
             colortable.append(rgb(*palette[i:i+3]))
     elif im.mode == "RGB":
         data = im.tobytes("raw", "BGRX")
-        format = QImage.Format_RGB32
+        format = QImage.Format.Format_RGB32
     elif im.mode == "RGBA":
         try:
             data = im.tobytes("raw", "BGRA")
@@ -1648,7 +1648,7 @@ def PToQImageHelper(im):
             # workaround for earlier versions
             r, g, b, a = im.split()
             im = Image.merge("RGBA", (b, g, r, a))
-        format = QImage.Format_ARGB32
+        format = QImage.Format.Format_ARGB32
     else:
         raise ValueError("unsupported image mode %r" % im.mode)
 

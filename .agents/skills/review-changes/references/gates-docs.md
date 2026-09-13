@@ -48,7 +48,7 @@ User-visible means: a new or changed setting, a change to what metadata fetching
 applies, a fixed crash, a changed default, a new supported file type, a visible UI change.
 
 **Not** user-visible, and not owed an entry: refactors with identical behavior, comments, tests,
-tooling under `misc/`, agent files, and internal renames.
+tooling under `misc/`, agent files, design docs under `Documentation/`, and internal renames.
 
 The entry goes under the existing `- New Features` / `- Fixes` / `- Changes` headings, phrased for
 someone who runs the app rather than reads it — what changed for them, not which function moved.
