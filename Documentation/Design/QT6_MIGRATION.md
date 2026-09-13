@@ -1,9 +1,9 @@
 # Qt5 → Qt6 Migration Design
 
-**Version:** 1.6  
-**Date:** 2026-09-12  
-**Status:** In progress — Q0–Q3 are complete and the app runs on PyQt6, but a startup performance regression blocks Q4/Q5. See [`./QT6_STARTUP_REGRESSION.md`](./QT6_STARTUP_REGRESSION.md).  
-**Target:** PyQt6 6.11 / Qt 6.11 on Python 3.14 (current: PyQt5 5.15.11 / Qt 5.15.2)
+**Version:** 1.7  
+**Date:** 2026-09-13  
+**Status:** ✅ Complete 2026-09-13 — Q0–Q5 done, the startup regression that blocked Q4/Q5 is resolved ([`./QT6_STARTUP_REGRESSION.md`](./QT6_STARTUP_REGRESSION.md)), and the branch stack is ready to merge.  
+**Target:** PyQt6 6.11 / Qt 6.11 on Python 3.14 (was: PyQt5 5.15.11 / Qt 5.15.2)
 
 > Happypanda's Qt surface is ~610 individual edits across 16 modules, and the single most
 > important finding is that **~98% of them are forward-compatible: PyQt5 5.15.11 already accepts
@@ -24,6 +24,9 @@
 > class-name codemod can catch. `QPalette.Background` is a **tenth removed-API family** that §5
 > missed. All of it has now landed; §7 carries the phase statuses.
 
+**Amended:** 2026-09-13 — closed. Q4 had shipped on 2026-09-12 without its row being updated; Q5
+ran as a shakedown on the real library through PyInstaller builds, recorded in §7 with what it did
+and did not cover.
 **Amended:** 2026-09-12 — `qtawesome` pulls in `qtpy`, which patches the Qt5 spelling back onto
 PyQt6 at import. The app running is therefore not evidence that the conversion is complete, and
 §4 gained the subsection that says what still is.
@@ -37,7 +40,7 @@ Every claim below is tagged ✅ **Verified** or ⚠️ **Unverified** — see th
 
 **Relationship to other documents:**
 
-- [`../../ROADMAP.md`](../../ROADMAP.md) — carries the one-line pointer to this doc.
+- [`../../ROADMAP.md`](../../ROADMAP.md) — carried the pointer to this doc until the migration shipped; its startup optimisation entries follow on from the regression doc below.
 - [`../../CLAUDE.md`](../../CLAUDE.md) — the four Core Constraints this migration is checked against in §6.
 - [`../../.agents/rules/settings-plumbing.md`](../../.agents/rules/settings-plumbing.md) — governs the `FORCE_HIGH_DPI_SUPPORT` removal in Q4.
 
@@ -376,8 +379,8 @@ Checked against the four Core Constraints in `CLAUDE.md`.
 | **Q1 — Port the gate** | `misc/gui_smoke.py`: 15 enum sites, `QMouseEvent`→`QPointF`, and `from PyQt5 import sip` — a bare `import sip` only ever worked because PyQt5 aliases it into `sys.modules`. | 🟢 | Q0 | ✅ 2026-09-10 |
 | **Q2 — Forward-compatible codemod** | 610 edits, still on PyQt5: 503 class-keyed and 81 instance-level enum sites plus the 26 removed-API swaps. Landed as one commit per module, renames separated from behavioural swaps. | 🟡 | Q1 | ✅ 2026-09-10 |
 | **Q3 — Switch the binding** | The edits from §4 plus `requirements.txt` and `HappyPanda.spec`, and the three §5 families v1.0 missed. `pytest`, both smoke harnesses and the scoping gate all pass on PyQt6 6.11.0 / Qt 6.11.2, and the app launches. | 🟡 | Q2 | ✅ 2026-09-10 |
-| **Q4 — Retire `FORCE_HIGH_DPI_SUPPORT`** | Four-place settings removal per Core Constraint 4, plus CHANGELOG. Separate commit — it is a user-visible behaviour change, not part of the port. Q3 already deleted the two `setAttribute` calls, so the setting is **inert but still wired**: the checkbox saves a value nothing reads. | 🟢 | Q3 | — |
-| **Q5 — Shakedown** | Drive all 62 widget subclasses by hand against a **copy** of the database. This phase dominates the schedule, and every failure now aborts the process rather than printing (§5). | 🔴 | Q3 | — |
+| **Q4 — Retire `FORCE_HIGH_DPI_SUPPORT`** | Four-place settings removal per Core Constraint 4, plus CHANGELOG. The widget went in `03bd12a` and the constant in `4e7efcc`; the CHANGELOG entry says the option is gone because Qt6 scales for high DPI on its own. | 🟢 | Q3 | ✅ 2026-09-12 |
+| **Q5 — Shakedown** | Run as real use rather than a class-by-class sweep: PyInstaller builds of `feat/qt6-migration` against the real ~20,000-gallery library — every settings page, the better version window, and a full import → metadata fetch → gallery picker round where some galleries matched and some did not — with no crash or breakage. Alongside it, `misc/gui_smoke.py` and `misc/app_smoke.py` drive the settings dialog, chooser, better version list, edit dialog and the main window's own methods headlessly. ⚠️ **Unverified**: not all 62 widget subclasses were opened individually, so a dialog outside those paths can still fail the first time it is used — and under Qt6 an unhandled exception aborts (§5). | 🔴 | Q3 | ✅ 2026-09-13 |
 
 Status values: `—` not started · `In progress` · `✅ YYYY-MM-DD` complete · `⏸️ YYYY-MM-DD`
 deliberately not implemented · `⛔ Superseded YYYY-MM-DD — <by what>`. Date every closed phase — an
@@ -388,10 +391,12 @@ Qt6 dialect, still on Qt5, with a gate preventing regression. That is a strictly
 position than today, and it is abandonable at any point. `feat/qt6-migration-prep` holds exactly
 that state and is unaffected by anything after it.
 
-**Q3 shipped on `feat/qt6-migration`, and then a blocker appeared.** Startup is roughly four times
-slower under PyQt6 — bisected to the model/view insert path, cause still open. Q4 and Q5 are not
-worth starting until that is settled, because Q5 in particular is weeks of manual work against a
-build that may not be shippable. See [`./QT6_STARTUP_REGRESSION.md`](./QT6_STARTUP_REGRESSION.md).
+**Q3 shipped on `feat/qt6-migration` behind a startup regression, since resolved.** Startup was
+roughly four times slower under PyQt6. Its causes turned out to be the application's own — a
+library read in twenty batches, and a sort key parsing a `QDateTime` per comparison, which Qt 6.7
+made 2.5× dearer — and with both fixed the Qt6 build starts faster than the Qt5 one: about 20s
+against about 30s of logged load phases on the real library, the same shared database. See
+[`./QT6_STARTUP_REGRESSION.md`](./QT6_STARTUP_REGRESSION.md) §16.
 
 **Effort is ⚠️ Unverified judgement, not measurement.** Rough shape: Q0–Q2 a few days spread over
 several commits; Q3–Q4 small; Q5 realistically 1–2 weeks of real use. The mechanical phases are
@@ -486,6 +491,9 @@ every edit after the first odd line out lands on the wrong line.
 
 ## Document History
 
+* **v1.7** - Closed. Q4's row caught up with the two commits that had already retired the setting,
+  Q5 recorded as a real-library shakedown through PyInstaller builds with no crash or breakage and
+  its gap stated, and the startup regression paragraph replaced by its resolution.
 * **v1.6** - qtpy, pulled in by qtawesome, patches the Qt5 spelling back onto PyQt6 at import:
   every scoped enum member is copied onto its class unscoped, and the removed point accessors are
   restored. So the app running is not evidence that the conversion is complete - one
@@ -512,5 +520,5 @@ every edit after the first odd line out lands on the wrong line.
 
 ---
 
-**Last Updated:** 2026-09-12  
-**Next Review:** when the startup regression is settled, or on any PyQt5/PyQt6 version bump that invalidates the §4 back-test
+**Last Updated:** 2026-09-13  
+**Next Review:** on a PyQt6 version bump, or when a dialog the Q5 shakedown did not reach fails under Qt6

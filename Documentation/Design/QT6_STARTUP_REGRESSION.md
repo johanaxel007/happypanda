@@ -1,8 +1,8 @@
 # PyQt6 Startup Performance Regression
 
-**Version:** 1.9  
+**Version:** 1.10  
 **Date:** 2026-09-13  
-**Status:** In progress — S0–S9 complete; the freeze is fixed. What remains open is §8's residue: the 6.7 → 6.11 slide and the commit inside Qt.  
+**Status:** ✅ Resolved 2026-09-13 — S0–S9 complete. On the real library the Qt6 build now starts faster than the Qt5 one (§16). The optimisations still on the table are ROADMAP entries; §8's residue stays open and blocks nothing.  
 **Target:** PyQt6 6.11.0 / Qt 6.11.2 on Python 3.14.7 (baseline: PyQt5 5.15.11 / Qt 5.15.2)
 
 > Switching the binding to PyQt6 makes database startup **roughly four times slower** — 12.1s
@@ -51,6 +51,8 @@
 > under 2s, where a date sort took up to 160s (§15).
 
 **Audited:** 2026-09-10, at commit `7ba4813` (branch `feat/qt6-migration`).
+**Amended:** 2026-09-13 — closed. §16 records the real-library outcome from both builds' own logs
+and where the remaining startup time goes; §7's extension roadmap moves to `ROADMAP.md`.
 **Amended:** 2026-09-13 — phase S9 executed. One sort vocabulary for the menu, the headers and the
 saved sort; the date sorts, header clicks, menu sync and undated placement fixed. §15 carries it.
 **Amended:** 2026-09-13 — the date parse priced under Qt 6.6.3 and 6.7.0: it carries the 6.7 step
@@ -84,8 +86,9 @@ measurements. All instrumentation was reverted. The one artefact that ships is
 
 **Relationship to other documents:**
 
-- [`../../ROADMAP.md`](../../ROADMAP.md) — carries the pointer to this doc.
-- [`./QT6_MIGRATION.md`](./QT6_MIGRATION.md) — the migration this blocks; its §7 phase Q3 is what
+- [`../../ROADMAP.md`](../../ROADMAP.md) — carries the startup optimisations §16 hands on, each
+  pointing back here for the measurement protocol.
+- [`./QT6_MIGRATION.md`](./QT6_MIGRATION.md) — the migration this blocked; its §7 phase Q3 is what
   introduced the regression, and its §8 item 1 asked whether the app runs under Qt6 at all.
 - [`../../CLAUDE.md`](../../CLAUDE.md) — the Core Constraints checked in §6.
 
@@ -439,8 +442,8 @@ deliverable is a named subsystem, which then justifies its own design work.
 
 | Version | Extension |
 |---------|-----------|
-| **v2** | S6 took the first of those: the meta-call count is cut and nothing is pinned. Whether any residual Qt 6.7 penalty still justifies pinning 6.6.1 is worth re-measuring **after S9**, since S9 removes the date parsing §14 found the GUI thread spending the load in. |
-| **v3+** | The unrelated startup cost `gen_galleries` carries — one SQL query per gallery through `ListDB.query_gallery`, which is most of the 3.7s Qt-free floor. Gets its own entry. |
+| **v2** | S6 took the first of those: the meta-call count is cut and nothing is pinned. After S9 the Qt6 build starts faster than the Qt5 one (§16), so pinning 6.6.1 has nothing left to buy. ⏸️ 2026-09-13 |
+| **v3+** | Moved to `ROADMAP.md` with the rest of §16's list: the per-gallery queries `gen_galleries` and the tag phase issue at startup. |
 
 ---
 
@@ -992,6 +995,53 @@ each caught by the assertion written for them.
 
 ---
 
+## 16. Closing: the real library, and what is left
+
+### Outcome on the real library
+
+PyInstaller builds of both branches, run by the user against the real ~20,000-gallery library
+through one shared database, on 2026-09-13. The phase lines are ✅ **Verified** — read out of each
+build's own `happypanda.log`. The whole-startup figures are the user's own timing and are not in
+any log.
+
+| Build | galleries | chapters | tags | hashes | phases summed | whole startup |
+|-------|----------:|---------:|-----:|-------:|--------------:|--------------:|
+| `feat/qt6-migration-prep`, PyQt5 | 7.4s | 1.5s | 20.8s | 0.1s | 29.8s | about 39s |
+| `feat/qt6-migration`, PyQt6 | 7.7s | 3.7s | 8.4s | 0.1s | **19.9s** | **about 20s** |
+
+The Qt6 lead is not Qt6 being quicker. The Qt5 build pays its sort — one `QDateTime.fromString` per
+comparison at about 15 µs, inserted from the loader into the tag phase — while S6 and S9 removed
+that work from the Qt6 build altogether. Both fixes are binding-neutral.
+
+### Where the remaining twenty seconds go
+
+What is left is Python and SQLite, and would cost the same under either binding. ⚠️ **Unverified**
+as to what fixing each would save; each is a ROADMAP entry with a measurement to take first.
+
+1. **Tags, 8.4s.** `DatabaseStartup.fetch_tags` makes one blocking round trip per gallery through
+   the method queue to `TagDB.get_gallery_tags` — about 20,000 of them. Chapters already load with
+   a single query over the whole table.
+2. **Galleries, 7.7s.** `GalleryDB.gen_galleries` runs `ListDB.query_gallery` — a `SELECT` per
+   gallery against `series_list_map`, which held no rows in the development database (§2) — and
+   `os.path.exists` on every path.
+3. **Chapters, 3.7s against 1.5s under Qt5.** One query, so the gap is most likely the S8 pattern at
+   small scale: the database thread waiting on the GIL while the GUI thread inserts and sorts. It
+   may shrink on its own once 1 and 2 are gone.
+
+### Left open, blocking nothing
+
+- **Switching Library and Favorites re-runs the search over the whole tab** (§10). A cleared search
+  measured 1.5–1.7s on a 13,198-gallery tab in §15, and the cost grows with the tab.
+- **Table view date cells** still build a `QDateTime` per painted cell, which is bounded by the rows
+  on screen rather than by the library.
+- **The 6.7 → 6.11 slide** (§5) was measured before S6–S9 and never again; the date call itself is
+  flat across that range (§14).
+- **`misc/qt_modelview_bench.py`'s `TIMING` line** still prints before the sort it is meant to time
+  (§14); the doc warns, the tool does not.
+- **§8 question 1**, the commit inside Qt 6.7 — of interest, no longer needed.
+
+---
+
 ## Document History
 
 * **v1.0** - Initial report
@@ -1041,8 +1091,13 @@ each caught by the assertion written for them.
   the latter held after a review found Qt's own re-sorts outside the cache; the direction remembered
   with the sort; the menu following views made after it; order identical by
   value except undated galleries now last. §15 carries it.
+* **v1.10** - Closed as resolved. §16 records both branches' PyInstaller builds on the real library
+  from their own logs — 19.9s of load phases under PyQt6 against 29.8s under PyQt5 — attributes the
+  gap to S6 and S9 rather than to Qt6, and splits the remaining time into the per-gallery tag and
+  gallery queries and the chapter phase's GIL wait. The optimisations and the smaller leftovers move
+  to `ROADMAP.md`; §7's extension roadmap points there, and pinning Qt 6.6 is set aside.
 
 ---
 
 **Last Updated:** 2026-09-13  
-**Next Review:** if the 6.7 → 6.11 slide or the Qt commit is picked up, or if the migration is reconsidered on other grounds
+**Next Review:** when a startup optimisation from `ROADMAP.md` is picked up — §8's protocol and §16's phase figures are its baseline
