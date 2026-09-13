@@ -1,8 +1,8 @@
 # PyQt6 Startup Performance Regression
 
-**Version:** 1.8  
+**Version:** 1.9  
 **Date:** 2026-09-13  
-**Status:** In progress — S0–S8 complete; the freeze is named and proven, and S9 is open to fix it.  
+**Status:** In progress — S0–S9 complete; the freeze is fixed. What remains open is §8's residue: the 6.7 → 6.11 slide and the commit inside Qt.  
 **Target:** PyQt6 6.11.0 / Qt 6.11.2 on Python 3.14.7 (baseline: PyQt5 5.15.11 / Qt 5.15.2)
 
 > Switching the binding to PyQt6 makes database startup **roughly four times slower** — 12.1s
@@ -42,8 +42,17 @@
 > integer key instead takes the window from **112.8s hung to 0.0s** and the startup from **128.3s to
 > 13.2s**, faster than PyQt5's 25s. The model/view bench reproduces it too, 7.9×, once it is timed
 > by the wall clock rather than by its own `TIMING` line, which prints before the sort runs (§14).
+>
+> **S9 fixes it, and the two sort paths it found beside it.** Every sort — the menu's, a table
+> header's, the startup's — now compares a plain `str` or `int` from one vocabulary in
+> `version/sortkeys.py`. Against the code before it, interleaved: the startup sorted by date added
+> goes from **133–146s with 112–124s hung to 13.1–13.8s with none**. On either tab of the
+> development library, every sort chosen and every re-sort a cleared search sets off completes in
+> under 2s, where a date sort took up to 160s (§15).
 
 **Audited:** 2026-09-10, at commit `7ba4813` (branch `feat/qt6-migration`).
+**Amended:** 2026-09-13 — phase S9 executed. One sort vocabulary for the menu, the headers and the
+saved sort; the date sorts, header clicks, menu sync and undated placement fixed. §15 carries it.
 **Amended:** 2026-09-13 — the date parse priced under Qt 6.6.3 and 6.7.0: it carries the 6.7 step
 itself (§14).
 **Amended:** 2026-09-13 — phase S8 executed. A timeline, a PyQt5 baseline, a GUI-thread trace and
@@ -410,7 +419,7 @@ subtraction: start the real application with subsystems disabled until the ratio
 | **S6 — Cut the meta-calls** | Not by suppressing the re-search, which measured *worse*, but by reading the library in one batch: `DATABASE_STARTUP_FETCH_LIMIT` now defaults to 0. 112 proxy meta-calls become 8, the gallery load about 38s becomes about 5s. See §12. | 🟡 | S5 | ✅ 2026-09-12 |
 | **S7 — Stop mutating the models off the GUI thread** | Each batch, and the delegate's paint level, now reach the GUI thread as a signal. `DatabaseStartup` holds no reference to a widget at all. **It is free and it does not fix the freeze**: 128.8s against 128.0s over four runs each, with the window unresponsive for the whole load either way. See §13. | 🟡 | S6 | ✅ 2026-09-12 |
 | **S8 — Find what actually freezes the window** | A phase timeline puts the freeze exactly over the chapter phase, not the tag phase; a GUI-thread trace finds the GUI thread at 100% CPU in `GalleryModel.data`'s `DATE_ADDED_ROLE` branch and the database thread at 0% waiting on the GIL. **Found it**: `QDateTime.fromString` costs 12× more under Qt 6.11, and an integer sort key takes the hung window from 112.8s to 0.0s. See §14. | 🔴 | S7 | ✅ 2026-09-13 |
-| **S9 — Stop parsing a date per comparison** | Give the date sort roles a key that is cheap to produce and compare, without changing the order the grid shows. `PUB_DATE_ROLE` and `LAST_READ_ROLE` share the pattern. | 🟡 | S8 | — |
+| **S9 — Stop parsing a date per comparison** | Widened from the date roles once a probe of the real window showed the table header was a second, half-connected sort path with the same parse behind it. One sort-key role answered from `sortkeys`, header clicks routed through the same sort as the menu, the menu and indicator following every sort, undated galleries last. Startup 133–146s → 13.1–13.8s, hung 112–124s → 0. See §15. | 🟡 | S8 | ✅ 2026-09-13 |
 
 Effort: 🟢 low (hours, localized) · 🟡 medium (days, several files) · 🔴 high (cross-cutting, or
 dominated by manual verification).
@@ -886,6 +895,103 @@ application's in absolute terms — it issues 1.5–1.8 million date-role calls 
 
 ---
 
+## 15. What S9 changed: one sort, whoever asks for it
+
+### Two sort paths on one proxy
+
+Each tab's grid and table views share a single `SortFilterModel`. Probed in the running
+`AppWindow` on Qt 6.11.2 before any change, with three galleries given distinct values.
+✅ **Verified**:
+
+- **The sort menu** set a role per sort and sorted column 0. Every date role parsed a `QDateTime`.
+- **A table header click** went through Qt's own `setSortingEnabled` path, which keeps the proxy's
+  current role and changes only the column and direction. Under the shipped date sort, clicking
+  `Title` sorted by date; under the title sort, clicking `Date Added` or `Published` sorted on the
+  column's display value — a `QDateTime` built with `fromString` per comparison, which is S8's
+  freeze again, and `Published` compared the `'No date set'` string against dates.
+- A header click changed neither the saved sort, nor the menu's check or text; `Asc/Desc` reset the
+  column to 0 behind a stale indicator; the indicator disagreed with the proxy from startup on.
+- A `None` sort value sorts after every dated row ascending and before them descending, identically
+  under Qt 5.15.2 and 6.11.2 — not a regression, but it opened `Date Published` and `Last Read`,
+  newest first, on thousands of undated galleries.
+
+### The shape of the fix
+
+| Piece | What it does |
+|-------|--------------|
+| `version/sortkeys.py` | The vocabulary: fifteen names, each a label, a value getter, a starting direction and whether it reads chapters or tags loaded after the startup sort. Qt-free; `tests/test_sort_keys.py` covers it. |
+| `GalleryModel.SORT_KEY_ROLE` | Answers the active sort's value — a `str` or an `int`, so Qt's own locale-aware string comparison is unchanged. A missing date is an order-aware sentinel that sorts last. The six sort-only roles are gone. |
+| `SortFilterModel.set_sort` | The only way to choose a sort. |
+| `GalleryModel.hold_sort_values` | Works each gallery's value out once for the length of one call that sorts, and drops it after, so an edited gallery never compares as it was. Held by `set_sort`, by the search's re-filter and by `insertRows`, which between them are every re-sort the application sets off; holds nest. |
+| `MangaViews` | Routes a header click to `list_view.sort`, moves the indicator on `SORT_CHANGED`, and relays that signal to the window. |
+| `AppWindow.SORT_CHANGED` | The relay the sort menu listens to, so a view created after the toolbar moves it too; the connections end with the window. |
+| `AppWindow._remember_sort` | Stores the sort and its direction together under `General / current sort` and `current sort order`, or neither for a sort reading chapters or tags; `sortkeys.saved_descending` reads the pair back. |
+
+Two Qt behaviours the fix is shaped around, both ✅ **Verified** by assertions that fail when the
+workaround is removed: `QSortFilterProxyModel.sort` returns early on an unchanged column and order,
+which is all a change of sort name looks like; and resetting with `sort(-1)` to get past that
+reorders galleries that compare equal into database order, where the old code kept the order they
+were already shown in. `set_sort` therefore sorts the other way round first — two stable passes.
+
+### Measured
+
+**Order**, on both tabs of a copy of the development database through the real window, every menu
+sort in both directions, compared by value at every position against the code before S9: identical
+for every sort. The only change is the one chosen — 7,017 and 13,196 undated `Last Read` galleries
+and 13,121 undated `Date Published` ones now last, where descending had put them first.
+
+**Speed of one sort**, same harness:
+
+| Sort | Before, library (7,093) | Before, inbox (13,198) | After, either |
+|------|------------------------:|-----------------------:|--------------:|
+| `date_added` | 34.7–80.1s | 77.7–159.7s | 0.60–1.63s |
+| `pub_date` | 13.7–60.3s | 3.5–7.8s | 0.25–0.82s |
+| `title` | 0.00–0.27s | 0.00–0.68s | 0.26–1.17s |
+| `tags` | not a sort before | not a sort before | 0.37–1.03s |
+| slowest of all 60, two runs | — | — | 1.74s, 1.91s |
+
+**A cleared search**, which is Qt placing every returning gallery by comparing rather than a sort
+anyone chose, and so was not covered by the table above until a review asked. A proxy probe puts it
+at about 19 value requests per returning row, and an insert at about 42 per inserted row, both
+inside the one call. A search matching nothing, then cleared, same harness:
+
+| Sort | Library, before the holds | Library, after | Inbox, before | Inbox, after |
+|------|--------------------------:|---------------:|--------------:|-------------:|
+| `tags` | **3.10s** | 1.17s | 1.45s | 1.06s |
+| `page_count` | 1.11s | 0.97s | **2.15s** | 1.74s |
+| `date_added` | 0.90s | 0.76s | 1.72s | 1.53s |
+| `title` | 1.05s | 0.97s | 1.89s | 1.73s |
+
+Most of what remains is the re-filter's own per-gallery Python, not sort values. ⚠️ **Unverified**
+past 13,198 rows: no tab of the development library is larger, and that cost grows with the tab.
+
+**Startup**, interleaved against a worktree at the previous commit, three runs each:
+
+| Saved sort | Before: total / hung | After: total / hung |
+|------------|---------------------:|--------------------:|
+| `date_added` | 133.1–145.6s / 111.8–123.5s | **13.1–13.8s / 0.0s** |
+| `title` | 19.9–20.1s / 0.0s | 14.0–14.4s / 0.0s |
+
+⚠️ **Unverified** why the control tree's gallery and tag phases each ran about 3s longer in both
+series. The sort is not on those phases' threads, so the `title` row is read as "not slower" rather
+than as a gain.
+
+### What covers it
+
+`misc/app_smoke.py` drives the menu's real actions and real mouse clicks on the header, and asserts
+the order, the menu's check and text, the indicator and the saved sort after each; that a gallery
+with no date is last in both directions; that galleries comparing equal keep their order; that the
+Duplicate view is untouched; and that no sort parses a single `QDateTime`, counted from inside the
+gallery module. It also asserts that a cleared search and an inserted gallery each work out every
+sort value once; that a header clicked twice is stored as that sort descending while a tags sort is
+not stored; and that a view created after the toolbar still moves the menu. Ten deliberate breaks —
+the date parse restored, the early return unhandled, Qt's header sorting re-enabled, the empty-date
+sentinel dropped, a reset to database order, either hold removed, the direction or the late-data
+check left out of the save, and the menu wired only to the views present when it was built — are
+each caught by the assertion written for them.
+
+---
+
 ## Document History
 
 * **v1.0** - Initial report
@@ -928,8 +1034,15 @@ application's in absolute terms — it issues 1.5–1.8 million date-role calls 
   release the application's own bisection named, with local-time epoch conversion jumping 10× at
   the same release, and flat from there to 6.11. The Qt 6.7 regression and the freeze are one
   mechanism; §14 and §8 carry it.
+* **v1.9** - Phase S9 executed, widened from the date roles after a probe of the real window found
+  the table header sorting by the previous sort's role and able to trigger the same parse. One sort
+  vocabulary for the menu, the headers and the saved sort; startup sorted by date added from
+  133–146s with 112–124s hung to about 13s with none; every chosen sort and cleared search under 2s,
+  the latter held after a review found Qt's own re-sorts outside the cache; the direction remembered
+  with the sort; the menu following views made after it; order identical by
+  value except undated galleries now last. §15 carries it.
 
 ---
 
 **Last Updated:** 2026-09-13  
-**Next Review:** when S9 is picked up, or if the migration is reconsidered on other grounds
+**Next Review:** if the 6.7 → 6.11 slide or the Qt commit is picked up, or if the migration is reconsidered on other grounds

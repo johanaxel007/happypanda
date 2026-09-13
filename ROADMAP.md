@@ -201,12 +201,13 @@ batch cuts them from 112 to 8 — the gallery load drops from about 38s to about
 startup from about 135s to about 104s, on any Qt 6. That has shipped: the startup fetch limit now
 defaults to no limit. Nothing is pinned.
 
-What is left is **responsiveness**, and it now has a named and proven cause. The proxy sorts the
-library on the date it was added, and its sort key re-parses that date with
-`QDateTime.fromString` on every comparison — a call that costs **12× more under Qt 6.11 than under
-Qt 5.15**. The GUI thread spends the whole ~113s freeze inside it. Swapping in an integer key as a
-measurement took the window from 112.8s reported not responding to none, and the startup from
-128s to 13s, faster than PyQt5. The fix is its own phase and has not shipped. See
+**Responsiveness is fixed too.** The proxy sorted the library on the date it was added, and its
+sort key re-parsed that date with `QDateTime.fromString` on every comparison — a call that costs
+**12× more under Qt 6.11 than under Qt 5.15**, and the GUI thread spent the whole ~113s freeze
+inside it. Every sort now compares a plain string or integer from one vocabulary shared by the sort
+menu, the table headers and the saved sort, which also fixed headers that sorted by the wrong
+thing. Startup sorted by date added went from about 140s, nearly all of it reported not responding,
+to about 13s with no freeze at all — faster than PyQt5. See
 [`Documentation/Design/QT6_STARTUP_REGRESSION.md`](Documentation/Design/QT6_STARTUP_REGRESSION.md)
 — read it before re-testing anything, and note the `feat/qt6-migration-prep` branch remains a
 clean PyQt5 fallback that is unaffected.
